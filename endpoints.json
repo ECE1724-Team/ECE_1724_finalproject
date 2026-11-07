@@ -1,0 +1,1666 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Job Application Tracker API",
+    "version": "1.1.0",
+    "description": "Job Application Tracker API with Better Auth email/password authentication. Applications and resumes are private to the authenticated user. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session. Registration, sign-in, password recovery, and the session-check endpoint are callable without a session. Password reset email delivery requires a configured sendResetPassword callback. Use CSRF protections and trusted origins provided by Better Auth for cookie-authenticated requests."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local development server"
+    }
+  ],
+  "security": [
+    {
+      "cookieAuth": []
+    },
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Better Auth",
+      "description": "Better Auth built-in email/password, user and session operations."
+    },
+    {
+      "name": "Applications",
+      "description": "Manage job applications."
+    },
+    {
+      "name": "Resumes",
+      "description": "Upload and manage resumes."
+    }
+  ],
+  "paths": {
+    "/api/auth/sign-up/email": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthSignUpEmail",
+        "summary": "Register a new account",
+        "description": "Better Auth email/password registration; requires emailAndPassword.enabled. A successful response may establish a session via Set-Cookie unless verification or autoSignIn settings disable it.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthSignUp"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSignInResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Credentials or input rejected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/sign-in/email": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthSignInEmail",
+        "summary": "Sign in with email and password",
+        "description": "Better Auth email/password sign-in. On success, the server establishes a session in an HttpOnly cookie.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthSignIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSignInResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required or session is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action is prohibited or account is unverified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/sign-out": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthSignOut",
+        "summary": "Sign out",
+        "description": "Invalidates the current Better Auth session and clears its session cookie.",
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required or session is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/get-session": {
+      "get": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthGetSession",
+        "summary": "Get active session",
+        "description": "Returns user and session for a valid cookie (or supported bearer session). When not signed in, Better Auth may return HTTP 200 with null; this endpoint is intentionally callable without credentials.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Current session and user, or null if signed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BetterAuthSessionResult"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/request-password-reset": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthRequestPasswordReset",
+        "summary": "Request password reset email",
+        "description": "Sends password-reset link if the account exists. Requires emailAndPassword.sendResetPassword configuration. Do not expose whether an email address belongs to an account.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthRequestPasswordReset"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthResetPassword",
+        "summary": "Reset password using emailed token",
+        "description": "Uses the one-time reset token sent to the user. No signed-in session is required.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthResetPassword"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Credentials or input rejected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthChangePassword",
+        "summary": "Change current user password",
+        "description": "Requires an authenticated Better Auth session and current password. Can revoke other sessions.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthChangePassword"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required or session is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Action is prohibited or account is unverified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/update-user": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthUpdateUser",
+        "summary": "Update account profile",
+        "description": "Updates the current authenticated user profile (name and/or image).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthUpdateUser"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required or session is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/list-sessions": {
+      "get": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthListSessions",
+        "summary": "List active user sessions",
+        "description": "Returns the active Better Auth sessions for the signed-in user.",
+        "responses": {
+          "200": {
+            "description": "Active sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BetterAuthSession"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required or session is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/revoke-session": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthRevokeSession",
+        "summary": "Revoke a user session",
+        "description": "Revokes a session owned by the current authenticated user using its session token.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthRevokeSession"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required or session is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "List applications",
+        "operationId": "listApplications",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Optionally filter applications by status.",
+            "schema": {
+              "$ref": "#/components/schemas/ApplicationStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A paginated list of the current user's applications.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Create an application",
+        "operationId": "createApplication",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Application created.",
+            "headers": {
+              "Location": {
+                "description": "URL of the created application.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Application"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/api/v1/applications/{applicationId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ApplicationId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Get an application by ID",
+        "operationId": "getApplication",
+        "responses": {
+          "200": {
+            "description": "The requested application.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Application"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Replace an application",
+        "description": "Replace all client-editable fields of the application. Send a complete replacement representation: companyName, jobTitle and status are required. Omitted optional fields are cleared or reset to their defaults (for example, interviews becomes an empty array and resumeId becomes null). IDs and server timestamps cannot be changed.",
+        "operationId": "updateApplication",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationReplace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated application.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Application"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Delete an application",
+        "operationId": "deleteApplication",
+        "responses": {
+          "204": {
+            "description": "Application deleted; no response body."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/resumes": {
+      "get": {
+        "tags": [
+          "Resumes"
+        ],
+        "summary": "List resumes",
+        "operationId": "listResumes",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A paginated list of the current user's resume metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Resumes"
+        ],
+        "summary": "Upload a resume",
+        "description": "Accepts a PDF or DOCX resume as multipart/form-data.",
+        "operationId": "createResume",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeUpload"
+              },
+              "encoding": {
+                "file": {
+                  "contentType": "application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Resume uploaded.",
+            "headers": {
+              "Location": {
+                "description": "URL of the created resume metadata resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resume"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/api/v1/resumes/{resumeId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ResumeId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Resumes"
+        ],
+        "summary": "Get resume metadata by ID",
+        "operationId": "getResume",
+        "responses": {
+          "200": {
+            "description": "Metadata for the requested resume.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resume"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Resumes"
+        ],
+        "summary": "Delete a resume",
+        "description": "Deletes the resume and its stored file. Applications referencing this resume are preserved and their resumeId is set to null.",
+        "operationId": "deleteResume",
+        "responses": {
+          "204": {
+            "description": "Resume deleted; no response body."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/resumes/{resumeId}/file": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ResumeId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Resumes"
+        ],
+        "summary": "Download a resume file",
+        "operationId": "downloadResume",
+        "responses": {
+          "200": {
+            "description": "Resume file content in its original format.",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment disposition with original filename.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token",
+        "description": "Default Better Auth signed session cookie; cookie name/prefix may vary with production configuration."
+      },
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Optional Better Auth Bearer plugin. Send Authorization: Bearer <session-token>. This token is a Better Auth session token, not automatically a JWT. Enable the bearer plugin if this mode is needed."
+      }
+    },
+    "parameters": {
+      "ApplicationId": {
+        "name": "applicationId",
+        "in": "path",
+        "required": true,
+        "description": "UUID of an application belonging to the authenticated user.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "ResumeId": {
+        "name": "resumeId",
+        "in": "path",
+        "required": true,
+        "description": "UUID of a resume belonging to the authenticated user.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "description": "Page number (1-based).",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Maximum number of records returned per page.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        }
+      }
+    },
+    "schemas": {
+      "ApplicationStatus": {
+        "type": "string",
+        "enum": [
+          "saved",
+          "applied",
+          "interviewing",
+          "offered",
+          "rejected",
+          "withdrawn",
+          "accepted"
+        ]
+      },
+      "Interview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "scheduledAt"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Interview stage, such as phone, technical, or final.",
+            "maxLength": 100
+          },
+          "scheduledAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "meetingUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      },
+      "ApplicationFields": {
+        "type": "object",
+        "properties": {
+          "companyName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "jobTitle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApplicationStatus"
+          },
+          "jobUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "jobDescription": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "appliedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "resumeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Optional ID of the user's uploaded resume used for this application. Set to null to unlink a resume."
+          },
+          "interviews": {
+            "type": "array",
+            "description": "Full interview schedule. On PUT, this entire array replaces the existing schedule.",
+            "items": {
+              "$ref": "#/components/schemas/Interview"
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      },
+      "ApplicationCreate": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApplicationFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "companyName",
+              "jobTitle"
+            ]
+          }
+        ],
+        "description": "Application fields. Status defaults to saved when omitted.",
+        "example": {
+          "companyName": "Example Corp",
+          "jobTitle": "Software Engineer",
+          "status": "applied",
+          "jobUrl": "https://example.com/jobs/123",
+          "resumeId": "2e853fac-94fa-4dab-aed5-e970f770d630",
+          "appliedAt": "2026-11-07T14:00:00Z",
+          "notes": "Applied via company website."
+        }
+      },
+      "Application": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApplicationFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "companyName",
+              "jobTitle",
+              "status",
+              "createdAt",
+              "updatedAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "readOnly": true
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "readOnly": true
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "readOnly": true
+              }
+            }
+          }
+        ]
+      },
+      "ResumeUpload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "file"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Friendly name for the resume (e.g., Backend Developer Resume)."
+          },
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "description": "PDF or DOCX file."
+          }
+        }
+      },
+      "Resume": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "fileName",
+          "mimeType",
+          "sizeBytes",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "readOnly": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string",
+            "enum": [
+              "application/pdf",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ]
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "required": [
+          "page",
+          "limit",
+          "total"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ApplicationList": {
+        "type": "object",
+        "required": [
+          "data",
+          "pagination"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Application"
+            }
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/Pagination"
+          }
+        }
+      },
+      "ResumeList": {
+        "type": "object",
+        "required": [
+          "data",
+          "pagination"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Resume"
+            }
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/Pagination"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "ApplicationReplace": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApplicationFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "companyName",
+              "jobTitle",
+              "status"
+            ]
+          }
+        ],
+        "description": "Full replacement of client-editable application fields. Omitted optional fields are removed/reset rather than preserved.",
+        "example": {
+          "companyName": "Example Corp",
+          "jobTitle": "Software Engineer",
+          "status": "interviewing",
+          "jobUrl": "https://example.com/jobs/123",
+          "jobDescription": "Build and maintain reliable services.",
+          "location": "Toronto, ON",
+          "appliedAt": "2026-11-07T14:00:00Z",
+          "resumeId": "2e853fac-94fa-4dab-aed5-e970f770d630",
+          "interviews": [
+            {
+              "type": "technical",
+              "scheduledAt": "2026-11-12T15:00:00Z",
+              "meetingUrl": "https://example.com/interview"
+            }
+          ],
+          "notes": "Recruiter contacted me."
+        }
+      },
+      "BetterAuthSignUp": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "email",
+          "password"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "maxLength": 128
+          },
+          "image": {
+            "type": "string",
+            "format": "uri"
+          },
+          "callbackURL": {
+            "type": "string",
+            "format": "uri",
+            "description": "Optional post-registration redirect."
+          }
+        }
+      },
+      "BetterAuthSignIn": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "rememberMe": {
+            "type": "boolean",
+            "default": true
+          },
+          "callbackURL": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "BetterAuthUser": {
+        "type": "object",
+        "description": "Core Better Auth user fields. Plugins may add fields.",
+        "required": [
+          "id",
+          "name",
+          "email",
+          "emailVerified",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "emailVerified": {
+            "type": "boolean"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BetterAuthSignInResult": {
+        "type": "object",
+        "description": "Successful sign-in/sign-up response. Better Auth can vary response fields with configuration.",
+        "properties": {
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Session token value. Browser sessions are also set in cookies."
+          },
+          "user": {
+            "$ref": "#/components/schemas/BetterAuthUser"
+          },
+          "redirect": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BetterAuthSession": {
+        "type": "object",
+        "description": "Better Auth session data.",
+        "required": [
+          "id",
+          "userId",
+          "expiresAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ipAddress": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "userAgent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "type": "string",
+            "description": "Sensitive session token; do not log or expose unnecessarily."
+          }
+        }
+      },
+      "BetterAuthSessionResult": {
+        "type": "object",
+        "required": [
+          "user",
+          "session"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/BetterAuthUser"
+          },
+          "session": {
+            "$ref": "#/components/schemas/BetterAuthSession"
+          }
+        }
+      },
+      "BetterAuthRequestPasswordReset": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "redirectTo": {
+            "type": "string",
+            "format": "uri",
+            "description": "Reset-password frontend URL."
+          }
+        }
+      },
+      "BetterAuthResetPassword": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "token",
+          "newPassword"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Single-use token from the password-reset link."
+          },
+          "newPassword": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "maxLength": 128
+          }
+        }
+      },
+      "BetterAuthChangePassword": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ],
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "format": "password"
+          },
+          "newPassword": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "maxLength": 128
+          },
+          "revokeOtherSessions": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "BetterAuthUpdateUser": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          }
+        }
+      },
+      "BetterAuthRevokeSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Token of one of the current user sessions to revoke."
+          }
+        }
+      },
+      "BetterAuthError": {
+        "type": "object",
+        "description": "Better Auth error response, which is separate from custom API error format.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "statusCode": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": true
+      },
+      "BetterAuthSuccess": {
+        "type": "object",
+        "description": "Generic Better Auth success response. Fields can vary with library configuration.",
+        "additionalProperties": true
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request body or query parameters.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "No valid Better Auth session was supplied.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found or not owned by the authenticated user.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "Uploaded file type is not supported. Only PDF and DOCX are allowed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Valid JSON, but field values or referenced resume are invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  }
+}
