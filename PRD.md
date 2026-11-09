@@ -1,15 +1,18 @@
 ---
 artifact: prd
-version: "1.1"
+version: "1.2"
 created: 2026-11-08
+updated: 2026-11-09
 status: approved-with-open-items
 ---
 
 # JobFlow AI Product Requirements Document (PRD)
 
-This document specifies the deliverables for the complete course project and is intended for the team and coding agents. It does not claim that the features have been implemented. It is based on the Proposal, AI Design, and the user's confirmations on 2026-11-08; these confirmations supersede the corresponding earlier descriptions in the source documents. The user has approved the current interactive prototype. The Dashboard, application list, creation/editing forms, resume dialog, and AI entry points form the approved implementation baseline. Section 11 retains only the technical and business details not resolved by the prototype; these open items do not invalidate the confirmed scope.
+This document specifies the deliverables for the complete course project and is intended for the team and coding agents. It does not claim that the features have been implemented. It is based on the Proposal, AI Design, and the user's confirmations on 2026-11-08 and 2026-11-09; these confirmations supersede the corresponding earlier descriptions in the source documents. The user has approved the current interactive prototype. The Dashboard, application list, creation/editing forms, resume dialog, and AI entry points form the approved implementation baseline. This revision incorporates the confirmed account rules and ownership of authentication-related database work. Section 11 retains unresolved technical and business details; these open items do not invalidate the confirmed scope.
 
 **Confirmed scope:** Registration, logout, deletion, search/filtering, and status history; a personal resume library with files reusable across applications and at most one linked resume per application; email-and-password authentication with email verification and password reset; resume deletion that removes all related application links; all recommendations in AI Design §6; continued assistance with limitations explained when materials are insufficient; AI behavior guided through system prompts without a complex constraint framework; support for Chrome, Edge, and concurrent users, without numerical performance targets.
+
+**Confirmed account policy:** Registration sends a verification email without creating a login session. Unverified users cannot sign in or use protected business features. The first successful email verification automatically signs the user in. Verification and password-reset credentials each remain valid for 15 minutes (900 seconds) from issuance; issuing a replacement invalidates all earlier credentials for the same user and purpose. Verification and reset credentials are managed separately. A successful password reset consumes its credential and revokes all existing sessions for that user without automatically signing them in. The credential lifetime does not define the session lifetime. Authentication contracts are recorded in `endpoints.json` version `1.2.0`; the corresponding backend behavior still requires implementation and verification.
 
 **File rules established under the user's authorization:** At most 2 pages and 2 MiB (2,097,152 bytes) per file. See §5.2 for text-based PDF validation, §5.5 for pages, fields, and navigation, and §11 for remaining open items.
 
@@ -34,7 +37,7 @@ The product has three connected modules:
 ### 1.3 Target Users and Access Boundaries
 
 - Target users: University students, recent graduates, and early-career job seekers applying for internships or full-time positions.
-- Confirmed access rules: Authenticated users can access only their own applications, files, and conversations. Workspace materials are available only to conversations belonging to that application.
+- Confirmed access rules: Protected business features require a valid session, a verified email, and ownership of the requested applications, files, and conversations. Workspace materials are available only to conversations belonging to that application. Registration, verification and resending, password recovery, and session checks remain available without a signed-in session as defined by the authentication contract.
 - The sources do not define administrator, recruiter, or collaborative-sharing roles. This document does not add those roles or permissions.
 - No research data is available for personas, usage frequency, or scale. Demographic characteristics and daily-active-user projections are not invented.
 
@@ -57,6 +60,7 @@ Acceptance for this release focuses on functioning core workflows, correctness, 
 | Product outcome | Fewer steps spent finding and repeatedly supplying preparation materials | Not measured | Demonstrate starting a new conversation directly from saved materials; no time target | AI integration checkpoint |
 | Product outcome | Need to upload already linked materials again for a new conversation | Not measured | Saved, available materials require no re-upload; verify through FR-11 and FR-13 | AI integration checkpoint; date not set |
 | Functional correctness | Consistency between Dashboard summaries and underlying application records | Not verified | Saved but unapplied and rejected records count toward applications; interviews count by session, offers by historical receipt, and the upcoming list covers the next 7 days | Before 2026-11-25 |
+| Functional correctness | Registration, verification, credential replacement, and password-reset session revocation | Not verified | FR-01, FR-02, FR-21, FR-32, and FR-33 pass, including 900-second expiry, rejection of superseded links, automatic sign-in after first verification, and rejection of all old sessions after reset | Non-AI integration and delivery checkpoints |
 | Functional correctness | Material versions used when continuing a conversation | Not verified | Version scenarios in FR-14 through FR-16 behave as specified | AI integration checkpoint; date not set |
 | Permissions and isolation | Cross-user access, cross-application retrieval, and unrelated conversation history entering context | Not verified | Every defined unauthorized-access/isolation case satisfies FR-02 and FR-12; this does not establish a production failure rate | Integration and delivery checkpoints |
 | AI quality | Role-relevant answers, correct use of current materials, and retention of important history | Not evaluated | Lightweight manual checks under Section 6; no additional evaluation platform or accuracy metric required | Before final acceptance |
@@ -83,14 +87,14 @@ All core capabilities in this release must be delivered. Web search, website rea
 | US-08 | As a user, I want my applications, resumes, and chats to remain inaccessible to other users. | FR-02 |
 | US-09 | As a job seeker, I want to upload resumes centrally, reuse them across applications, and retain them after deleting an application. | FR-08, FR-22, FR-26 |
 | US-10 | As a job seeker, I want to search, filter, and delete applications and review their status changes. | FR-22 through FR-24 |
-| US-11 | As a user, I want to verify my email and reset a forgotten password through email. | FR-21, FR-32, FR-33 |
+| US-11 | As a user, I want to verify my email before using the application, resend verification or reset links when needed, and reset a forgotten password through the latest valid email link. | FR-21, FR-32, FR-33 |
 | US-12 | As a user, I want to delete resumes I no longer need while keeping my application records. | FR-34 |
 
 ## 4. Scope
 
 ### 4.1 In Scope
 
-- Email-and-password registration/login, email verification, password reset, logout, session management, and ownership checks.
+- Email-and-password registration, verified-email-only login and business access, automatic sign-in after first email verification, button-triggered verification/reset resending, password reset, logout, session management, and ownership checks. Credential expiry, replacement, and reset-time session revocation follow the confirmed account policy.
 - Dashboard summaries, status distribution, and interviews in the next 7 days; unapplied and rejected records count toward total applications.
 - Application creation, listing, editing, deletion, search/filtering, and status history; details include dates, company information, personal notes, interview arrangements, and an activity timeline.
 - A central resume entry and dialog above the Application Management list: drag-and-drop upload, naming at upload, browsing uploaded files, PDF viewing, downloading, and deletion; files reusable across applications, at most one linked resume per application, visible parsing status, and removal of related application links when a file is deleted.
@@ -135,8 +139,8 @@ The checks below define how to verify functionality; they do not indicate that t
 
 | ID | Requirement | Acceptance Method | Source / Open Items |
 |---|---|---|---|
-| FR-01 | Users land on the Dashboard after login; the server manages authentication sessions. | Complete login and check the landing page; unauthenticated requests cannot read protected data. | Proposal §2.1–2.2; email-and-password authentication confirmed by the user |
-| FR-02 | Protected operations check user ownership. AI requests check the relationships among the user, application workspace, and conversation. Changing an ID must not grant access to another user's or another application's materials. | Use different users and applications to check reads and updates for applications, files, and conversations; reject forged workspace/conversation IDs. | Proposal §2.2; AI Design §5; specific error responses remain open |
+| FR-01 | Users land on the Dashboard after successful login, including automatic sign-in following first successful email verification. The server manages sessions; registration alone does not create one. | After registration, confirm that the session check returns null and protected data is unavailable. After first verification, load the automatically established session and reach the Dashboard. Check the ordinary verified-user login flow as well. | Proposal §2.1–2.2; user confirmations on 2026-11-09 |
+| FR-02 | Protected business operations check session validity, current email verification, and resource ownership on the backend. AI requests also check the relationships among user, application workspace, and conversation. Changing an ID must not grant access to another user's or application's materials. Authentication entry and recovery operations remain callable without a session under their own contracts. | Reject anonymous and unverified business access, including direct API calls. Use different users and applications to check reads/updates for applications, files, and conversations; reject forged workspace/conversation IDs and revoked sessions. | Proposal §2.2; AI Design §5; user confirmation; authentication and defined business errors in endpoints.json 1.2.0 |
 | FR-03 | The Dashboard shows total applications, total interview sessions, offers ever received, a clickable status distribution, interviews in the next 7 days, and recent applications. Unapplied/rejected records count toward applications; each interview round counts separately; later declining an offer does not erase its receipt. | Check totals; three interviews for one application count as 3, and a later-declined offer still counts. The upcoming list includes only the 7 calendar days starting today, in chronological order. Clicking a status opens the filtered list; clicking a position opens its details. | Prototype confirmed by the user; rules in §5.5 |
 
 #### B. Application and Resume Management
@@ -175,7 +179,7 @@ The checks below define how to verify functionality; they do not indicate that t
 
 | ID | Requirement | Acceptance Method | Source / Open Items |
 |---|---|---|---|
-| FR-21 | Users register/log in with email and password and can log out. Email verification and password reset are included in this release. | Complete registration and login; after logout, the previous session cannot access protected data. | Latest user confirmation; verification and reset in FR-32 and FR-33 |
+| FR-21 | Users register with email and password and receive a verification email. Registration returns a null login token and creates no login session or login-session cookie. Unverified users cannot sign in or access business features. Verified users can log in and log out. Email verification and password reset follow FR-32 and FR-33. | Register and check token:null, absence of a newly created login session, and the waiting-for-verification state. Even a correct password cannot sign in an unverified user. Check verified-user login and confirm that logout prevents reuse of the previous session. | User confirmations on 2026-11-09; endpoints.json 1.2.0 |
 | FR-22 | Users can delete their own applications from the separate detail page. Deletion removes the record from the list and updates the relevant current Dashboard totals. Resume-library files and other applications' links remain intact. | Check the list and totals after deletion; confirm that library files and another application reusing the file are unaffected. | Prototype interaction confirmed; underlying soft/hard deletion and chat retention in §11 |
 | FR-23 | The list supports case-insensitive substring search by company or position. Status buttons cover All and the six statuses, each displaying its current count. Search and status filters apply together. Sorting supports newest first by default and company A–Z. | Search company/position fragments with different letter cases. Combine search with status filters and verify counts and empty results. Switch sorting; clearing search and selecting All restores the complete list. | Prototype search/filter/sort behavior confirmed by the user |
 | FR-24 | Application statuses are Saved, Applied, OA, Interview, Offer, and Rejected, with Saved as the default. Users can freely change status; changes are retained chronologically in the detail-page activity timeline. | New records default to Saved. Both sequential and cross-stage changes can be saved. History and current status are correct; static placeholder text does not substitute for actual history. | Status set and unrestricted editing confirmed; other activity events in §11 |
@@ -196,8 +200,8 @@ The checks below define how to verify functionality; they do not indicate that t
 
 | ID | Requirement | Acceptance Method | Source / Open Items |
 |---|---|---|---|
-| FR-32 | Provide email verification by sending a verification email to the registered address. After successful verification, record and display the account's verified status. | Use a test account that can receive email to check delivery, verification, and state after reload. Invalid verification credentials cannot change verification status. | Latest user confirmation; access before verification, resending, and credential expiration require clarification |
-| FR-33 | Provide a forgot-password/password-reset flow. Users verify through their registered email before setting a new password. | Receive the reset email and set a new password; the new password works and the old one does not. Invalid or already-used reset credentials cannot change the password. | Latest user confirmation; credential expiration and existing-session handling require clarification |
+| FR-32 | Registration automatically sends a verification email, and users can request another through a button. Each verification credential expires 15 minutes (900 seconds) after issuance. A replacement invalidates every earlier verification credential for that user without affecting password-reset credentials. The backend checks the latest valid credential before changing verification state. First successful verification records and displays the verified status and automatically establishes a login session; reopening a still-current link for an already-verified email does not guarantee a new session. | Receive real email, verify state persistence and automatic sign-in, and test expiry around the 900-second boundary. Issue a replacement and confirm that the old link fails while the new one works. Check isolation across users and purposes, including concurrent replacement/use; invalid credentials cannot change verification state or create a session. | User confirmations on 2026-11-09; detailed JSON, cookie, error, and redirect behavior in endpoints.json 1.2.0 |
+| FR-33 | Users request or resend a password-reset email through a button. Each reset credential expires 15 minutes (900 seconds) after issuance, and a replacement invalidates all earlier reset credentials for that user without affecting verification credentials. The email-link GET callback only validates and redirects; it neither consumes the credential nor extends its expiry. Submission of a new password repeats the authoritative latest-credential, expiry, and unused checks. Success atomically saves the new password, consumes the credential, and revokes all existing sessions for the user before reporting success. It does not create a new session; the user must sign in again. Invalid credentials cannot change the password or revoke sessions. | Receive real reset email; test latest/old links, expiry, repeated use, and a resend or expiry between the GET callback and password submission. Verify that concurrent submissions cannot both succeed, the new password works and the old one does not, and every old device session is rejected, including cached credentials. A request or resend alone must not revoke sessions. | User confirmations on 2026-11-09; endpoints.json 1.2.0; remaining delivery/configuration choices in §11 |
 | FR-34 | Users can delete their own library resumes even when applications reference them. Deletion removes all associated application links but retains the applications and their other information. The file no longer appears as a selectable resume and cannot be downloaded or retrieved as a current file. | Link a file to two applications, then delete it. Both links disappear while other fields remain unchanged; the file is absent from the library and selection lists. Old references cannot relink/download it. The next chat turn explains the missing material and continues limited assistance. | Latest user confirmation; historical messages remain unchanged, and in-progress responses follow FR-28's per-turn version rule |
 
 #### H. Standalone AI Entry and Position Selection
@@ -225,7 +229,11 @@ The following limits were established under the user's explicit authorization. T
 
 ### 5.3 Core User Flows
 
-**Application management:** Register/log in → Dashboard → Application Management list → use the filter, add-application, or central resume controls above the list; open an existing application → separate detail page → freely edit and save, including selecting an uploaded resume and updating status/interview arrangements. Adding an application opens a separate creation page; saving returns to the list.
+**Registration and verification:** Register → wait for the verification email without a login session → optionally request another email, invalidating earlier verification links → open the latest unexpired link → first successful verification updates the account and automatically signs the user in → load the session → Dashboard. An unverified user cannot bypass this flow by logging in or directly requesting business data.
+
+**Password recovery:** Request a reset email, or click to resend and invalidate earlier reset links → open the latest unexpired link → the GET callback validates and redirects to the new-password form → submit a new password → backend repeats credential checks, consumes the credential, updates the password, and revokes every existing session → sign in again. Issuing or opening a reset link alone does not change the password or revoke sessions.
+
+**Application management:** Log in with a verified email, or complete first verification with automatic sign-in → Dashboard → Application Management list → use the filter, add-application, or central resume controls above the list; open an existing application → separate detail page → freely edit and save, including selecting an uploaded resume and updating status/interview arrangements. Adding an application opens a separate creation page; saving returns to the list.
 
 **Starting from the standalone AI entry:** Main navigation AI Interview Copilot → search/filter existing applications by company/position keyword and status → select a position → create or reuse that application's workspace → click "New conversation" or open an existing conversation → send a message → backend authorization and retrieval → stream and save the response.
 
@@ -245,6 +253,14 @@ Navigation, layout, form groups, and visual direction follow the approved protot
 
 | Scenario | Expected Behavior |
 |---|---|
+| Registration succeeds but email is unverified | Return a null login token, create no login session, and show the waiting/resend flow. Business operations remain unavailable. |
+| An unverified user attempts login or a business API call | Reject on the backend. A correct password or hidden frontend controls cannot bypass the verification requirement. |
+| A verification/reset credential expires or is superseded | Reject it even if its link was previously opened or its signature is otherwise valid. A replacement affects only the same user and purpose. |
+| First email verification succeeds | Persist verified status and automatically establish a session. A null user field in the verification JSON does not by itself indicate sign-in failure; load the session using the defined contract. |
+| A reset GET succeeds, then the credential expires or is replaced before submission | Recheck during password submission and reject the stale credential without changing the password or sessions. |
+| A reset credential is submitted repeatedly or concurrently | At most one successful reset may consume it. Rejected attempts do not modify the password or sessions. |
+| Password reset succeeds on one device | Revoke all existing sessions for that user. Old cookies/tokens on every device cannot authorize later requests; this reset does not automatically sign the user in. |
+| Anonymous email-send/reset request returns a generic acknowledgement | Do not interpret acceptance as proof that an account exists or that email delivery succeeded. Show delivery/configuration failures where reported. |
 | Another user's or application's ID is supplied | The backend rejects unauthorized access or retrieval from the wrong application; system prompts alone are insufficient. |
 | New conversation in a workspace with existing materials | The user selects the position and explicitly creates the conversation. History starts empty, workspace materials remain available, and old conversations are retained. |
 | Direct AI entry before selecting a position | Show search/filtering and application selection. Do not allow an unbound conversation to be created or a message to be sent. |
@@ -369,22 +385,27 @@ The following is a manual checklist. Fix each check's input and expected result 
 | Database | PostgreSQL using `pg`, parameterized SQL, and `node-pg-migrate`; no ORM. |
 | Files | Original PDFs in private S3-compatible object storage; backend validation and text extraction. |
 | AI | Vercel AI SDK, an external LLM, bounded tool calling, multi-turn conversations, and streaming responses; corresponding React integration on the frontend. |
-| Authentication | Better Auth, PostgreSQL-backed sessions, Secure/HttpOnly cookies, and resource-ownership checks. |
+| Authentication | Better Auth, PostgreSQL-backed sessions, Secure/HttpOnly cookies, verified-email-only business access, and resource-ownership checks; automatic sign-in occurs after first successful email verification, not immediately after registration. |
 | API documentation | OpenAPI describing requests, responses, authentication, and errors. |
 
 Do not independently specify dependency versions, an LLM model/provider, an S3 provider, route paths, table names, or a deployment platform in this PRD.
 
 ### 7.2 Integration Constraints
 
-- Frontend and backend must agree on authentication/authorization, validation errors, file states, and streaming states; detailed API contracts are maintained separately.
+- Frontend and backend must agree on authentication/authorization, validation errors, file states, and streaming states. Authentication request/response models, cookie behavior, errors, and email-link redirects are recorded in `endpoints.json` version `1.2.0` and must implement this PRD's confirmed policy; documenting a contract does not establish that its backend behavior is implemented.
 - Database records and private-file access must retain user-ownership associations. The specific download-authorization mechanism remains to be designed.
 - AI retrieval reads authorized application records. The model cannot change the retrieval boundary by supplying an arbitrary workspace ID.
 - Material saves, version records, and conversation persistence must remain consistent. One generation per conversation, fixed versions during generation, and retry after interruption are confirmed; partial-message storage and retry deduplication remain open.
+- Backend credential handling must enforce the latest valid issuance for each user and purpose, coordinate replacement and validation atomically, and reject superseded links before verification or password changes. Verification and reset are separate purposes. Signature/expiry checks alone do not satisfy the replacement rule; it requires project-specific backend state beyond the default email-link behavior.
+- Password-reset submission must atomically validate and consume the current credential, update the password, and revoke all existing sessions before returning success. The GET callback must not consume the credential or extend its validity. Protected operations and session checks must use authoritative revocation state so stale cached sessions cannot remain usable after reset.
+- The confirmed 900-second lifetime applies to verification and password-reset credentials only. Session lifetime, resend cooldowns, and numerical rate limits remain configuration choices under §11; do not infer them from the email credential lifetime.
 - External model/storage quotas, costs, timeouts, and unavailability handling are not yet constrained. Do not assume unlimited calls or silent fallback.
 
 ### 7.3 Data Requirements
 
-Logical records include users/sessions, applications and detail fields, original resume-file references, extracted text, parsing status and version, individual shared-material versions, application workspace/conversation ownership, versions retrieved by each conversation, messages and tool results, conversation summaries, and material versions supporting historical answers.
+Logical records include users/sessions, authentication credentials and verification state, current email-credential issuance state per user and purpose, credential expiry/consumption/replacement state, applications and detail fields, original resume-file references, extracted text, parsing status and version, individual shared-material versions, application workspace/conversation ownership, versions retrieved by each conversation, messages and tool results, conversation summaries, and material versions supporting historical answers.
+
+The authentication/authorization owner also owns authentication-related database design and migrations, including the records required by the selected Better Auth configuration and the project's credential-replacement rules. This does not transfer the business database to that owner. Coordinate the shared user identity, primary-key type, business foreign keys, and migration ordering with the business database owner. Concrete table/column names and storage mechanisms belong in the implementation design; the PRD does not prescribe them.
 
 Personal notes belong to application details but are not in the sources' shared AI material list. Full history remains in the database; summaries do not replace original messages. Base materials use existing fields directly, without additional duplicate memory files.
 
@@ -409,7 +430,7 @@ This PRD will be handed to a coding agent without the context of this discussion
 | The requester's latest explicit confirmation | Highest priority for confirmed matters, including the personal library, error handling, performance, and scope decisions. Record these decisions in the PRD. |
 | Confirmed requirements in this PRD | Basis for implementation and acceptance. "Open" does not authorize the executor to choose product rules independently. |
 | AI_Design.md | Additional workspace, versioning, and context details; all recommendations in §6 have been adopted. This PRD takes precedence where older descriptions conflict with confirmed decisions. |
-| Project_Proposal.md | Product motivation, complete project scope, technology stack, and team plan. Its original description of uploading from application details has been refined to central-library upload followed by selection within applications. |
+| Project_Proposal.md | Product motivation, complete project scope, technology stack, and team plan. Its original description of uploading from application details has been refined to central-library upload followed by selection within applications. The latest user confirmation assigns authentication-related database design and migrations to the authentication/authorization owner; other assignments continue to follow the Proposal. |
 | Approved interactive prototype | Additional layout, visual direction, and control behavior. The standalone AI entry, position selection, and user-initiated conversation creation in v1.1 supersede the prototype's older behavior; see §5.5. Sample data, simulated PDF/AI behavior, and in-memory changes cannot replace the production backend, parsing, or chat persistence. |
 | Code, database, and API documentation | Evidence of the current implementation, not an automatic override of requirements. Report differences from the requirements. |
 
@@ -427,12 +448,12 @@ These priorities explain how to apply confirmed decisions; they do not authorize
 
 ### 8.3 Requirement Verification and Responsibilities
 
-The executor runs checks and provides evidence. Manual cross-review follows the Proposal's responsibilities for all team members. The PRD requester resolves open rules and requirement disputes. Feature contacts below are taken from the Proposal; this does not imply that the requester has reconfirmed every member's assignment.
+The executor runs checks and provides evidence. Manual cross-review follows the Proposal's responsibilities for all team members. The PRD requester resolves open rules and requirement disputes. Feature contacts below are taken from the Proposal, with authentication-related database work assigned to the authentication/authorization owner by the latest user confirmation; other personnel assignments have not been individually reconfirmed.
 
 | FR | Required Verification Evidence | Verifier / Issue Contact |
 |---|---|---|
-| FR-01 | Login landing page and access without a session | Executor; Zishi Yang / Justin Smith |
-| FR-02 | Rejections for cross-user/cross-application access and forged IDs | Executor; Zishi Yang / Jianye Zhou |
+| FR-01 | No session after registration; first verification automatically establishes a session and reaches Dashboard; ordinary verified-user login and anonymous access checks | Executor; Zishi Yang / Justin Smith |
+| FR-02 | Rejections for unverified business access, cross-user/cross-application access, forged IDs, and revoked sessions | Executor; Zishi Yang / Jianye Zhou |
 | FR-03 | Unapplied/rejected records included, separate interview-session counts, historical offers; 7-calendar-day window, status-chart navigation, and recent applications | Executor; Justin Smith / Zishi Yang |
 | FR-04 | Separate creation page; only company/position required, default Saved; save returns to list, cancel adds nothing | Executor; Zishi Yang / Justin Smith |
 | FR-05 | Top controls and table columns, separate details navigation, empty states, and narrow-screen layout | Executor; Justin Smith |
@@ -451,7 +472,7 @@ The executor runs checks and provides evidence. Manual cross-review follows the 
 | FR-18 | Each practice flow and AB-01/02 check records | Executor; Jianye Zhou; manual team review |
 | FR-19 | Streaming display, reload after completion, and ownership checks | Executor; Jianye Zhou |
 | FR-20 | Feedback saved as a message in the current conversation | Executor; Jianye Zhou |
-| FR-21 | Email/password registration and login, logout, and session invalidation | Executor; Zishi Yang / Justin Smith |
+| FR-21 | Registration token:null and waiting state; correct-password login rejected before verification; verified-user login, logout, and old-session rejection | Executor; Zishi Yang / Justin Smith |
 | FR-22 | List/totals update after deletion; library files and other applications' references remain intact | Executor; Zishi Yang / Rongxin Bi |
 | FR-23 | Company/position substring search, six statuses/All counts, combined filters, empty results, and both sort modes | Executor; Justin Smith / Zishi Yang |
 | FR-24 | Default Saved, free changes among six statuses, and actual change history | Executor; Zishi Yang / Rongxin Bi |
@@ -462,17 +483,31 @@ The executor runs checks and provides evidence. Manual cross-review follows the 
 | FR-29 | Per-conversation concurrency limit, concurrent users, interruption/retry, and failure notices | Executor; Jianye Zhou |
 | FR-30 | Limited assistance with missing materials/parsing failures and AB-06 checks | Executor; Jianye Zhou; manual team review |
 | FR-31 | Chrome/Edge core flows and concurrent-account usage records | Executor; all team members; requester assesses response experience |
-| FR-32 | Actual verification email, account-state update, and invalid-credential checks | Executor; Zishi Yang / Justin Smith |
-| FR-33 | Actual reset email, old/new password login checks, and invalid/used-credential checks | Executor; Zishi Yang / Justin Smith |
+| FR-32 | Real verification email and resend button; 900-second expiry, old-link rejection, user/purpose isolation, persisted verified status, and automatic first-verification session | Executor; authentication/authorization owner / Justin Smith |
+| FR-33 | Real reset email/resend; 900-second expiry, old/used-link rejection, GET-to-POST rechecks, concurrent consumption, new/old password checks, and revocation of every old device session without automatic login | Executor; authentication/authorization owner / Justin Smith |
 | FR-34 | All linked applications unlinked, applications retained, deleted file no longer selectable/downloadable, and next-turn chat behavior | Executor; Jianye Zhou / Rongxin Bi / Justin Smith |
 | FR-35 | Standalone navigation, existing-application search/filter/selection, empty states, ownership, and no creation/sending without a bound application | Executor; Jianye Zhou / Justin Smith |
+
+Authentication acceptance must include the following cases. These are required checks, not recorded passing results:
+
+| Case | Required Result |
+|---|---|
+| Register, then attempt login with the correct password and directly request business data | No login session exists; login and protected business access are rejected until verification. |
+| Complete the first verification with the latest valid link | Verified status persists and an automatically established session is available, including when the verification JSON has user:null. |
+| Use each credential immediately before and at/after its 900-second expiry | A still-current credential can work before expiry; expired credentials cannot complete verification or reset. |
+| Issue two links for the same user and purpose, then use each | The earlier link fails and only the latest valid link is accepted. Other users and the other purpose remain unaffected. |
+| Replace and use credentials concurrently | Atomic issuance/validation prevents a superseded credential from being accepted after its replacement. |
+| Pass the reset GET callback, then resend or let the credential expire before POST | The password submission fails and leaves the password and sessions unchanged. Opening a link does not extend its lifetime or consume it. |
+| Submit one reset credential twice, including concurrent submissions | At most one submission succeeds; rejected submissions cannot change the password or sessions. |
+| Complete reset while the user has sessions on multiple devices | New password works, old password fails, all old sessions are rejected by business APIs and session checks, and reset itself creates no new session. Repeat with the session-cache path exercised if one is used. |
+| Request or resend reset email without completing reset | Existing sessions are not revoked and the password is unchanged. |
 
 ### 8.4 When to Stop Affected Work and Escalate
 
 | Condition | Escalate To |
 |---|---|
 | Progress requires a decision on field validation, interview states, timeline events, or other rules still open in §11 | PRD requester; Jianye Zhou is the PRD contact |
-| Unresolved access before email verification, application/chat cascading, or recovery rules affect implementation | PRD requester; Zishi Yang / Rongxin Bi are technical contacts |
+| Account details still open in §11, application/chat cascading, or recovery rules affect implementation | PRD requester; authentication/authorization owner / Rongxin Bi are technical contacts |
 | A change to the established stack, file limits, scope, or service cost/capabilities is needed | PRD requester; the module owner explains the impact |
 | Version mixing or cross-user/cross-application data issues are found | Pause affected operations and notify the PRD requester and Zishi Yang / Jianye Zhou |
 | History compression, refresh-failure behavior, or retry semantics cannot be determined from the requirements | PRD requester; Jianye Zhou is the AI contact |
@@ -482,13 +517,14 @@ The executor runs checks and provides evidence. Manual cross-review follows the 
 
 ### 9.1 Dependencies
 
-Assignments follow the Proposal. The user confirmed the year during this discussion but did not individually reconfirm personnel. External-service status and code implementation have not been inspected.
+Assignments follow the Proposal except for the user's explicit confirmation that the authentication/authorization owner also owns authentication-related database work. This update does not reassign the business database or individually reconfirm other personnel. External-service availability and feature implementation are not established by this PRD.
 
-| Dependency | Proposal Contact | Status / Impact |
+| Dependency | Contact | Status / Impact |
 |---|---|---|
 | Requirements and acceptance rules | Jianye Zhou; requester resolves open items | UI, statuses, required fields, and search rules are confirmed; verify remaining field-validation details under §11. |
-| Database, SQL, migrations | Rongxin Bi | Must support personal-library reuse, application links, versions, and chat records. |
-| Authentication and application APIs | Zishi Yang | Email/password, verification, and reset are confirmed; access before verification and some application rules remain open. |
+| Business database, SQL, migrations | Rongxin Bi | Must support personal-library reuse, application links, versions, and chat records; coordinate user foreign keys and migration ordering with the authentication owner. |
+| Authentication database and migrations | Authentication/authorization owner | Own authentication records, verification/session state, and the state needed to enforce current credentials per user and purpose; provide the user-key and migration contract to other modules. |
+| Authentication and application APIs | Zishi Yang | Registration waits for verification; unverified login/business access is blocked; first verification automatically signs in; 900-second credential expiry, replacement, and reset-time session revocation are confirmed. Remaining application rules are in §11. |
 | Verification/reset email delivery | Zishi Yang | Requires a working email-delivery service and configuration. Provider selection is open; an on-screen notice cannot substitute for actual delivery. |
 | Non-AI frontend and OpenAPI | Justin Smith | Must align the upload dialog, application selection, and error-state contracts. |
 | Storage, PDF processing, AI frontend/backend | Jianye Zhou, supported by Rongxin Bi | Storage provider, model, and limits remain open. The personal library and parsing are dependencies for AI retrieval. |
@@ -503,6 +539,7 @@ Assignments follow the Proposal. The user confirmed the year during this discuss
 | Concurrent updates, generation, and saving | Mixed-version answers or incorrect sync records | Fix versions at generation start, update records only after successful saving, refresh next turn | Jianye Zhou / Rongxin Bi |
 | Summary omissions or model failure to follow prompts | Inaccurate subsequent answers | Keep current materials outside summaries and run lightweight component checks; do not claim model guarantees | Jianye Zhou |
 | Unauthorized access or data mixed across applications | Privacy exposure and incorrect preparation content | Backend ownership and context-isolation checks | Zishi Yang / Jianye Zhou |
+| Credential replacement races or stale revoked sessions | Old links or previous device sessions remain usable | Atomic checks of the latest credential per user/purpose, reset-time consumption/password/session transaction, and authoritative revocation checks | Authentication/authorization owner |
 | External-service unavailability or interrupted generation | File or chat workflow failures | Visible status, error notices, and retries; specific timeouts remain for implementation design | Jianye Zhou |
 | Optional capabilities consume delivery time | Delayed core workflows | Website reading, visual refinements, and Docker may be deferred | All team members |
 
@@ -512,7 +549,7 @@ Assignments follow the Proposal. The user confirmed the year during this discuss
 |---|---|---|
 | M1 Requirements and design confirmation | PRD, database design, APIs, and project structure; resolve open rules before work that depends on them | No additional date set |
 | M2 Core components and AI prototype | Authentication, creation/query operations, basic pages, sample tool calling, and streaming conversation | No additional date set |
-| M3 Complete non-AI workflow | Email registration/login/verification/password reset/logout, application CRUD, search/filtering, status history, Dashboard, resume-library upload/deletion, and integrated permissions | Before 2026-11-25; follows the Proposal, with the year confirmed by the user |
+| M3 Complete non-AI workflow | Registration waits for verification; first verification automatically signs in; verify 900-second credential expiry, replacement, and reset-time revocation of all old sessions; complete logout, application CRUD, search/filtering, status history, Dashboard, resume-library upload/deletion, and integrated permissions | Before 2026-11-25; follows the Proposal, with the year confirmed by the user |
 | M4 AI integration | Standalone AI position selection and application-context navigation, unique workspaces, user-created conversations, authorized retrieval, multi-conversation persistence, version refresh, compression, and error handling | No additional date set |
 | M5 Validation and delivery | Check core functionality and compatibility, fix issues, complete documentation, and have a teammate run and demonstrate the application from a clean environment | Final deadline not set, as requested by the user |
 
@@ -521,9 +558,9 @@ Assignments follow the Proposal. The user confirmed the year during this discuss
 The following remain undecided without invalidating confirmed scope. Answers come from the PRD requester. Application rules explicitly left open do not need to be forced into decisions during this discussion, but must be clarified before dependent implementation.
 
 1. **Remaining business details:** Whether interview type/time is required; whether interview states such as cancelled/completed are needed and how they affect counts; activity-timeline events beyond status changes; detailed field-length/URL validation; and pagination as data grows. The six application statuses, default Saved, company/position as the only required fields, company/position search and status filtering, two sort modes, the 7-calendar-day window, and updates to current totals after deletion are already confirmed and need not be reconfirmed.
-2. **Account details:** Email/password authentication, email verification, and password reset are confirmed. Whether an unverified email can log in/use features still needs confirmation. Define the email provider, verification/reset-credential expiration, resending, and handling of existing sessions after reset before implementation; do not independently remove functionality.
+2. **Remaining account configuration and delivery details:** Select the email provider, session lifetime, resend cooldown/rate-limit values, and the handling of credential replacement/retries when email sending fails. These choices have not been specified. Registration without a login session, blocking unverified login/business access, automatic sign-in after first verification, 900-second verification/reset credentials, button-triggered resending that supersedes earlier same-user/same-purpose links, and revocation of all old sessions after reset are confirmed requirements, not open questions. Do not infer a 900-second session lifetime or revoke sessions merely because a reset email was requested.
 3. **Application deletion:** Soft/hard deletion and retention/recovery of its chats remain open. Keeping resumes when deleting an application and removing all application links when deleting a library file are confirmed and no longer open questions.
 4. **AI implementation parameters and error details:** Model/provider, tool-call limits, summary thresholds/window, oversized base materials, partial-message persistence after interruption, retry deduplication, and explicit fallback after refresh failure. A complex evaluation or moderation system is not a prerequisite.
-5. **Other delivery details:** Whether conversation renaming/deletion is needed, the external storage provider, and notification of any changes to Proposal assignments. Page action labels and module names follow the approved prototype; developers determine route paths and component implementation.
+5. **Other delivery details:** Whether conversation renaming/deletion is needed, the external storage provider, and notification of any further changes to Proposal assignments. Authentication-related database ownership has already been confirmed under §9.1. Page action labels and module names follow the approved prototype; developers determine route paths and component implementation.
 
 Numerical performance/concurrency targets, a final deadline, complex AI refusal categories, and an evaluation platform are **not open items that must be completed for this release** and must not block delivery.

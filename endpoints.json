@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Job Application Tracker API",
-    "version": "1.1.0",
-    "description": "Job Application Tracker API with Better Auth email/password authentication. Applications and resumes are private to the authenticated user. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session. Registration, sign-in, password recovery, and the session-check endpoint are callable without a session. Password reset email delivery requires a configured sendResetPassword callback. Use CSRF protections and trusted origins provided by Better Auth for cookie-authenticated requests."
+    "version": "1.2.0",
+    "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests."
   },
   "servers": [
     {
@@ -41,7 +41,7 @@
         ],
         "operationId": "betterAuthSignUpEmail",
         "summary": "Register a new account",
-        "description": "Better Auth email/password registration; requires emailAndPassword.enabled. A successful response may establish a session via Set-Cookie unless verification or autoSignIn settings disable it.",
+        "description": "Registers with email and password and sends a verification email. Registration does not create a login session or issue a login-session cookie; the response token is null and the user must verify their email before signing in or accessing business features. The verification credential expires 900 seconds after issuance and is superseded by any later verification credential for that user. Configure emailAndPassword.enabled=true, emailAndPassword.requireEmailVerification=true, emailAndPassword.autoSignIn=false, and emailVerification.sendOnSignUp=true with a working emailVerification.sendVerificationEmail callback. With email enumeration protection, an already-registered email may also receive a generic success response; this response is not proof that a new account was created.",
         "security": [],
         "requestBody": {
           "required": true,
@@ -55,11 +55,11 @@
         },
         "responses": {
           "200": {
-            "description": "Request succeeded.",
+            "description": "Registration accepted without creating a login session. Await email verification; the token is null. A generic response may also be returned for an already-registered email.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BetterAuthSignInResult"
+                  "$ref": "#/components/schemas/BetterAuthSignUpResult"
                 }
               }
             }
@@ -104,7 +104,7 @@
         ],
         "operationId": "betterAuthSignInEmail",
         "summary": "Sign in with email and password",
-        "description": "Better Auth email/password sign-in. On success, the server establishes a session in an HttpOnly cookie.",
+        "description": "Signs in a user with a verified email and valid email/password credentials. On success, the server establishes a session in an HttpOnly cookie. An unverified email cannot obtain a session and is rejected with 403 EMAIL_NOT_VERIFIED. The frontend may offer the send-verification-email action; requesting a new verification email supersedes that user's earlier verification links.",
         "security": [],
         "requestBody": {
           "required": true,
@@ -138,7 +138,7 @@
             }
           },
           "401": {
-            "description": "Authentication is required or session is invalid.",
+            "description": "Invalid email or password.",
             "content": {
               "application/json": {
                 "schema": {
@@ -148,11 +148,15 @@
             }
           },
           "403": {
-            "description": "Action is prohibited or account is unverified.",
+            "description": "Email is not verified (EMAIL_NOT_VERIFIED), or the request origin is not trusted. No login session is created.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BetterAuthError"
+                },
+                "example": {
+                  "code": "EMAIL_NOT_VERIFIED",
+                  "message": "Email not verified"
                 }
               }
             }
@@ -209,7 +213,7 @@
         ],
         "operationId": "betterAuthGetSession",
         "summary": "Get active session",
-        "description": "Returns user and session for a valid cookie (or supported bearer session). When not signed in, Better Auth may return HTTP 200 with null; this endpoint is intentionally callable without credentials.",
+        "description": "Returns user and session for a valid cookie (or supported bearer session). When not signed in, or when the session has expired or been revoked, returns HTTP 200 with null. This endpoint is intentionally callable without credentials. Registration creates no session, so clients remain signed out until successful email verification. After verification, use this endpoint to load the automatically established session. After a successful password reset, every previously issued session is invalid; session checks must not accept stale cached credentials.",
         "security": [],
         "responses": {
           "200": {
@@ -232,6 +236,205 @@
         }
       }
     },
+    "/api/auth/send-verification-email": {
+      "post": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthSendVerificationEmail",
+        "summary": "Send an email verification link",
+        "description": "Button-triggered sending or resending of a verification link, using emailVerification.sendVerificationEmail. Registration also sends a verification email automatically. No signed-in session is required. Each issued verification credential expires after 900 seconds. Issuing a replacement invalidates all earlier verification credentials for that user, while leaving password-reset credentials unaffected. This latest-only rule requires project-specific backend state and atomic checks; it is not guaranteed by Better Auth's default signed verification links. For anonymous requests, a successful response does not disclose whether the email exists or is already verified and does not guarantee that a message was sent. With a session, the email must match the current unverified user. The email link opens GET /api/auth/verify-email. Resend cooldown and rate-limit values are not specified by this contract.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BetterAuthSendVerificationEmail"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request accepted without disclosing anonymous account existence or verification status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthSendVerificationEmailResult"
+                },
+                "example": {
+                  "status": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input, verification email delivery is not configured, or the signed-in user's email does not match or is already verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request origin or callback URL is not trusted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured rate limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/verify-email": {
+      "get": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthVerifyEmail",
+        "summary": "Verify an email address using an emailed token",
+        "description": "Validates the latest verification credential for the user, with an expiry of 900 seconds after issuance. Superseded credentials are rejected as INVALID_TOKEN, even if their signatures and expiry are otherwise valid. The backend must atomically coordinate credential issuance and validation to enforce this project-specific rule. No signed-in session is required. The first successful verification records emailVerified=true and automatically creates or refreshes a login session through Set-Cookie; configure emailVerification.autoSignInAfterVerification=true and emailVerification.expiresIn=900. Without callbackURL, verification returns JSON; with a trusted callbackURL, it redirects on success or appends an error code on failure. The JSON user field may still be null; query /api/auth/get-session to load the session. Reopening a still-current link for an already-verified email does not guarantee a new session. An untrusted callback URL is rejected before token processing and is never used as a redirect target.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "description": "Latest verification credential issued for this user. It expires 900 seconds after issuance and is invalidated by any replacement verification link. This is not the session token.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "callbackURL",
+            "in": "query",
+            "description": "Optional post-verification destination. May be a safe relative path or an absolute URL allowed by Better Auth's trusted-origin checks. A non-empty value selects redirect responses instead of JSON.",
+            "schema": {
+              "type": "string",
+              "format": "uri-reference"
+            },
+            "example": "/email-verified"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest credential accepted with no callback URL. First successful verification automatically establishes a login session. The user field may be null even after automatic sign-in; use get-session to load the session. An already-verified email may return success without creating a new session.",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/VerificationSessionCookie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthVerifyEmailResult"
+                },
+                "example": {
+                  "status": true,
+                  "user": null
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "Redirect to the trusted callback URL. First successful verification automatically establishes a session before redirecting. Success keeps the destination; invalid or superseded credentials append error=INVALID_TOKEN, expired credentials append error=TOKEN_EXPIRED, and a missing user may append error=USER_NOT_FOUND. No JSON response body.",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/VerificationSessionCookie"
+              },
+              "Location": {
+                "description": "Callback destination on success, or that destination with the verification error code appended on failure.",
+                "schema": {
+                  "type": "string",
+                  "format": "uri-reference"
+                },
+                "examples": {
+                  "verified": {
+                    "value": "/email-verified"
+                  },
+                  "invalidToken": {
+                    "value": "/email-verified?error=INVALID_TOKEN"
+                  },
+                  "expiredToken": {
+                    "value": "/email-verified?error=TOKEN_EXPIRED"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing required token or invalid query parameters; request validation failures are not callback redirects.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Verification failed without a callback URL: an invalid or superseded credential returns INVALID_TOKEN, a credential expired after 900 seconds returns TOKEN_EXPIRED, and a missing user returns USER_NOT_FOUND. This does not mean a signed-in session is required; no new session is created on failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                },
+                "examples": {
+                  "invalidToken": {
+                    "value": {
+                      "code": "INVALID_TOKEN",
+                      "message": "Invalid token"
+                    }
+                  },
+                  "expiredToken": {
+                    "value": {
+                      "code": "TOKEN_EXPIRED",
+                      "message": "Token expired"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The callback URL is not trusted. No redirect to the rejected URL is performed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured rate limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/request-password-reset": {
       "post": {
         "tags": [
@@ -239,7 +442,7 @@
         ],
         "operationId": "betterAuthRequestPasswordReset",
         "summary": "Request password reset email",
-        "description": "Sends password-reset link if the account exists. Requires emailAndPassword.sendResetPassword configuration. Do not expose whether an email address belongs to an account.",
+        "description": "Button-triggered initial request or resend of a password-reset link. Requires emailAndPassword.sendResetPassword and emailAndPassword.resetPasswordTokenExpiresIn=900. Each issued reset credential expires 900 seconds after issuance. Issuing a replacement invalidates all earlier password-reset credentials for that user, while leaving verification credentials unaffected. The backend must enforce this latest-only rule atomically; Better Auth's default creation of independent reset records is insufficient. Do not expose whether the email belongs to an account. The default email link opens GET /api/auth/reset-password/{token}, which redirects to redirectTo with a token or error query parameter. The frontend then submits token and newPassword to POST /api/auth/reset-password. Issuing a link does not change the password or revoke sessions; all existing sessions are revoked only after the password reset succeeds. Resend cooldown and rate-limit values are not specified by this contract.",
         "security": [],
         "requestBody": {
           "required": true,
@@ -253,11 +456,15 @@
         },
         "responses": {
           "200": {
-            "description": "Request succeeded.",
+            "description": "Request accepted without disclosing account existence. Any issued replacement credential is valid for 900 seconds and supersedes earlier reset credentials for that user; sessions are unchanged until a reset succeeds.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                  "$ref": "#/components/schemas/BetterAuthRequestPasswordResetResult"
+                },
+                "example": {
+                  "status": true,
+                  "message": "If this email exists in our system, check your email for the reset link"
                 }
               }
             }
@@ -285,6 +492,95 @@
         }
       }
     },
+    "/api/auth/reset-password/{token}": {
+      "get": {
+        "tags": [
+          "Better Auth"
+        ],
+        "operationId": "betterAuthResetPasswordCallback",
+        "summary": "Validate a password reset email link and redirect",
+        "description": "Callback used by the password-reset email URL. No signed-in session is required. Checks that the credential is the user's latest password-reset credential, is unconsumed, and has not expired 900 seconds after issuance. Redirects to callbackURL with token on success or error=INVALID_TOKEN for invalid, superseded, expired, or consumed credentials. This GET does not consume the credential, extend its expiry, change the password, or revoke sessions. The frontend must submit token and newPassword to POST /api/auth/reset-password, which must repeat the authoritative latest-credential and expiry checks. Untrusted callback URLs are rejected before token processing. An empty callbackURL redirects to the auth base URL's /error page with error=INVALID_TOKEN.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "description": "Latest password-reset credential issued for this user. It expires 900 seconds after issuance and is invalidated by a replacement reset link.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "callbackURL",
+            "in": "query",
+            "required": true,
+            "allowEmptyValue": true,
+            "description": "Reset-password frontend destination, copied from request-password-reset's redirectTo by the default email URL. Use a safe relative path or an absolute URL allowed by trusted-origin checks. Supply a non-empty destination for the normal frontend flow; an empty value leads to the auth /error page.",
+            "schema": {
+              "type": "string",
+              "format": "uri-reference"
+            },
+            "example": "/reset-password"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the reset-password page with token on success, or error=INVALID_TOKEN for an invalid, superseded, expired, or consumed credential. An empty callback URL redirects to the auth /error page. No JSON response body.",
+            "headers": {
+              "Location": {
+                "description": "Resolved callback URL with the token or error query parameter. Existing callback query parameters are retained.",
+                "schema": {
+                  "type": "string",
+                  "format": "uri-reference"
+                },
+                "examples": {
+                  "validToken": {
+                    "value": "http://localhost:3000/reset-password?token=example-reset-token"
+                  },
+                  "invalidToken": {
+                    "value": "http://localhost:3000/reset-password?error=INVALID_TOKEN"
+                  },
+                  "emptyCallback": {
+                    "value": "http://localhost:3000/api/auth/error?error=INVALID_TOKEN"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing callbackURL or invalid callback query parameters; request validation failures are not redirect responses.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The callback URL is not trusted. No redirect to the rejected URL is performed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured rate limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BetterAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/reset-password": {
       "post": {
         "tags": [
@@ -292,7 +588,7 @@
         ],
         "operationId": "betterAuthResetPassword",
         "summary": "Reset password using emailed token",
-        "description": "Uses the one-time reset token sent to the user. No signed-in session is required.",
+        "description": "Requires the user's latest unconsumed password-reset credential, valid for 900 seconds from issuance. Repeat the latest-credential and expiry checks even if the email-link GET callback previously accepted it; a resend or expiry between GET and POST must make the old credential fail. No signed-in session is required. Atomically validate and consume the credential, save the new password, and revoke all existing sessions for that user before reporting success; configure emailAndPassword.revokeSessionsOnPasswordReset=true and use transactional backend handling. Invalid, superseded, expired, or consumed credentials cannot change the password or revoke sessions. A successful reset does not create a new login session; all previous devices must sign in again. Protected APIs and get-session must check authoritative revocation state rather than accept stale cached sessions.",
         "security": [],
         "requestBody": {
           "required": true,
@@ -306,21 +602,28 @@
         },
         "responses": {
           "200": {
-            "description": "Request succeeded.",
+            "description": "Password changed, current reset credential consumed, and all existing sessions revoked. No new session is created; sign in again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BetterAuthSuccess"
+                  "$ref": "#/components/schemas/BetterAuthResetPasswordResult"
+                },
+                "example": {
+                  "status": true
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid request payload.",
+            "description": "Invalid request or invalid, superseded, expired after 900 seconds, or already-consumed reset credential. The password and sessions are unchanged on rejection.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BetterAuthError"
+                },
+                "example": {
+                  "code": "INVALID_TOKEN",
+                  "message": "Invalid token"
                 }
               }
             }
@@ -595,6 +898,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
           }
         }
       },
@@ -639,6 +945,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationError"
           }
@@ -670,6 +979,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -710,6 +1022,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
@@ -730,6 +1045,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -765,6 +1083,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
           }
         }
       },
@@ -815,6 +1136,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
@@ -850,6 +1174,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
           "404": {
             "$ref": "#/components/responses/NotFound"
           }
@@ -868,6 +1195,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -916,6 +1246,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
           "404": {
             "$ref": "#/components/responses/NotFound"
           }
@@ -924,6 +1257,14 @@
     }
   },
   "components": {
+    "headers": {
+      "VerificationSessionCookie": {
+        "description": "HttpOnly login-session cookie issued or refreshed after the first successful email verification. May be absent when reopening an already-verified link or when verification fails. Clients can use get-session to load the authenticated user even when the verification JSON contains user:null.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
     "securitySchemes": {
       "cookieAuth": {
         "type": "apiKey",
@@ -1338,7 +1679,7 @@
           "callbackURL": {
             "type": "string",
             "format": "uri",
-            "description": "Optional post-registration redirect."
+            "description": "Optional trusted post-verification destination included in the registration verification email link. Registration itself does not establish a login session."
           }
         }
       },
@@ -1410,19 +1751,62 @@
           }
         }
       },
-      "BetterAuthSignInResult": {
+      "BetterAuthSignUpResult": {
         "type": "object",
-        "description": "Successful sign-in/sign-up response. Better Auth can vary response fields with configuration.",
+        "description": "Registration response while email verification is required. No login session is created. Generic duplicate-email responses may use a synthetic user for enumeration protection.",
+        "required": [
+          "token",
+          "user"
+        ],
         "properties": {
           "token": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Session token value. Browser sessions are also set in cookies."
+            "type": "null",
+            "description": "Always null because registration does not establish a login session."
           },
           "user": {
-            "$ref": "#/components/schemas/BetterAuthUser"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BetterAuthUser"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "emailVerified": {
+                    "const": false
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "BetterAuthSignInResult": {
+        "type": "object",
+        "description": "Successful email/password sign-in for an email-verified user. Registration uses the separate BetterAuthSignUpResult schema.",
+        "required": [
+          "token",
+          "user",
+          "redirect"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "New session token. The browser login-session cookie is also set."
+          },
+          "user": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BetterAuthUser"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "emailVerified": {
+                    "const": true
+                  }
+                }
+              }
+            ]
           },
           "redirect": {
             "type": "boolean"
@@ -1495,6 +1879,93 @@
           }
         }
       },
+      "BetterAuthSendVerificationEmail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Email address to verify. With an active session, this must match the current user's unverified email address."
+          },
+          "callbackURL": {
+            "type": "string",
+            "format": "uri-reference",
+            "description": "Optional safe relative path or trusted absolute URL to visit after verification. If omitted, Better Auth's generated verification link uses / as its callback."
+          }
+        }
+      },
+      "BetterAuthSendVerificationEmailResult": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "boolean",
+            "description": "True when the request is accepted; for anonymous requests this does not reveal account existence or guarantee email delivery.",
+            "example": true
+          }
+        }
+      },
+      "BetterAuthVerifyEmailResult": {
+        "type": "object",
+        "required": [
+          "status",
+          "user"
+        ],
+        "properties": {
+          "status": {
+            "type": "boolean",
+            "example": true
+          },
+          "user": {
+            "description": "May be null even when the first successful verification has automatically established a session. Use get-session to load that session. Reopening an already-verified link may also return null without creating a new session.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BetterAuthUser"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BetterAuthRequestPasswordResetResult": {
+        "type": "object",
+        "description": "Generic acknowledgement for initial or repeated password-reset requests. Does not disclose whether the account exists or guarantee email delivery.",
+        "required": [
+          "status",
+          "message"
+        ],
+        "properties": {
+          "status": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": "If this email exists in our system, check your email for the reset link"
+          }
+        }
+      },
+      "BetterAuthResetPasswordResult": {
+        "type": "object",
+        "description": "Returned after saving the new password, consuming the current reset credential, and revoking every existing session for this user. Does not establish a new session; the user must sign in again.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "BetterAuthRequestPasswordReset": {
         "type": "object",
         "additionalProperties": false,
@@ -1509,7 +1980,7 @@
           "redirectTo": {
             "type": "string",
             "format": "uri",
-            "description": "Reset-password frontend URL."
+            "description": "Trusted reset-password frontend URL. Better Auth includes this destination as callbackURL in GET /api/auth/reset-password/{token}; that callback appends token on success or error=INVALID_TOKEN on failure. Supply this URL for the normal frontend flow; if omitted, the default email-link callback leads to the auth /error page."
           }
         }
       },
@@ -1523,7 +1994,7 @@
         "properties": {
           "token": {
             "type": "string",
-            "description": "Single-use token from the password-reset link."
+            "description": "Latest, unconsumed password-reset credential for the user, valid for 900 seconds from issuance. A replacement reset link immediately invalidates this credential."
           },
           "newPassword": {
             "type": "string",
@@ -1611,6 +2082,22 @@
       }
     },
     "responses": {
+      "EmailNotVerified": {
+        "description": "The session's user has not verified their email. Protected business operations require both a valid session and a currently verified email.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "EMAIL_NOT_VERIFIED",
+                "message": "Verify your email before accessing this resource."
+              }
+            }
+          }
+        }
+      },
       "BadRequest": {
         "description": "Invalid request body or query parameters.",
         "content": {
