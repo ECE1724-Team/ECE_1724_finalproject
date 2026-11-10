@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Job Application Tracker API",
-    "version": "1.2.0",
-    "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests."
+    "version": "1.3.0",
+    "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests. AI Copilot contracts follow PRD 1.2, AI_Design.md, and Database_Design.md 1.2. AI operations require the same authoritative session, verified-email, and ownership checks. These contracts describe planned behavior, not deployed endpoints; explicitly marked retry and failure-policy proposals remain subject to the listed decisions."
   },
   "servers": [
     {
@@ -31,6 +31,10 @@
     {
       "name": "Resumes",
       "description": "Upload and manage resumes."
+    },
+    {
+      "name": "AI Copilot",
+      "description": "Application-bound workspaces, independent conversations, saved material provenance, and streamed generation. Navigation and blank-conversation creation never invoke the model or material tools."
     }
   ],
   "paths": {
@@ -1254,6 +1258,533 @@
           }
         }
       }
+    },
+    "/api/v1/ai/applications": {
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "listAiApplications",
+        "summary": "List applications for AI position selection",
+        "description": "Read the current user's existing active applications without creating workspaces, conversations, retrievals, or model calls. Apply literal case-insensitive substring search to companyName or jobTitle and combine it with the optional status filter. Omit status for All. Use the same PRD matching rules as Application Management. An empty list supports the no-applications/no-matches UI and its route to Application Management.",
+        "responses": {
+          "200": {
+            "description": "List applications for AI position selection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiApplicationList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Literal company/position substring; an omitted or empty value applies no keyword filter. SQL wildcard characters are literals.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/AiApplicationStatus"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/applications/{applicationId}/ai-workspace": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ApplicationId"
+        }
+      ],
+      "put": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "ensureAiWorkspace",
+        "summary": "Create or reuse an application workspace",
+        "description": "Idempotently ensure the owned application's unique workspace exists, using the application uniqueness constraint under concurrent requests. Return 200 for both creation and reuse. No request body, detached project, conversation, material retrieval, or model call is created. Save pending application edits successfully before calling this entry action. The material metadata reflects saved application fields only.",
+        "responses": {
+          "200": {
+            "description": "Create or reuse an application workspace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiWorkspace"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/workspaces/{workspaceId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiWorkspaceId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "getAiWorkspace",
+        "summary": "Get an AI workspace",
+        "description": "Read current header information and material-version metadata from the linked owned application. This does not retrieve material text into a conversation or synchronize any conversation. A changed application does not rebind existing conversations.",
+        "responses": {
+          "200": {
+            "description": "Get an AI workspace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiWorkspace"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/workspaces/{workspaceId}/conversations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiWorkspaceId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "listAiConversations",
+        "summary": "List independent workspace conversations",
+        "description": "Return only this workspace's conversations. Listing never imports another conversation's history or calls the model.",
+        "responses": {
+          "200": {
+            "description": "List independent workspace conversations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiConversationList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "createAiConversation",
+        "summary": "Create an empty conversation",
+        "description": "Called only for an explicit New conversation action after selecting an application. No request body is needed. Create an immutable workspace binding with no messages, summaries, or material-state rows; title and activeGenerationId are null and materialState is empty. Do not call the model or retrieval tools. Existing conversations remain unchanged.",
+        "responses": {
+          "201": {
+            "description": "Create an empty conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiConversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/conversations/{conversationId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiConversationId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "getAiConversation",
+        "summary": "Get conversation state",
+        "description": "Resolve ownership through conversation -> workspace -> application. Return saved sync state and any active attempt; this read does not refresh materials, start a model call, or expose internal compression text.",
+        "responses": {
+          "200": {
+            "description": "Get conversation state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiConversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/conversations/{conversationId}/messages": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiConversationId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "listAiMessages",
+        "summary": "Read persisted conversation history",
+        "description": "Return this conversation's full stored messages, including tool records, feedback, and user-requested summaries. Resolve tool retrieval references only through the same conversation. Internal compression does not replace this history. Reading history does not include another thread or initiate generation.",
+        "responses": {
+          "200": {
+            "description": "Read persisted conversation history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiMessageList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/conversations/{conversationId}/generations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiConversationId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "listAiGenerations",
+        "summary": "List conversation generation attempts",
+        "description": "Read durable execution records for this conversation, including preparing, failed, and interrupted attempts. Use after reconnecting or losing the accepted event to inspect acceptance before resubmitting. It neither resumes a stream nor performs retry/deduplication.",
+        "responses": {
+          "200": {
+            "description": "List conversation generation attempts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiGenerationList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "createAiGeneration",
+        "summary": "Send a message and stream a response",
+        "description": "Accept a new user input and create one preparing attempt atomically after authorization. Only one preparing/streaming attempt may exist per conversation; an active conflict returns 409 without saving the rejected input. Backend tools compare versions and selectively refresh changed materials from one snapshot, then save retrievals, all six associations, and sync pointers atomically before answer generation. Unchanged material content remains in every request independently of history compression. Missing materials allow limited assistance. Tool calls and final replies are persisted in this conversation; complete answers and completed status commit together. No model or network wait occurs inside a database transaction. Errors before stream establishment use JSON HTTP responses. Once the response begins, failures use generation.error where possible; a dropped connection may have no terminal event. Do not treat EOF as completion or automatically repeat POST: read the generation or attempt list to reconcile durable state. Stream resumption/replay and request-key deduplication are not guaranteed by this contract. Retry/fallback/partial-output choices remain explicitly open.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AiGenerationStream"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          },
+          "409": {
+            "$ref": "#/components/responses/AiGenerationConflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSendMessage"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai/conversations/{conversationId}/generations/{generationId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiConversationId"
+        },
+        {
+          "$ref": "#/components/parameters/AiGenerationId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "getAiGeneration",
+        "summary": "Get durable generation status",
+        "description": "Require the generation to belong to the authorized path conversation. Read status, input association, fixed materials, and saved final-message identity. A completed record proves final persistence; transport closure does not. Reading never starts another attempt or exposes operational lease/model secrets.",
+        "responses": {
+          "200": {
+            "description": "Get durable generation status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiGeneration"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/conversations/{conversationId}/generations/{generationId}/retry": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiConversationId"
+        },
+        {
+          "$ref": "#/components/parameters/AiGenerationId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "retryAiGeneration",
+        "summary": "Retry an interrupted or failed generation",
+        "description": "Proposed contract pending the retry decisions in PRD section 11 and Database Design section 5.7. Resolve the path attempt within its conversation and retain its original user input; create a new attempt with a new identity and recheck current materials. Preserve the previous attempt, saved tool records, and any successful material synchronization. No request body or client replacement history is accepted. Reuse the generation SSE transport. Eligibility, duplicate retry requests, key scope/retention, and partial-output handling must be agreed before this route is exposed; this description does not declare those rules approved.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AiGenerationStream"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          },
+          "409": {
+            "description": "The conversation has an active generation or the request is ineligible under the agreed retry policy; no new attempt is accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "RETRY_CONFLICT",
+                    "message": "The conversation has an active generation or the request is ineligible under the agreed retry policy; no new attempt is accepted."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-design-status": "proposed-pending-retry-policy"
+      }
+    },
+    "/api/v1/ai/conversations/{conversationId}/material-retrievals/{retrievalId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AiConversationId"
+        },
+        {
+          "$ref": "#/components/parameters/AiRetrievalId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Copilot"
+        ],
+        "operationId": "getAiMaterialRetrieval",
+        "summary": "Read a saved conversation material result",
+        "description": "Require the retrieval to belong to the authorized path conversation. Return the immutable content and version actually retrieved, including explicit absence. This is historical provenance, not a live-material read, a download credential, or permission to relink a deleted resume. Old results remain readable with retained conversation history but never become current merely because this endpoint is called.",
+        "responses": {
+          "200": {
+            "description": "Read a saved conversation material result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiMaterialRetrieval"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/AiServiceUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1318,6 +1849,46 @@
           "minimum": 1,
           "maximum": 100,
           "default": 20
+        }
+      },
+      "AiWorkspaceId": {
+        "name": "workspaceId",
+        "in": "path",
+        "required": true,
+        "description": "Resource UUID. Validate ownership and all parent relationships in this route.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "AiConversationId": {
+        "name": "conversationId",
+        "in": "path",
+        "required": true,
+        "description": "Resource UUID. Validate ownership and all parent relationships in this route.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "AiGenerationId": {
+        "name": "generationId",
+        "in": "path",
+        "required": true,
+        "description": "Resource UUID. Validate ownership and all parent relationships in this route.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "AiRetrievalId": {
+        "name": "retrievalId",
+        "in": "path",
+        "required": true,
+        "description": "Resource UUID. Validate ownership and all parent relationships in this route.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -1409,7 +1980,22 @@
             }
           },
           "notes": {
-            "type": "string"
+            "type": "string",
+            "description": "Personal notes. Excluded from automatic AI base materials; use companyNotes for shared company background."
+          },
+          "companyWebsiteUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional saved company website URL, separate from jobUrl. AI retrieves this URL as a base material; saving it does not fetch a webpage. Omission on full replacement clears it. Detailed URL validation remains open."
+          },
+          "companyNotes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional company background notes shared by this application's conversations. Separate from personal notes. Omission on full replacement clears them."
           }
         }
       },
@@ -2079,6 +2665,1683 @@
         "type": "object",
         "description": "Generic Better Auth success response. Fields can vary with library configuration.",
         "additionalProperties": true
+      },
+      "AiRevision": {
+        "type": "string",
+        "pattern": "^[1-9][0-9]*$",
+        "description": "Positive BIGINT revision or sequence encoded as a decimal string without precision loss."
+      },
+      "AiApplicationStatus": {
+        "type": "string",
+        "enum": [
+          "saved",
+          "applied",
+          "oa",
+          "interview",
+          "offer",
+          "rejected"
+        ],
+        "description": "Canonical PRD status for AI position selection; not the older ApplicationStatus enum."
+      },
+      "AiApplicationOption": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "companyName",
+          "jobTitle",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyName": {
+            "type": "string"
+          },
+          "jobTitle": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AiApplicationStatus"
+          }
+        },
+        "description": "Projection of an existing owned application. Selection does not create another application or a conversation."
+      },
+      "AiApplicationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiApplicationOption"
+            }
+          }
+        },
+        "description": "All matches in the current contract, newest application first with ID as a stable tie-breaker; an empty array means no matches. Pagination and limits remain open; do not silently truncate."
+      },
+      "AiMaterialKind": {
+        "type": "string",
+        "enum": [
+          "resume",
+          "jd",
+          "company",
+          "position",
+          "company_website_url",
+          "company_notes"
+        ]
+      },
+      "AiMaterialVersion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "materialRevision",
+          "availability",
+          "sourceResumeId",
+          "sourceContentVersion",
+          "reasonCode"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/AiMaterialKind"
+          },
+          "materialRevision": {
+            "$ref": "#/components/schemas/AiRevision"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ]
+          },
+          "sourceResumeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sourceContentVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasonCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable reason for known absence, for example RESUME_NOT_LINKED or FIELD_MISSING; null when available. Retrieval failures are not absence."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "availability": {
+                  "const": "available"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "reasonCode": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "jd",
+                    "company",
+                    "position",
+                    "company_website_url",
+                    "company_notes"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "sourceResumeId": {
+                  "type": "null"
+                },
+                "sourceContentVersion": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "resume"
+                },
+                "availability": {
+                  "const": "available"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "sourceResumeId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "sourceContentVersion": {
+                  "$ref": "#/components/schemas/AiRevision"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AiMaterialReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "materialRevision",
+          "availability",
+          "sourceResumeId",
+          "sourceContentVersion",
+          "reasonCode",
+          "retrievalId"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/AiMaterialKind"
+          },
+          "materialRevision": {
+            "$ref": "#/components/schemas/AiRevision"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ]
+          },
+          "sourceResumeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sourceContentVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasonCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable reason for known absence, for example RESUME_NOT_LINKED or FIELD_MISSING; null when available. Retrieval failures are not absence."
+          },
+          "retrievalId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "description": "A saved conversation-scoped retrieval fixed for a generation or recorded as successfully synchronized. Historical resume IDs do not authorize file access.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "availability": {
+                  "const": "available"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "reasonCode": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "jd",
+                    "company",
+                    "position",
+                    "company_website_url",
+                    "company_notes"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "sourceResumeId": {
+                  "type": "null"
+                },
+                "sourceContentVersion": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "resume"
+                },
+                "availability": {
+                  "const": "available"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "sourceResumeId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "sourceContentVersion": {
+                  "$ref": "#/components/schemas/AiRevision"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AiCurrentMaterials": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resume",
+          "jd",
+          "company",
+          "position",
+          "company_website_url",
+          "company_notes"
+        ],
+        "properties": {
+          "resume": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialVersion"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "resume"
+                  }
+                }
+              }
+            ]
+          },
+          "jd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialVersion"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "jd"
+                  }
+                }
+              }
+            ]
+          },
+          "company": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialVersion"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company"
+                  }
+                }
+              }
+            ]
+          },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialVersion"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "position"
+                  }
+                }
+              }
+            ]
+          },
+          "company_website_url": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialVersion"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company_website_url"
+                  }
+                }
+              }
+            ]
+          },
+          "company_notes": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialVersion"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company_notes"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "description": "Exactly one entry per approved kind, including known absences."
+      },
+      "AiGenerationMaterials": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resume",
+          "jd",
+          "company",
+          "position",
+          "company_website_url",
+          "company_notes"
+        ],
+        "properties": {
+          "resume": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "resume"
+                  }
+                }
+              }
+            ]
+          },
+          "jd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "jd"
+                  }
+                }
+              }
+            ]
+          },
+          "company": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company"
+                  }
+                }
+              }
+            ]
+          },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "position"
+                  }
+                }
+              }
+            ]
+          },
+          "company_website_url": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company_website_url"
+                  }
+                }
+              }
+            ]
+          },
+          "company_notes": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company_notes"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "description": "Exactly one entry per approved kind, including known absences."
+      },
+      "AiConversationMaterialState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "resume": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "resume"
+                  }
+                }
+              }
+            ]
+          },
+          "jd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "jd"
+                  }
+                }
+              }
+            ]
+          },
+          "company": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company"
+                  }
+                }
+              }
+            ]
+          },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "position"
+                  }
+                }
+              }
+            ]
+          },
+          "company_website_url": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company_website_url"
+                  }
+                }
+              }
+            ]
+          },
+          "company_notes": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMaterialReference"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "company_notes"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "description": "Successfully saved state only. Empty before the first message. It may lag current workspace versions until the next send."
+      },
+      "AiLinkedResume": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "contentVersion"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "contentVersion": {
+            "$ref": "#/components/schemas/AiRevision"
+          }
+        },
+        "description": "Current successful, non-deleted linked resume. No storage key or download credential is exposed."
+      },
+      "AiWorkspace": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "applicationId",
+          "companyName",
+          "jobTitle",
+          "linkedResume",
+          "materials",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "applicationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyName": {
+            "type": "string"
+          },
+          "jobTitle": {
+            "type": "string"
+          },
+          "linkedResume": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiLinkedResume"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "materials": {
+            "$ref": "#/components/schemas/AiCurrentMaterials"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Current application-backed workspace view. Material metadata is read without creating retrievals or advancing conversation sync state. Use the conversation-list route for independent threads."
+      },
+      "AiConversation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "workspaceId",
+          "title",
+          "activeGenerationId",
+          "materialState",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activeGenerationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "materialState": {
+            "$ref": "#/components/schemas/AiConversationMaterialState"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Permanently bound to one workspace. title is nullable display metadata, not authorization for rename controls. Reading does not refresh materials or call the model."
+      },
+      "AiConversationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiConversation"
+            }
+          }
+        },
+        "description": "All conversations in the owned workspace, updatedAt descending then ID. No pagination limit is prescribed; no silent truncation."
+      },
+      "AiGenerationStatus": {
+        "type": "string",
+        "enum": [
+          "preparing",
+          "streaming",
+          "completed",
+          "failed",
+          "interrupted"
+        ]
+      },
+      "AiFailure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "description": "Safe machine-readable failure and user-facing explanation; contains no credentials or private infrastructure details."
+      },
+      "AiGeneration": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "conversationId",
+          "inputMessageId",
+          "status",
+          "materials",
+          "snapshotAt",
+          "assistantMessageId",
+          "error",
+          "startedAt",
+          "completedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inputMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AiGenerationStatus"
+          },
+          "materials": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiGenerationMaterials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshotAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "assistantMessageId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "description": "Read-only attempt state. Preparing may have no snapshot. Failed/interrupted attempts retain any committed snapshot. streaming means preparation committed and generation is in progress; it does not guarantee a first text token. Internal leases, request keys, prompts, and provider configuration are not exposed.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "streaming",
+                    "completed"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "materials": {
+                  "$ref": "#/components/schemas/AiGenerationMaterials"
+                },
+                "snapshotAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "assistantMessageId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "error": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "assistantMessageId": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "preparing",
+                    "streaming"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "completedAt": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "completedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "materials": {
+                  "type": "null"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "snapshotAt": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "snapshotAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AiGenerationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiGeneration"
+            }
+          }
+        },
+        "description": "Persisted attempts for this conversation, startedAt descending then ID. Supports recovery if a connection is lost before the client receives the accepted event. No silent truncation or implicit retry."
+      },
+      "AiMaterialRetrieval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "materialRevision",
+          "availability",
+          "sourceResumeId",
+          "sourceContentVersion",
+          "reasonCode",
+          "id",
+          "conversationId",
+          "toolMessageId",
+          "retrievedAt",
+          "contentText"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/AiMaterialKind"
+          },
+          "materialRevision": {
+            "$ref": "#/components/schemas/AiRevision"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ]
+          },
+          "sourceResumeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sourceContentVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasonCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable reason for known absence, for example RESUME_NOT_LINKED or FIELD_MISSING; null when available. Retrieval failures are not absence."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "toolMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "retrievedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "contentText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "description": "Immutable saved material result. Available results contain exact historical text; unavailable results contain no text. Reading this record never rereads or restores a current application/resume.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "availability": {
+                  "const": "available"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "reasonCode": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "reasonCode": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "jd",
+                    "company",
+                    "position",
+                    "company_website_url",
+                    "company_notes"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "sourceResumeId": {
+                  "type": "null"
+                },
+                "sourceContentVersion": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "resume"
+                },
+                "availability": {
+                  "const": "available"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "sourceResumeId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "sourceContentVersion": {
+                  "$ref": "#/components/schemas/AiRevision"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "availability": {
+                  "const": "available"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "contentText": {
+                  "type": "string"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "contentText": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AiTextPart": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "text"
+        ],
+        "properties": {
+          "type": {
+            "const": "text"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "AiToolCallPart": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "toolName",
+          "executionId",
+          "providerCallId",
+          "arguments"
+        ],
+        "properties": {
+          "type": {
+            "const": "tool-call"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "providerCallId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arguments": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "description": "Actual application tool execution metadata. A providerCallId is present only for a real provider tool call. Tool arguments never establish ownership or override the authorized conversation scope."
+      },
+      "AiMaterialToolResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "retrievalIds"
+        ],
+        "properties": {
+          "type": {
+            "const": "materials"
+          },
+          "retrievalIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "description": "Resolve each ID through the same conversation's material-retrieval route; the saved content is authoritative, not current application fields."
+      },
+      "AiWebsiteToolResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "sourceUrl",
+          "retrievedAt",
+          "contentText"
+        ],
+        "properties": {
+          "type": {
+            "const": "website"
+          },
+          "sourceUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "retrievedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "contentText": {
+            "type": "string"
+          }
+        },
+        "description": "Optional website-reading output, separate from company_website_url base material. An unchanged URL does not establish freshness. Website reading is not required for core acceptance."
+      },
+      "AiToolResultPart": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "toolName",
+          "executionId",
+          "providerCallId",
+          "status",
+          "result",
+          "error"
+        ],
+        "properties": {
+          "type": {
+            "const": "tool-result"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "providerCallId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AiMaterialToolResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AiWebsiteToolResult"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AiFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "succeeded"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "result": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AiMaterialToolResult"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AiWebsiteToolResult"
+                    }
+                  ]
+                },
+                "error": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "result": {
+                  "type": "null"
+                },
+                "error": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AiMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "conversationId",
+          "generationId",
+          "sequenceNo",
+          "role",
+          "parts",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "generationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sequenceNo": {
+            "$ref": "#/components/schemas/AiRevision"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "tool"
+            ]
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AiTextPart"
+                },
+                {
+                  "$ref": "#/components/schemas/AiToolCallPart"
+                },
+                {
+                  "$ref": "#/components/schemas/AiToolResultPart"
+                }
+              ]
+            },
+            "minItems": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Persisted application message format, not raw provider JSON. User inputs have no generationId; attempts reference them using inputMessageId. Tool/assistant records belong to their attempt. Feedback and user-requested summaries are ordinary assistant messages. Internal compression summaries and system prompts are not returned.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "role": {
+                  "const": "user"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "generationId": {
+                  "type": "null"
+                },
+                "parts": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AiTextPart"
+                  },
+                  "minItems": 1
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "generationId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AiMessageList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiMessage"
+            }
+          }
+        },
+        "description": "Full persisted history ordered by numeric sequenceNo ascending; decimal strings must not be sorted lexicographically. Compression never removes these records. In-flight text deltas are not proof of persisted messages; partial-output policy remains open. Pagination is not prescribed and history must not be silently truncated."
+      },
+      "AiSendMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "description": "Actual user input after any shortcut editing. Whitespace-only input is invalid; length limits remain open."
+          }
+        },
+        "description": "Only a new user text is accepted. Do not accept caller-supplied roles, history, material contents/versions, model settings, workspace IDs, or system prompts. The server derives context from the authorized conversation."
+      },
+      "AiGenerationAcceptedEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "generationId",
+          "inputMessage"
+        ],
+        "properties": {
+          "type": {
+            "const": "generation.accepted"
+          },
+          "generationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inputMessage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMessage"
+              },
+              {
+                "properties": {
+                  "role": {
+                    "const": "user"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "description": "Emitted after the accepted user input and preparing attempt commit. For a proposed explicit retry, inputMessage is the previously persisted user input. It is not evidence of material synchronization or successful answer generation."
+      },
+      "AiMaterialSyncEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "generationId",
+          "snapshotAt",
+          "materials",
+          "changedKinds"
+        ],
+        "properties": {
+          "type": {
+            "const": "materials.synced"
+          },
+          "generationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "snapshotAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "materials": {
+            "$ref": "#/components/schemas/AiGenerationMaterials"
+          },
+          "changedKinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiMaterialKind"
+            },
+            "uniqueItems": true
+          }
+        },
+        "description": "Emitted only after atomic preparation commits. changedKinds includes first-time, changed, or newly unavailable states; it is empty for complete reuse. All six saved references remain present. Display sync/absence notices without labeling missing materials as retrieved text."
+      },
+      "AiTextDeltaEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "generationId",
+          "delta"
+        ],
+        "properties": {
+          "type": {
+            "const": "text.delta"
+          },
+          "generationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "delta": {
+            "type": "string"
+          }
+        },
+        "description": "Append text in received order. Deltas are provisional until generation.completed; do not count them as saved messages."
+      },
+      "AiGenerationCompletedEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "generation",
+          "message"
+        ],
+        "properties": {
+          "type": {
+            "const": "generation.completed"
+          },
+          "generation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiGeneration"
+              },
+              {
+                "properties": {
+                  "status": {
+                    "const": "completed"
+                  }
+                }
+              }
+            ]
+          },
+          "message": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiMessage"
+              },
+              {
+                "properties": {
+                  "role": {
+                    "const": "assistant"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "description": "Terminal success emitted only after the final answer and completed status commit atomically. message.id matches generation.assistantMessageId, and message.generationId matches generation.id."
+      },
+      "AiGenerationErrorEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "generationId",
+          "stage",
+          "error",
+          "statePersisted"
+        ],
+        "properties": {
+          "type": {
+            "const": "generation.error"
+          },
+          "generationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "preparation",
+              "context",
+              "generation",
+              "persistence"
+            ]
+          },
+          "error": {
+            "$ref": "#/components/schemas/AiFailure"
+          },
+          "statePersisted": {
+            "type": "boolean"
+          }
+        },
+        "description": "Terminal failure notification, not a success marker. statePersisted=false means the durable terminal state is unavailable or uncertain; query generation status before retrying. Error codes include MATERIAL_REFRESH_FAILED, CONTEXT_CAPACITY_EXCEEDED, GENERATION_FAILED, GENERATION_INTERRUPTED, and MESSAGE_PERSISTENCE_FAILED. This event does not select a refresh fallback or partial-output policy."
+      },
+      "AiStreamEvent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AiGenerationAcceptedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/AiMaterialSyncEvent"
+          },
+          {
+            "$ref": "#/components/schemas/AiTextDeltaEvent"
+          },
+          {
+            "$ref": "#/components/schemas/AiGenerationCompletedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/AiGenerationErrorEvent"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "generation.accepted": "#/components/schemas/AiGenerationAcceptedEvent",
+            "materials.synced": "#/components/schemas/AiMaterialSyncEvent",
+            "text.delta": "#/components/schemas/AiTextDeltaEvent",
+            "generation.completed": "#/components/schemas/AiGenerationCompletedEvent",
+            "generation.error": "#/components/schemas/AiGenerationErrorEvent"
+          }
+        }
       }
     },
     "responses": {
@@ -2147,7 +4410,96 @@
             }
           }
         }
+      },
+      "AiGenerationConflict": {
+        "description": "Another generation is active in this conversation. No new user input or attempt is accepted; other conversations remain available.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "GENERATION_ACTIVE",
+                "message": "Another generation is active in this conversation. No new user input or attempt is accepted; other conversations remain available."
+              }
+            }
+          }
+        }
+      },
+      "AiServiceUnavailable": {
+        "description": "AI persistence or execution infrastructure is unavailable before a stream is established. No successful generation is implied; query saved attempts if request acceptance is uncertain.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "AI_SERVICE_UNAVAILABLE",
+                "message": "AI persistence or execution infrastructure is unavailable before a stream is established. No successful generation is implied; query saved attempts if request acceptance is uncertain."
+              }
+            }
+          }
+        }
+      },
+      "AiGenerationStream": {
+        "description": "An SSE stream. Each frame has event: <type> and data: <one JSON AiStreamEvent>, followed by a blank line; event and data.type must match. Order: generation.accepted, then materials.synced after preparation, zero or more text.delta events, then generation.completed or generation.error. Preparation failure may go directly from accepted to error. No success event precedes final database commit. Network loss may omit the terminal event. Use a streaming POST client; these custom events require an SDK adapter.",
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            },
+            "description": "Private conversation content must not be cached."
+          }
+        },
+        "content": {
+          "text/event-stream": {
+            "schema": {
+              "type": "string"
+            },
+            "x-event-payload-schema": {
+              "$ref": "#/components/schemas/AiStreamEvent"
+            },
+            "examples": {
+              "preparationFailure": {
+                "summary": "Accepted input followed by a reported preparation failure; the fail-and-retry fallback is proposed pending policy resolution.",
+                "value": "event: generation.accepted\ndata: {\"type\": \"generation.accepted\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"inputMessage\": {\"id\": \"30000000-0000-4000-8000-000000000001\", \"conversationId\": \"10000000-0000-4000-8000-000000000001\", \"generationId\": null, \"sequenceNo\": \"1\", \"role\": \"user\", \"parts\": [{\"type\": \"text\", \"text\": \"Help me prepare for this role.\"}], \"createdAt\": \"2026-11-10T15:00:00Z\"}}\n\nevent: generation.error\ndata: {\"type\": \"generation.error\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"stage\": \"preparation\", \"error\": {\"code\": \"MATERIAL_REFRESH_FAILED\", \"message\": \"Materials could not be refreshed.\"}, \"statePersisted\": true}\n\n"
+              },
+              "completedWithMissingMaterials": {
+                "summary": "Successful limited assistance with only company and position available; completion follows durable answer persistence.",
+                "value": "event: generation.accepted\ndata: {\"type\": \"generation.accepted\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"inputMessage\": {\"id\": \"30000000-0000-4000-8000-000000000001\", \"conversationId\": \"10000000-0000-4000-8000-000000000001\", \"generationId\": null, \"sequenceNo\": \"1\", \"role\": \"user\", \"parts\": [{\"type\": \"text\", \"text\": \"Help me prepare for this role.\"}], \"createdAt\": \"2026-11-10T15:00:00Z\"}}\n\nevent: materials.synced\ndata: {\"type\": \"materials.synced\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"snapshotAt\": \"2026-11-10T15:00:00Z\", \"materials\": {\"resume\": {\"kind\": \"resume\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"RESUME_NOT_LINKED\", \"retrievalId\": \"40000000-0000-4000-8000-000000000001\"}, \"jd\": {\"kind\": \"jd\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"FIELD_MISSING\", \"retrievalId\": \"40000000-0000-4000-8000-000000000002\"}, \"company\": {\"kind\": \"company\", \"materialRevision\": \"1\", \"availability\": \"available\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": null, \"retrievalId\": \"40000000-0000-4000-8000-000000000003\"}, \"position\": {\"kind\": \"position\", \"materialRevision\": \"1\", \"availability\": \"available\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": null, \"retrievalId\": \"40000000-0000-4000-8000-000000000004\"}, \"company_website_url\": {\"kind\": \"company_website_url\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"FIELD_MISSING\", \"retrievalId\": \"40000000-0000-4000-8000-000000000005\"}, \"company_notes\": {\"kind\": \"company_notes\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"FIELD_MISSING\", \"retrievalId\": \"40000000-0000-4000-8000-000000000006\"}}, \"changedKinds\": [\"resume\", \"jd\", \"company\", \"position\", \"company_website_url\", \"company_notes\"]}\n\nevent: text.delta\ndata: {\"type\": \"text.delta\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"delta\": \"I can help with the company and position. A resume and JD are not linked, so the advice will be general.\"}\n\nevent: generation.completed\ndata: {\"type\": \"generation.completed\", \"generation\": {\"id\": \"20000000-0000-4000-8000-000000000001\", \"conversationId\": \"10000000-0000-4000-8000-000000000001\", \"inputMessageId\": \"30000000-0000-4000-8000-000000000001\", \"status\": \"completed\", \"materials\": {\"resume\": {\"kind\": \"resume\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"RESUME_NOT_LINKED\", \"retrievalId\": \"40000000-0000-4000-8000-000000000001\"}, \"jd\": {\"kind\": \"jd\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"FIELD_MISSING\", \"retrievalId\": \"40000000-0000-4000-8000-000000000002\"}, \"company\": {\"kind\": \"company\", \"materialRevision\": \"1\", \"availability\": \"available\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": null, \"retrievalId\": \"40000000-0000-4000-8000-000000000003\"}, \"position\": {\"kind\": \"position\", \"materialRevision\": \"1\", \"availability\": \"available\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": null, \"retrievalId\": \"40000000-0000-4000-8000-000000000004\"}, \"company_website_url\": {\"kind\": \"company_website_url\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"FIELD_MISSING\", \"retrievalId\": \"40000000-0000-4000-8000-000000000005\"}, \"company_notes\": {\"kind\": \"company_notes\", \"materialRevision\": \"1\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"sourceContentVersion\": null, \"reasonCode\": \"FIELD_MISSING\", \"retrievalId\": \"40000000-0000-4000-8000-000000000006\"}}, \"snapshotAt\": \"2026-11-10T15:00:00Z\", \"assistantMessageId\": \"30000000-0000-4000-8000-000000000003\", \"error\": null, \"startedAt\": \"2026-11-10T15:00:00Z\", \"completedAt\": \"2026-11-10T15:00:10Z\"}, \"message\": {\"id\": \"30000000-0000-4000-8000-000000000003\", \"conversationId\": \"10000000-0000-4000-8000-000000000001\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"sequenceNo\": \"3\", \"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"text\": \"I can help with the company and position. A resume and JD are not linked, so the advice will be general.\"}], \"createdAt\": \"2026-11-10T15:00:10Z\"}}\n\n"
+              }
+            }
+          }
+        }
       }
     }
+  },
+  "x-ai-design": {
+    "status": "proposed-contract-not-implementation-evidence",
+    "requirements": [
+      "PRD.md 1.2: FR-02, FR-10 through FR-20, FR-25, FR-27 through FR-30, FR-34, FR-35",
+      "AI_Design.md sections 1 through 6",
+      "Database_Design.md 1.2 sections 5.6 through 5.10 and 7.4"
+    ],
+    "authorization": "Resolve user -> application -> workspace -> conversation -> generation/retrieval on the server for every operation. A valid session and current verified email are mandatory. Return 404 for missing, inaccessible, or mismatched resource chains without disclosing another owner. Model arguments and client-supplied history cannot widen this boundary.",
+    "context": "Every model request includes the fixed current base materials, this conversation's usable compressed history, recent messages, and current input exactly once. Unchanged saved retrievals remain current even after their tool messages leave the history window. Only superseded or removed materials are historical-only. Summaries never replace base materials, mutate material state, or delete full history.",
+    "materialUpdates": "Application/resume operations own current materials; AI routes are read-only with respect to those sources. Compare each material revision and availability, plus resume identity/content version. Retrieve only changed kinds, atomically save successful tool results and sync pointers, and freeze all six kinds before generating. Missing materials permit limited assistance; infrastructure retrieval failures are distinct. Edits during generation apply to a later snapshot.",
+    "streaming": "The documented SSE events are an application transport contract. Use an explicit adapter for the selected Vercel AI SDK integration; these event names are not claimed to be its native UI-message wire protocol.",
+    "openDecisions": [
+      "Retry deduplication: request-key scope, payload mismatch, retention, and eligibility; the retry operation is a proposed contract and must not be exposed before these decisions are resolved.",
+      "Partial assistant-output persistence and transport-disconnection handling; do not infer that EOF cancels or completes a generation.",
+      "Explicit refresh-error fallback; Database Design proposes visible failure and retry rather than stale-material generation.",
+      "Model/provider, tool-call limits, timeouts, summary thresholds/window, and oversized-base-material handling; do not silently discard current materials.",
+      "Pagination/limits, conversation rename/delete, and application deletion/chat retention remain governed by PRD section 11."
+    ],
+    "integrationDependencies": [
+      "The AI application selector is a read projection of existing applications, not a separate project store. It uses the six PRD statuses and literal case-insensitive company/position search. The older non-AI ApplicationStatus contract still requires separate alignment; do not reuse its incompatible enum or silently map legacy values.",
+      "Company website URL and company notes are added to ApplicationFields to support editing the approved AI material sources. Other non-AI endpoint discrepancies are outside this AI contract revision.",
+      "Use only a successfully parsed, non-deleted linked PDF as a current resume. Never trust the older upload contract as authorization to use an unsupported or unparsed file for AI.",
+      "No public endpoint edits sync pointers, runs compression directly, overwrites history, or exposes system prompts, leases, storage keys, or model credentials. Website reading remains optional; no separate mock-interview state machine or report API is introduced."
+    ]
   }
 }

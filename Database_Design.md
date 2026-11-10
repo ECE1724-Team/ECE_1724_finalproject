@@ -1,8 +1,9 @@
 ---
 artifact: database-design
-version: "1.1"
+version: "1.2"
 created: 2026-11-09
-requirements_baseline: "PRD 1.2 / endpoints 1.2.0"
+updated: 2026-11-10
+requirements_baseline: "PRD 1.2 / AI_Design.md"
 status: proposed-design-with-open-decisions
 ---
 
@@ -14,13 +15,13 @@ This document defines the proposed PostgreSQL schema, relationships, constraints
 
 ### 1.1 Requirements Baseline
 
-This revision was prepared against the repository files reviewed on 2026-11-09:
+The requirements baseline is:
 
 - [PRD.md, version 1.2](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/PRD.md): authoritative product requirements, including confirmed authentication rules and database responsibilities.
-- [endpoints.json, version 1.2.0](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/endpoints.json): current API contract; remaining business-schema differences are listed in §9.
-- The previous database design supplied for review: retained business and AI storage proposals, rechecked against the current PRD. Its references to earlier Proposal/AI Design inspections do not imply a fresh inspection of those files in this revision.
+- [AI_Design.md](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/AI_Design.md): workspace isolation, material retrieval and versioning, context assembly, and conversation persistence. Its §6 recommendations are confirmed requirements through the PRD.
+- [endpoints.json, version 1.2.0](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/endpoints.json): API integration reference from the 2026-11-09 review. The alignment notes in §9 retain that review's scope; the API contract is not a requirements override.
 
-Repository links point to mutable `main` files. Versions above identify the reviewed baseline, not a claim that later edits have been checked. If documents conflict, coordinate the discrepancy and align implementation with the confirmed PRD.
+Repository links point to mutable `main` files. PRD 1.2 and AI_Design.md were reviewed for the AI persistence design on 2026-11-10. Apply PRD §8.1 precedence: the requester's latest explicit confirmation, confirmed PRD requirements, then AI Design details. Database and API designs implement those requirements. Unresolved product choices remain open; implementation details must not silently decide them.
 
 ### 1.2 Scope and Responsibility
 
@@ -69,7 +70,7 @@ Confirmed product rules are treated as requirements. Table names, revision colum
 | `messages` | Ordered user, assistant, and tool messages | Many per conversation |
 | `material_retrievals` | Saved result of retrieving one material revision | Many per conversation |
 | `conversation_material_state` | Latest successfully saved retrieval for each material kind | At most six rows per conversation |
-| `generation_materials` | Exactly which saved retrievals supplied a generation | Six rows per started generation, including unavailable materials |
+| `generation_materials` | Exactly which saved retrievals supplied a generation | Six rows after successful material preparation, including unavailable materials; none required for an attempt that fails before preparation commits |
 | `conversation_summaries` | Internal compressed history and coverage boundary | Many per conversation; full messages retained |
 | `storage_cleanup_jobs` | Reliable cleanup after DB/object-store boundary failures | Internal operational records |
 
@@ -112,7 +113,7 @@ erDiagram
 | Revision counters | `BIGINT NOT NULL DEFAULT 1 CHECK (> 0)`; increment on actual changes only |
 | Nullable text | Missing optional materials are `NULL`; normalize empty optional input consistently before comparison |
 | Required text | `TEXT NOT NULL CHECK (length(btrim(column)) > 0)` for company, position, and upload-time resume name |
-| Flexible structured content | `JSONB` for SDK message parts, version manifests and tool metadata; not for applications or interview arrays |
+| Flexible structured content | `JSONB` for application message parts, version manifests and tool metadata, with explicit SDK/UI adapters; not for applications or interview arrays |
 | SQL safety | Bind values with `$1`, `$2`, etc.; allowlist sort expressions and identifiers |
 | BIGINT API boundary | Serialize revisions/sequence numbers losslessly, preferably decimal strings; do not silently exceed JavaScript safe integers |
 
@@ -260,18 +261,33 @@ Create/reuse workspace with an ownership-scoped insert and conflict handling on 
 |---|---|---|
 | `id` | UUID PK | One generation attempt |
 | `conversation_id` | UUID NN FK | Parent conversation |
+| `input_message_id` | UUID NN | User message that this attempt answers; same-conversation FK to `messages` |
 | `status` | TEXT NN | `preparing`, `streaming`, `completed`, `failed`, `interrupted` |
-| `material_manifest` | JSONB NN | Immutable six-material identity/revision/availability manifest fixed at start |
-| `request_key` | TEXT nullable | Reserved retry/idempotency key; exact semantics pending |
-| `lease_expires_at` | TIMESTAMPTZ nullable | Operational recovery from crashed workers |
+| `material_manifest` | JSONB nullable until preparation commits | Six-material identity/revision/availability summary derived from the fixed retrieval associations |
+| `request_key` | TEXT nullable | Request deduplication key; request identity and reuse rules require the retry contract below |
+| `lease_expires_at` | TIMESTAMPTZ nullable, required while active | Operational recovery from crashed workers |
 | `model_metadata` | JSONB nullable | Actual provider/model/configuration identifiers; no secrets |
 | `error_code` | TEXT nullable | Failure metadata |
-| `started_at` | TIMESTAMPTZ NN | Start |
+| `started_at` | TIMESTAMPTZ NN | Request acceptance and attempt creation |
+| `snapshot_at` | TIMESTAMPTZ nullable until preparation commits | Audit time of the logical material-snapshot boundary; versions remain authoritative |
 | `completed_at` | TIMESTAMPTZ nullable | Terminal state time |
 
-The manifest records each kind and revision, plus resume identity/content version where relevant. It is small provenance metadata, not another copy of all base material text. Once initialization succeeds, it is immutable. Final output must be associated with a complete set of six `generation_materials` rows.
+Use a composite FK `(input_message_id, conversation_id)` to `messages(id, conversation_id)`; the backend also verifies that the referenced message has role `user`. One user message can support multiple attempts without changing the identity or history of earlier attempts.
 
-Enforce a partial unique index on conversation for status in `('preparing','streaming')`. The lease is not itself a second lock: recovery must atomically mark an expired run terminal before creating another, cancel the old worker, and prevent stale callbacks from committing results. Lease duration/heartbeat parameters remain implementation decisions. Do not hold a DB transaction open during a model request or stream.
+`generation_materials` and its referenced retrievals are authoritative for the materials actually supplied. Derive `material_manifest` from those associations in the same preparation transaction; never update it independently. It records each kind and revision, plus resume identity/content version where relevant, without copying base-material text. The manifest and associations become immutable when preparation commits.
+
+| Lifecycle stage | Material and persistence requirements |
+|---|---|
+| `preparing` | The attempt owns the conversation slot; manifest and snapshot time may be NULL until preparation commits |
+| `streaming` | Preparation has committed a manifest, snapshot time, and exactly six material associations before any answer generation begins |
+| `completed` | Complete material associations and the final assistant answer are saved; final answer and terminal transition commit atomically |
+| `failed` / `interrupted` | May terminate before or after preparation; preserve any successfully committed material snapshot and tool records |
+
+Apply row CHECKs for required snapshot fields in `streaming`/`completed` and a non-null lease while active. Validate the six-kind association set in the preparation transaction, since a row CHECK cannot count child rows. A failure before preparation commits leaves no partial material associations or advanced sync pointers.
+
+Enforce a partial unique index on conversation for status in `('preparing','streaming')`. Renew the lease only for the same active attempt while preparing or generating. Recovery atomically marks an expired run terminal before another attempt can acquire the slot and requests cancellation of the old worker. Cancellation is best-effort; conditional database writes enforce ownership. Preparation commits and final-answer writes must lock/recheck that the run is still active and its lease is valid. A stale worker cannot publish or advance sync state after recovery. Lease duration/heartbeat parameters remain implementation decisions. Do not hold a DB transaction open during a model request or stream.
+
+**Proposed retry contract, pending resolution of PRD §11:** retain the original user message and create a new attempt for an explicit retry, checking current materials again. Repeated delivery of the same accepted request identifies the existing attempt rather than creating another user message or answer. An explicit retry has a new request identity. Before implementing deduplication, define key scope, payload-mismatch handling, retention, and retry eligibility; if `request_key` identifies an attempt within a conversation, enforce uniqueness on `(conversation_id, request_key)` for non-null keys. Partial-output persistence remains open. The schema supports this proposal without treating it as a confirmed product rule.
 
 ### 5.8 `messages`
 
@@ -279,21 +295,27 @@ Enforce a partial unique index on conversation for status in `('preparing','stre
 |---|---|---|
 | `id` | UUID PK | Message identity |
 | `conversation_id` | UUID NN FK | Scope |
-| `generation_id` | UUID nullable | Generation/attempt association |
+| `generation_id` | UUID nullable | Attempt for generated assistant/tool records; user input is referenced by `generation_runs.input_message_id` |
 | `sequence_no` | BIGINT NN | Stable conversation order |
 | `role` | TEXT NN | `user`, `assistant`, or `tool` |
-| `parts` | JSONB NN | Ordered text/tool-call/tool-result parts compatible with the selected SDK integration |
+| `parts` | JSONB NN | Validated application text/tool parts; converted to SDK and UI formats by explicit adapters |
 | `created_at` | TIMESTAMPTZ NN | Persisted time |
 
-UNIQUE `(conversation_id, sequence_no)` and `(id, conversation_id)`. Use a composite FK `(generation_id, conversation_id)` to the corresponding unique pair in `generation_runs`; no message can refer to a different conversation's generation. Validate the parts structure in backend code against the installed SDK adapter. Do not assume a provider's raw response is directly replayable UI JSON.
+UNIQUE `(conversation_id, sequence_no)` and `(id, conversation_id)`. Use a composite FK `(generation_id, conversation_id)` to the corresponding unique pair in `generation_runs`; no message can refer to a different conversation's generation. User input has a NULL `generation_id`, allowing it to be inserted before its attempt and referenced by later retries. Validate the internal parts structure in backend code and test its SDK/UI adapters. Do not assume a provider's raw response is directly replayable UI JSON.
 
 User input is saved before model work. Complete assistant responses are saved after streaming finishes. Tool calls/results retain ordering, call identifiers, arguments, success/failure and retrieval references. Feedback and user-requested summaries are ordinary assistant messages. Internal compression summaries go in `conversation_summaries`.
 
-System prompts are server configuration, not user-editable message rows. Partial assistant-output persistence, retries reusing versus replacing a user message, and exactly-once/idempotency behavior remain open; do not implement a user-visible policy from the presence of `request_key` alone.
+Tool parts use a stable internal envelope containing `tool_name`, `execution_id`, `arguments`, `status`, and a result or safe `error_code`. Base-material results contain `retrieval_ids`; other tools may store a validated inline result, such as optional website content and its source metadata. Record a provider call ID only when an actual provider tool call exists. One material-tool execution may return several retrievals, but all must belong to the same conversation and preparation attempt. Failed executions have no successful retrieval references. Validate execution IDs and result references when saving and loading records.
+
+Application tool execution and provider tool-message exchange are distinct. Backend-controlled material tools must actually execute; their persisted records do not by themselves establish a model-issued function call. The AI adapter converts genuine provider exchanges using their actual call IDs and valid ordering. For backend-controlled retrieval, it supplies saved material content through the base-material context without fabricating provider tool calls. A tool message's stored result references are resolved within its conversation from immutable retrievals, never from current application fields. No additional tool-execution table is required.
+
+System prompts are server configuration, not user-editable message rows. Retry behavior follows the proposed contract in §5.7 only after the open product decisions are resolved; a `request_key` alone does not define user-visible behavior.
 
 ### 5.9 Material Retrieval and Per-Generation Provenance
 
-The six material kinds are `resume`, `jd`, `company`, `position`, `company_website`, `company_notes`.
+The six material kinds are `resume`, `jd`, `company`, `position`, `company_website_url`, `company_notes`. The website material contains only the saved URL, not retrieved page content.
+
+For each kind, compare its application material revision and availability with the conversation's saved state. For resumes, compare the full tuple `(resume_revision, source_resume_id, source_content_version, availability)`; identical content-version numbers on different resume rows do not imply identical materials. Compare nullable identities with null-safe semantics. Determine versions and availability before reading changed current text, using the same consistent database snapshot for both operations.
 
 `material_retrievals`:
 
@@ -339,6 +361,10 @@ PK `(generation_id, kind)`. Composite FKs to generation `(id, conversation_id)` 
 
 These associations preserve the versions behind each historical answer without copying every material on every turn. Old retrievals remain historical after deletion/unlinking and must not be selected as current when the current manifest differs.
 
+An unchanged saved retrieval remains a current base-material source even when its original tool message has left the history window. Only superseded or unavailable former materials are historical-only. Include all currently available material content independently of history selection and compression on every model request; an unavailable result explicitly identifies an absence rather than restoring an older copy.
+
+Optional website reading stores page content, source URL, retrieval time, and access errors as separate conversation tool results. These results do not enter the six-kind material state or replace the URL material. A stable URL is not evidence of fresh page content; a request for current information may require another website read. This extension requires neither a website cache table nor implementation before the core AI flows.
+
 ### 5.10 `conversation_summaries`
 
 | Column | Type / nullability | Purpose |
@@ -352,7 +378,9 @@ These associations preserve the versions behind each historical answer without c
 
 UNIQUE `(conversation_id, through_sequence_no)` and `(id, conversation_id)`; predecessor uses a same-conversation composite FK. Summarize only a stable, fully persisted history prefix and do not split an unfinished tool exchange. An incremental summary must incorporate the previous summary plus the newly covered history. Select the latest usable summary and messages strictly after its boundary to avoid double inclusion. Full messages and retrievals are never deleted by compression.
 
-Current materials are assembled separately every turn. Summaries must label historical content as historical; they cannot overwrite current materials. Compression thresholds, recent-message window, and oversized-base-material handling remain open.
+Capture the history prefix and predecessor identity before compression, generate the summary outside a database transaction, then validate and save the result in a short transaction. The new boundary must advance beyond its predecessor and cover only the captured complete prefix. Handle a competing summary for the same boundary without overwriting an existing summary. Compression failure leaves the last usable summary and its coverage unchanged; it must not advance a boundary without saved summary text. Choose a summary whose boundary precedes the current input and the intended recent-message window, including when retrying an earlier input.
+
+Current materials are assembled separately every turn and are never replaced by a summary of the initial tool result. Summaries may retain historical discussion of materials but must identify superseded content as historical; they cannot overwrite current materials. Base materials still consume model context capacity. Compression thresholds, recent-message window, and oversized-base-material handling remain open; do not silently drop materials or uncovered history when context cannot fit.
 
 ### 5.11 `storage_cleanup_jobs`
 
@@ -385,7 +413,7 @@ Authentication tables and authoritative checks are accessed through supported au
 | `ai_workspaces` | UNIQUE `(application_id)` | Race-safe workspace reuse |
 | `conversations` | `(workspace_id, updated_at DESC, id)` | Conversation list |
 | `messages` | UNIQUE `(conversation_id, sequence_no)` | History loading/order |
-| `generation_runs` | UNIQUE `(id, conversation_id)`; partial UNIQUE `(conversation_id)` for active states | Composite FK; one active generation |
+| `generation_runs` | UNIQUE `(id, conversation_id)`; partial UNIQUE `(conversation_id)` for active states; `(input_message_id, conversation_id)` | Composite FK; one active generation; attempts for an input message |
 | `material_retrievals` | `(conversation_id, kind, material_revision)` plus composite unique above | Version history |
 | `conversation_material_state` | PK `(conversation_id, kind)` | Per-conversation sync |
 | `generation_materials` | PK `(generation_id, kind)` | Exact per-turn materials |
@@ -393,6 +421,8 @@ Authentication tables and authoritative checks are accessed through supported au
 | `storage_cleanup_jobs` | `(status, next_attempt_at)` | Retry worker |
 
 These are initial access-path proposals, not performance claims. Case-insensitive substring search works with parameterized `ILIKE`; ordinary B-tree indexes do not accelerate arbitrary `%keyword%` matching. A trigram index is optional only if measured need justifies an extension. No vector index is needed.
+
+Add the request-key unique index described in §5.7 only with the agreed deduplication contract; the active-run constraint alone prevents overlapping attempts, not repeated delivery after completion.
 
 Review FK indexes for join, parent-delete/update and lifecycle access paths; use an appropriate leading-column index when needed, and avoid duplicating an existing covering index. PostgreSQL does not automatically create child-side FK indexes, and an FK does not by itself make an index mandatory. Add the composite unique targets explicitly during migration; PostgreSQL does not infer them from a different uniqueness definition.
 
@@ -438,18 +468,34 @@ This tombstone supports immediate access removal and reliable cleanup; long-term
 
 ### 7.4 Initialize a Turn and Fix Material Versions
 
-The backend, not the model, performs the following:
+The backend selects and executes required material retrievals deterministically; the model does not decide whether a version check or refresh occurs.
 
-1. Resolve and authorize the conversation's parent chain. Acquire the per-conversation generation slot using the active-run constraint.
-2. In a short consistent-snapshot transaction, read all current shared application fields, resume link, parsed text/version, and this conversation's saved material state. Revalidate ownership/current access in this transaction. Use repeatable-read semantics or equivalent lock/version checks so a manifest cannot combine fields from inconsistent snapshots.
-3. Construct the six-kind manifest. For each unchanged material identity/revision/availability, reuse its saved retrieval. For new or changed material states, create a successful saved retrieval (including an explicit unavailable result where appropriate) and a tool record. An unchanged known absence reuses its saved unavailable result. All persisted tool messages must correspond to actual tool execution and use the selected SDK’s valid tool-call/result identifiers and ordering; a database read alone does not justify fabricating a provider tool message. Store only changed material content anew.
-4. Save retrievals, tool messages, six generation associations, and the conversation state pointer changes atomically. A failure rolls back the sync state; never mark unsaved content as synced. Persist the accepted user input with defined ordering.
-5. Commit before streaming. Assemble base context from the run's fixed retrieval IDs, that conversation's summary and recent history, and current input. Include change/unavailability notices; exclude current input from the history selection to avoid sending it twice.
-6. Stream without DB locks. Save the complete final message only if this run still owns the active generation slot; then mark completed. Stale/cancelled workers cannot publish a second final answer.
+1. **Accept input and acquire the slot.** Resolve and authorize the conversation's parent chain. In a short transaction, lock the conversation to allocate message order, save the accepted user input, and create its `preparing` run with `input_message_id` and an active lease. Apply the agreed request-deduplication policy before creating records. Under the proposed retry contract, reference the existing input rather than inserting it again. The active-run constraint rejects concurrent attempts without leaving an extra accepted message from the rejected transaction. Commit before material preparation.
+2. **Fix the material snapshot.** Open a short consistent-snapshot transaction, revalidate access, and lock the conversation before locking/checking the active run and lease. Read current material revisions, resume identity/content version, availability metadata, and this conversation's saved state. Use repeatable-read semantics or equivalent lock/version checks. Establish `snapshot_at` for the logical boundary; this timestamp is audit metadata, not a replacement for version identities.
+3. **Execute selective retrieval.** For matching material tuples, reuse saved retrievals, including known absences. For first-time or changed states, invoke the authorized backend material tool and read only the corresponding current content or explicit absence within that same snapshot. One tool execution may retrieve several changed kinds. Record actual execution facts using §5.8's envelope. These tools perform local PostgreSQL operations only; no model call, website request, PDF parsing, or object-storage access occurs inside this transaction.
+4. **Commit preparation atomically.** Save tool records and new retrievals, insert all six generation associations, derive the manifest, and update successful conversation material-state pointers together. Validate the six kinds, reference ownership, and the still-active lease before marking the run `streaming` and committing. Only then report successful sync. A preparation failure rolls back these changes; the accepted input and attempt from step 1 remain available for failure reporting and retry.
+5. **Assemble and generate outside transactions.** Load base content from the run's fixed retrieval IDs, then add the usable conversation summary, recent history, and the input referenced by `input_message_id` exactly once. Include change/absence notices. Resolve historical tool references from saved results; do not substitute current application fields into old records. Adapt actual provider exchanges separately from backend tool execution records. Maintain the lease while assembling context and streaming; stop work if ownership is lost.
+6. **Save completion atomically.** After streaming finishes, use a short transaction to lock the conversation, then lock/recheck the run's active status and unexpired lease, allocate final-message order, insert the complete assistant answer with its `generation_id`, and mark the run `completed`. A repeated or stale callback cannot publish another final answer. Report durable completion only after this transaction commits.
 
-Snapshot acquisition is the logical generation-start boundary. Changes committed afterward are observed next turn. Unchanged materials remain included in every model request; reuse means reusing saved content, not omitting it because it appeared in old history. Historical tool results must not be replayed as competing current base materials.
+Any transaction requiring both conversation and run locks acquires them in that order, including failure recording and recovery that appends messages. A lease-only update may lock the run alone but must not then acquire the conversation lock. No conversation lock spans model generation or streaming.
 
-If material refresh fails, persist/report a failure and leave successful state unchanged. The PRD has not selected the fallback; implement independent storage mechanics now and resolve fallback before exposing that failure path. Missing materials are a successful known absence and allow limited assistance; they are different from an infrastructure retrieval error.
+Snapshot acquisition in step 2 is the logical material-version boundary, distinct from request acceptance. Changes committed afterward are observed on the next attempt's snapshot. Preparation saves the exact content from that boundary, so later live edits or deletion cannot change a response already in progress.
+
+Unchanged base materials are included in every model request even after their initial tool records leave the history window. Only superseded or removed material versions are historical-only; they may explain earlier discussion but must not compete with current base materials. History compression never advances material versions or replaces the base-material block.
+
+Failure handling separates successful material synchronization from successful answer generation:
+
+| Failure or absence | Persistence and execution behavior |
+|---|---|
+| Resume/JD or another optional material is absent | Save/reuse a successful `unavailable` result and continue limited assistance with the remaining materials |
+| Material retrieval or preparation write fails | Roll back preparation and leave previous successful sync pointers unchanged; in a separate short transaction, record a safe tool error where applicable and mark the still-owned attempt failed; retain accepted input |
+| Preparation commits, then context assembly or model generation fails | Retain committed retrievals, manifest, and sync pointers; mark the attempt failed and report the error; a later attempt can reuse unchanged materials |
+| Streaming is interrupted | Mark the still-owned attempt interrupted and release its slot; preserve committed preparation; partial-output storage follows the unresolved policy |
+| The final answer cannot be saved | Do not mark completed or report durable success; reconcile by run identity if commit outcome is unknown before attempting another write; if the transaction did not commit, report the persistence failure and terminalize the attempt when storage is available |
+| A recovered or replaced worker returns late | Reject its preparation/final writes using active-status and lease checks, regardless of whether cancellation reached the worker |
+| Storage is unavailable during failure recording | Report failure to the client where possible; use lease recovery to terminate the abandoned run once storage is available |
+
+The proposed refresh-error fallback is to fail that attempt visibly and allow retry, without generating from stale materials. This remains subject to PRD §11 resolution before the dependent path is exposed. A known missing material is not an infrastructure retrieval error and must not block chat. Model failure after successful synchronization does not roll that synchronization back.
 
 ### 7.5 Application Deletion — Unresolved Policy
 
@@ -570,7 +616,7 @@ These are planned migration groups, not files already implemented:
 | 002 | Resumes, applications, composite ownership FK, revision checks and list indexes | Core agreed structure |
 | 003 | Status history and individual interviews | Final interview nullability/validation needs confirmation |
 | 004 | Unique workspace and independent conversations | Core agreed structure |
-| 005 | Generation runs, ordered messages, retrievals, sync pointers, generation materials, summaries | Resolve retry/fallback behavior before corresponding execution paths |
+| 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; retrievals, sync pointers, generation materials, summaries; active-run and snapshot checks | Create both message/run tables before adding their mutual FKs; resolve retry/fallback behavior before dependent execution paths and request-key constraints |
 | 006 | Cleanup outbox and private-file lifecycle support | Core cleanup requirement; deployment parameters TBD |
 | 007 | Explicit application deletion policy and any required access indexes/filters | Blocked on retention/hard-versus-soft decision |
 
@@ -607,13 +653,23 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Concurrent delete/link/parse | No new link to tombstoned file; late parser cannot revive it; no partially updated fan-out |
 | Workspace races | Simultaneous entry creates one workspace and no conversation; explicit New conversation creates an empty bound thread |
 | Conversation isolation | Same workspace shares materials but never another thread's messages/summary; different application materials excluded |
-| Selective refresh | Resume-only/JD-only/other-field/no-change cases create only required retrievals; every run references all six kinds |
+| Selective refresh | Check metadata each turn; only changed current content is retrieved through tools; unchanged retrievals are reused; every prepared run references all six kinds |
+| Resume identity | Two files with equal content-version numbers remain distinct; unlink/relink and internal content-version changes invalidate the appropriate saved state |
+| Preparation lifecycle | A newly accepted run may have no manifest; streaming requires six associations and a matching manifest/snapshot time; preparation failure leaves no partial set |
+| Actual tool execution | Saved records correspond to executed scoped tools; backend execution records do not fabricate provider calls; failed executions do not advance material state |
+| Tool history reconstruction | Resolve saved content within the same conversation after live materials change or are deleted; reject cross-conversation references and do not read current fields to reconstruct old results |
 | Clear/re-add materials | Missing/cleared material revisions invalidate previous state, including unlink then re-link of the same file |
 | Mid-generation edit | Current run retains original manifest/retrieval IDs; next run observes updates |
-| Failed sync write | Retrieval/message/state transaction rolls back together; successful-sync pointer never advances alone |
+| Failed sync write | Preparation retrievals/tool records/associations/state roll back together; accepted input remains; successful-sync pointer never advances alone |
+| Generation failure after sync | Successfully saved materials and sync state remain; the failed run releases its slot; subsequent attempts reuse unchanged content |
+| Missing materials | Explicit unavailable results allow limited assistance; old copies are not restored as current and retrieval errors are not misreported as absence |
+| Final persistence failure | No completed state without a saved final answer; reconcile uncertain commits by run identity; retry/recovery cannot append a duplicate final answer |
+| Request replay and explicit retry | After policy agreement, duplicate request delivery resolves to the existing attempt; an explicit retry creates a new attempt linked to the agreed input and checks current materials |
 | Concurrent generation | One active run per conversation, independent conversations/users can generate concurrently |
-| Worker crash | Expired run is fenced before retry; stale callback cannot append a second final answer |
-| History compression | Full messages retained, exact coverage boundary respected, base materials included separately |
+| Worker crash | Active leases are maintained; recovery terminalizes expired runs before replacement; stale callbacks cannot advance sync state or append another final answer |
+| History compression | Full messages retained, exact complete-prefix boundary respected, current input included once, and unchanged base materials remain complete after initial tool messages leave the window |
+| Summary failure and material updates | Failed compression does not advance coverage; a summary discussing V1 cannot override current V2 or an unavailable material state |
+| Optional website reading | If implemented, page content has source/time metadata separate from the URL material; freshness is not inferred from an unchanged URL |
 | Auth integration | Registration returns token:null with no login session; unverified access denied; first verification auto-signs in; credentials expire at 900 seconds; replacements invalidate older same-purpose links only; reset GET does not consume; reset submission revalidates and atomically consumes/updates/revokes all sessions without auto-login; old sessions fail authoritatively; logout invalidates session. Auth owner provides flow evidence; business integration verifies protected access. |
 | Application delete | Execute after policy decision; current counts and access update, library resumes remain |
 | Clean setup | Empty-database migration succeeds; teammate can reproduce schema and run flows from documented setup |
@@ -626,7 +682,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Interview validation | Multiple individually editable records | Required name/time, states and count rules; requester/API owner |
 | Timeline | Actual status transitions retained | Extra event types; requester |
 | Account configuration | All flows and 900-second credential rules in §5.1; no session after registration; verified-only access; reset revokes all old sessions | Email provider, session lifetime, resend cooldown/rate limits, and email-delivery-failure issuance/retry semantics; auth owner/requester |
-| AI failures/retries | Visible errors, retry, one active run per thread | Partial-output persistence, deduplication and refresh-error fallback; AI owner/requester |
+| AI failures/retries | Visible errors, retry, one active run per thread; committed material sync is separate from answer completion | Resolve §5.7's proposed same-input/new-attempt retry contract, request-key scope/payload mismatch/retention and eligibility, partial-output persistence, and §7.4's proposed fail-and-retry refresh fallback; AI owner/requester |
 | Context sizing | Current materials outside history compression | Thresholds, recent window, oversized-material handling; AI owner/requester |
 | Conversation controls | Persistent independent conversations | Rename/delete requirements; requester |
 | Validation/pagination | Company+position only required; literal substring search | Detailed limits, URL rules, pagination; requester/API owner |
@@ -638,6 +694,6 @@ Resolve these within their affected implementation areas. They do not block writ
 
 This document is ready for team design review, subject to the explicit open items in §12. It is not evidence of a deployed schema, running backend, successful migrations or passed acceptance checks.
 
-Compared with the previous design, this revision aligns authentication with PRD 1.2/endpoints 1.2.0; separates auth-owned migrations from business work; makes resume deletion compatible with live-success checks; unifies resume-before-application locking; qualifies FK indexing; and distinguishes proposed AI persistence mechanics from confirmed product behavior.
+Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. Retry and refresh-fallback proposals remain identified separately from confirmed requirements.
 
 The current scope is documentation only. SQL examples describe intended access behavior; migration grouping describes future work. No implementation is required to claim completion of this design deliverable.
