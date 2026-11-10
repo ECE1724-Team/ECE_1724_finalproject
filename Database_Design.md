@@ -9,6 +9,24 @@ status: proposed-design-with-open-decisions
 
 # JobFlow AI Database Design
 
+<a id="reading-guide"></a>
+
+## Added Reading Guide
+
+The dated supplements below carry forward the relevant reading paths, authentication database proposal and shared-identity contract from `backup/database-design-local` (document v1.3), while retaining the current base document's wording, tables, code, section numbers and v1.2 metadata. The supplements are integration guidance and proposed implementation details; they do not approve new product rules or demonstrate implementation.
+
+**Current API snapshot:** the checked-out `endpoints.json` at commit `89d0c4e` is version **1.3.0**. The original §9 preserves the earlier 1.2.0 review. Read [Appendix A](#current-integration-status) before treating a historical gap as still outstanding. Product requirements continue to follow the original source precedence.
+
+| Reader | Start here | Original implementation reference |
+|---|---|---|
+| Justin Smith — non-AI frontend and OpenAPI | [Current API status](#current-integration-status), [Justin guide](#justin-guide), [shared identity](#shared-identity) | §5.1–5.5, §7.1–7.3, §8.1–8.3/8.5, and relevant §11–12 cases |
+| Jianye Zhou — storage/PDF and AI frontend/backend | [Current API status](#current-integration-status), [Jianye guide](#jianye-guide), [shared identity](#shared-identity) | §5.2–5.3, §5.6–5.11, §6.1, §7.2–7.4, §8.4, and relevant §11–12 cases |
+| Rongxin Bi — business database, SQL and migrations | Role guides, [identity contract](#shared-identity), [auth migration handoff](#auth-integration-handoff) | Full schema, constraints, lifecycle, SQL, migration and acceptance sections |
+| Authentication/authorization owner | [Confirmed auth flows](#authentication-boundary), [identity proposal](#shared-identity), [auth schema](#auth-schema), [handoff](#auth-integration-handoff) | §5.1 and the protected-access/auth checks in §11 |
+| Zishi Yang — application APIs | Justin guide, shared identity, current API status | Application/resume schema, ownership, update transactions and counting semantics |
+
+**Status convention for additions:** **CONFIRMED** identifies existing product requirements; **PROPOSED** identifies candidate storage/integration mechanisms; **OPEN** identifies decisions needed before dependent implementation. Actual user-key approval, SDK integration, migration execution and flow evidence remain separate work. Jianye retains AI frontend/backend ownership; Justin coordinates non-AI pages, resume controls, AI entry points and OpenAPI.
+
 ## 1. Purpose, Sources, and Decision Status
 
 This document defines the proposed PostgreSQL schema, relationships, constraints, transaction boundaries, query patterns, and migration plan for JobFlow AI. It is a design deliverable, not a claim that the database or features have been implemented.
@@ -41,6 +59,8 @@ Confirmed product rules are treated as requirements. Table names, revision colum
 
 **Stack:** PostgreSQL; parameterized SQL through `pg`; versioned business migrations through `node-pg-migrate`; no business ORM. Authentication uses Better Auth with PostgreSQL-backed sessions, with physical schema determined by the selected configuration. Original PDFs reside in private S3-compatible storage; extracted text and metadata reside in PostgreSQL. The actual storage provider remains open.
 
+<a id="design-rules"></a>
+
 ## 2. Design Rules
 
 1. All protected business access requires a valid session, currently verified email, and resource ownership. All business data belongs to one authenticated user. A foreign key proves relationship integrity; backend ownership checks prove authorization. Both are required.
@@ -53,6 +73,8 @@ Confirmed product rules are treated as requirements. Table names, revision colum
 8. Dashboard totals are derived from current application/interview records. They are not separately maintained counters.
 9. Personal notes, application status, interviews, applied date, and job-posting URL are not automatically included in AI base materials. The approved list is resume text, JD, company, position, company website URL, and company notes.
 10. No RAG/vector index, mock-interview session state machine, feedback table, or separate report table is introduced.
+
+<a id="entity-map"></a>
 
 ## 3. Entities and Relationships
 
@@ -101,7 +123,11 @@ erDiagram
     MATERIAL_RETRIEVAL ||--o{ GENERATION_MATERIAL : supplies
 ```
 
+<a id="shared-conventions"></a>
+
 ## 4. Shared Conventions
+
+**Added identity clarification:** the physical auth key remains dependent on the selected, reviewed Better Auth configuration. The original TEXT wording below is not a finalized schema contract; [Appendix D's explicitly configured UUID candidate](#shared-identity) is still a proposal. Match every business user FK to the accepted actual key.
 
 | Convention | Design |
 |---|---|
@@ -122,6 +148,8 @@ No detailed field-length, URL-length, or pagination limit is established here. T
 ## 5. Data Dictionary
 
 Legend: **NN** = NOT NULL; **PK** = primary key; **FK** = foreign key. All child foreign-key columns receive appropriate indexes. Physical auth names are resolved during integration.
+
+<a id="authentication-boundary"></a>
 
 ### 5.1 Authentication Boundary — Owned by Authentication/Authorization
 
@@ -150,6 +178,8 @@ The business database consumes a trusted, verified-user identity from the author
 
 Remaining auth decisions: email provider, session lifetime, resend cooldown/rate limits, and issuance/retry behavior when email delivery fails. The authentication owner provides the physical user-table/key contract and ordered auth migrations before dependent business FKs are finalized.
 
+<a id="resume-schema"></a>
+
 ### 5.2 `resumes`
 
 | Column | Type / nullability | Purpose |
@@ -173,6 +203,8 @@ Remaining auth decisions: email provider, session lifetime, resend cooldown/rate
 Use `UNIQUE(id, user_id)` for ownership-safe resume links. A new resume version is a new row with a new UUID; a V1→V2 link change is detected by application resume revision and identity, even if both rows have `content_version = 1`.
 
 For a live row (`deleted_at IS NULL`) with `parse_status = succeeded`, require a non-null object key/text, 1–2 pages and at least 100 non-whitespace characters. Express conditional CHECKs with explicit `IS NOT NULL` terms so SQL NULL does not accidentally satisfy validation. Deleted rows are exempt from live-success completeness requirements, allowing extracted text to be cleared while retaining historical parse status. File-size and basic metadata-domain checks still apply. The parser must also validate every page has extractable nonblank text, a genuine readable PDF, and exact size limits. DB metadata checks cannot establish those content properties. Reject oversize bodies before accepting a library item. Failed items may retain error metadata for the upload result, but their object/text must be cleaned up and they cannot be selected. Reprocessing policy is not a user-facing feature; if internal re-extraction changes saved usable text, increment `content_version` atomically.
+
+<a id="application-schema"></a>
 
 ### 5.3 `applications`
 
@@ -243,6 +275,8 @@ CHECK both values against the six statuses and `old_status <> new_status`. UNIQU
 | `created_at`, `updated_at` | TIMESTAMPTZ NN | Audit |
 
 Use independent rows for add/edit/delete. Do not store the interview schedule as an application JSON array or maintain a conflicting single interview date. Until the PRD's required-field decision is made, nullability is provisional, not permission to expose incomplete scheduling behavior. Unscheduled rows are excluded from the upcoming list. Cancellation/completion states, their effects on counts, and extra interview fields are not invented here.
+
+<a id="ai-schema"></a>
 
 ### 5.6 `ai_workspaces` and `conversations`
 
@@ -390,6 +424,8 @@ This is a retry mechanism for object cleanup, not a user recovery feature. The o
 
 ## 6. Ownership, Constraints, and Indexes
 
+<a id="ownership"></a>
+
 ### 6.1 Ownership Enforcement
 
 A conversation authorization query must join conversation→workspace→application and filter `applications.user_id = authenticated user`. Tool handlers derive the workspace from the authorized conversation; they do not trust a model-supplied workspace/application ID. A retrieval tool cannot widen scope by changing its arguments.
@@ -397,6 +433,8 @@ A conversation authorization query must join conversation→workspace→applicat
 All application reads/updates/deletes filter by owner. Resume link changes prove both same-owner integrity through the composite FK and current usability under a transaction lock. Download/view endpoints authorize the current resume row and its non-deleted state before streaming private bytes. Prefer a backend-authorized stream for this release: it can reject new downloads immediately after deletion without an already-issued signed URL remaining usable. Do not log extracted text, password/reset tokens, or private object credentials.
 
 Authentication tables and authoritative checks are accessed through supported auth integration owned by the authentication/authorization owner. Protected business access requires valid session and current email verification before resource-ownership checks. Business authorization remains explicit even when using the auth library. DB row-level security may be considered later but is not assumed to protect pooled requests in this design.
+
+<a id="indexes"></a>
 
 ### 6.2 Proposed Indexes
 
@@ -426,6 +464,8 @@ Add the request-key unique index described in §5.7 only with the agreed dedupli
 
 Review FK indexes for join, parent-delete/update and lifecycle access paths; use an appropriate leading-column index when needed, and avoid duplicating an existing covering index. PostgreSQL does not automatically create child-side FK indexes, and an FK does not by itself make an index mandatory. Add the composite unique targets explicitly during migration; PostgreSQL does not infer them from a different uniqueness definition.
 
+<a id="lifecycle"></a>
+
 ## 7. Transactions and Lifecycle Rules
 
 ### 7.1 Create and Edit Applications
@@ -443,6 +483,8 @@ For updates:
 
 Use a consistent lock order for resume-link changes and deletion: resume rows first in sorted identity order when needed, then affected application rows in sorted identity order. A link-changing operation may read the candidate first, then lock and revalidate application state; retry on stale state. Coordinate all writers to avoid application→resume versus resume→application deadlocks. No parser or external storage/model call runs inside this transaction.
 
+<a id="file-upload"></a>
+
 ### 7.2 Upload and Parsing
 
 1. Authenticate; validate name, upload limit and server-side PDF content. Temporary uploads use random private keys.
@@ -453,6 +495,8 @@ Use a consistent lock order for resume-link changes and deletion: resume rows fi
 6. Uploading never changes application links. Explicitly selecting a successful file changes only that application.
 
 Object storage and PostgreSQL do not share a transaction. Use compensating cleanup for objects uploaded before DB failure and a periodic reconciliation/temporary-key expiry process for crashes before an outbox row can be committed. Cleanup timing does not create a user-facing restoration promise.
+
+<a id="resume-delete"></a>
 
 ### 7.3 Delete a Resume
 
@@ -465,6 +509,8 @@ Within one DB transaction:
 5. Commit; the worker removes private bytes with retry. A late parser must recheck the tombstone before marking success.
 
 This tombstone supports immediate access removal and reliable cleanup; long-term metadata retention is not defined. Historical messages and material-retrieval results remain unchanged per FR-16/FR-34. A generation already initialized may finish using its fixed historical snapshot. Subsequent turns observe the new unlinked revision and use an unavailable-material result. Deletion does not delete applications or other resumes.
+
+<a id="turn-initialization"></a>
 
 ### 7.4 Initialize a Turn and Fix Material Versions
 
@@ -497,9 +543,13 @@ Failure handling separates successful material synchronization from successful a
 
 The proposed refresh-error fallback is to fail that attempt visibly and allow retry, without generating from stale materials. This remains subject to PRD §11 resolution before the dependent path is exposed. A known missing material is not an infrastructure retrieval error and must not block chat. Model failure after successful synchronization does not roll that synchronization back.
 
+<a id="application-delete"></a>
+
 ### 7.5 Application Deletion — Unresolved Policy
 
 The observable result is fixed: remove from current list, Dashboard totals and normal AI entry; keep library resumes and other applications' links intact. Physical hard/soft deletion and treatment of child chats remain undecided. Use restrictive child FKs while drafting migrations so a generic cascade cannot silently destroy conversation history. Before implementing deletion, agree on the policy and write the corresponding explicit transaction, access filters, cascade/restrict actions and acceptance checks. Do not expose restore/recovery controls without authorization.
+
+<a id="sql"></a>
 
 ## 8. Query Patterns
 
@@ -588,7 +638,11 @@ The state query runs only after authorization within the scoped turn workflow. I
 
 Count links from current applications only, scoped to the same owner. Use a LEFT JOIN so unused resumes have zero links; exclude tombstoned files. Resume deletion reports affected link rows from its transaction rather than trusting a cached count. No `linked_application_count` column is maintained.
 
+<a id="api-alignment"></a>
+
 ## 9. API Alignment Required
+
+**Added historical-review context:** this section retains the API review against `endpoints.json` 1.2.0. It is not a complete statement of the current contract. The checked-out API at commit `89d0c4e` is version 1.3.0 and includes AI Copilot routes plus company website/notes fields. Consult [the supplemental current-API snapshot](#current-integration-status) before treating an item below as outstanding. Documented contracts do not establish implementation.
 
 The reviewed `endpoints.json` is version 1.2.0. Its authentication contract already documents the updated confirmed flows. Its business schemas still differ from PRD 1.2 in the areas below. Coordinate changes with the API owner; this document does not modify the API file or assert that documented endpoints are implemented.
 
@@ -605,6 +659,8 @@ The reviewed `endpoints.json` is version 1.2.0. Its authentication contract alre
 | Pagination limits and extra application fields such as location appear | Reconcile with confirmed scope; do not treat an older contract as new product approval |
 | Business ownership schema and auth integration | Preserve the actual auth user key type; require session validity, current verified email and ownership for every protected business operation |
 | Authentication contract already updated in 1.2.0 | Retain the confirmed flows; auth owner supplies schema/migrations and evidence for expiry, replacement and revocation behavior |
+
+<a id="migrations"></a>
 
 ## 10. Migration and Setup Plan
 
@@ -631,6 +687,8 @@ Implementation procedure:
 7. Data-destroying rollback on populated databases requires a separate backup/recovery decision. A `down` function is not evidence that user data can be restored.
 
 No production database, deployed storage bucket, or actual migration execution was inspected for this document.
+
+<a id="acceptance"></a>
 
 ## 11. Database Acceptance Checklist
 
@@ -674,6 +732,8 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Application delete | Execute after policy decision; current counts and access update, library resumes remain |
 | Clean setup | Empty-database migration succeeds; teammate can reproduce schema and run flows from documented setup |
 
+<a id="open-decisions"></a>
+
 ## 12. Decisions Still Required Before Dependent Implementation
 
 | Decision | Already confirmed | Remaining choice / owner coordination |
@@ -697,3 +757,265 @@ This document is ready for team design review, subject to the explicit open item
 Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. Retry and refresh-fallback proposals remain identified separately from confirmed requirements.
 
 The current scope is documentation only. SQL examples describe intended access behavior; migration grouping describes future work. No implementation is required to claim completion of this design deliverable.
+
+<a id="current-integration-status"></a>
+
+## Appendix A. Current API Integration Snapshot — Added 2026-11-10
+
+This snapshot compares the checked-out [endpoints.json 1.3.0](endpoints.json) with the original database design. Its documented routes and schemas describe planned contracts; their presence is not evidence of running or tested endpoints. Retain [the original API review](#api-alignment) as historical context.
+
+| Area | Current documented status | Remaining integration work |
+|---|---|---|
+| Authentication | Confirmed signup/verification/reset/session policies remain documented | Implement and verify the auth schema, latest-credential rules, atomic reset and authoritative access |
+| Shared company materials | `companyWebsiteUrl` and `companyNotes` exist in `ApplicationFields`; `notes` is explicitly personal | Map to `company_website_url`, `company_notes` and `personal_notes`; saving a URL does not read its page |
+| AI Copilot | Workspace, conversation, message history, generation/stream/status, retry proposal and retrieval-result contracts are present | Implement against the documented schema and SDK/UI adapters; keep conditional retry/fallback decisions open |
+| AI application selector | `GET /api/v1/ai/applications` describes `q` plus a six-status filter and no side effects on navigation | Coordinate with the non-AI listing while preserving the selector's documented behavior |
+| Non-AI application list | Still documents `page`, `limit` and the older seven-value status enum | Align six statuses, keyword/sort options, complete counts and Dashboard read models |
+| Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation, individual interview identity/editing and unresolved validation |
+| Offer and timeline | Full historical-offer/status-history API models are still incomplete | Agree read/write fields and response models before final UI integration |
+| Resume library | Existing upload accepts PDF/DOCX; standard metadata lacks the parsing/link-count contract; deletion has an empty 204 response | Align PDF-only validation, parsing completion/status/errors, private viewing and affected-link reporting |
+| Concurrency and recovery | `row_version` has no agreed public non-AI contract; AI durable-attempt and stream-error contracts are described | Agree conflict handling if adopted; reconcile AI durable state after transport loss without assuming replay/resumption |
+| Open product/configuration choices | Original §12 and PRD §11 still apply | Resolve affected interview/deletion/retry/context/email settings without treating unrelated work as blocked |
+
+When updating OpenAPI, distinguish the AI selector's status/query contract from the still-unreconciled non-AI list. Keep final methods, JSON, errors and stream events in `endpoints.json`; database proposals alone do not introduce additional public fields.
+
+
+<a id="justin-guide"></a>
+
+## Appendix B. Justin: Non-AI Frontend and OpenAPI Integration — Added
+
+Justin owns non-AI pages and maintains OpenAPI with backend contributors. Jianye owns the AI frontend/backend and file processing. Start with [the current API snapshot](#current-integration-status), then consult original schema/lifecycle sections for the page being integrated.
+
+### B.1 Page and Field Mapping
+
+| Page / control | Current API representation | Database mapping / alignment |
+|---|---|---|
+| Company and position | `companyName`, `jobTitle` | `company_name`, `position_title`; only required application-creation fields |
+| Status and actual application date | `status`, nullable `appliedAt` | Confirmed six-status behavior and `applied_date DATE`; non-AI enum/date-time alignment remains |
+| JD, posting and personal notes | `jobDescription`, `jobUrl`, `notes` | `job_description`, `job_url`, `personal_notes`; personal notes stay outside automatic AI materials |
+| Company website/background | `companyWebsiteUrl`, `companyNotes` | `company_website_url`, `company_notes`; distinct from posting URL and personal notes |
+| Historical offers and timeline | Complete public models still need alignment | `offer_received`, `application_status_history` |
+| Interviews | `interviews[]` with `type` and `scheduledAt`; no stable item ID | Independent interview rows; coordinate IDs and individual edits |
+| Resume controls | Multipart `name`/`file`; library metadata includes file identity/name/type/size/time | Parsing-state, failure, link-count and delete-result responses still need agreement |
+
+The non-AI application list's current query model is not the complete Dashboard/search contract. Counts describe the complete owned set, not one page of results; use the original §8 explanations for counting, filtering and calendar boundaries. AI selection has its own documented `q`/six-status route.
+
+### B.2 Observable Lifecycle
+
+- **Authentication:** follow [§5.1](#authentication-boundary). Show the post-registration waiting/resend state; load Session after first verification even if verification JSON has `user:null`. Password-reset success requires sign-in again.
+- **Application edits:** keep unsaved edits local. Save successfully before entering AI from details; refresh relevant page/list/count data after accepted edits. Current PUT clears omitted optional fields, including the company material fields; agree final update semantics rather than assuming PATCH.
+- **Resume upload and selection:** uploading does not relink applications. Only a successfully parsed file is selectable, and failed replacement preserves the previous valid link. Agree whether parsing completes within upload or how later completion is obtained.
+- **Resume deletion:** refresh the library and affected application links, retain applications, and coordinate the affected-link result before relying on it in UI. The current 204 contract does not yet supply that count.
+- **AI entry:** pass the owned application/workspace context to Jianye's feature. Entry creates/reuses a workspace, without an implicit conversation or model call.
+
+### B.3 Agreements Needed Before Final Integration
+
+Coordinate the remaining non-AI enum/date/validation/read-model gaps, interview identity and save behavior, parsing completion/errors, and any adopted `row_version` submission/conflict contract. The existing AI routes should be implemented and reviewed against 1.3.0 rather than redesigned from database column names. Session lifetime, resend limits and email-delivery-failure rules remain open.
+
+Layouts and mock-backed forms can proceed while dependent contracts are resolved. SQL, indexes, locks and AI storage details remain reference material; final client types and requests follow the aligned OpenAPI contract.
+
+
+<a id="jianye-guide"></a>
+
+## Appendix C. Jianye: Storage, PDF Processing, and AI Integration — Added
+
+Jianye owns storage/PDF processing and both AI frontend and backend. Rongxin supplies business SQL/migrations; the authentication owner supplies trusted identity and auth-schema dependencies. This guide carries forward the backup's workflow-first approach while following the newer input/attempt, tool and recovery details in the original §5.7–5.10 and §7.4.
+
+### C.1 Workflows and Transaction Boundaries
+
+| Workflow | Integration behavior / original reference |
+|---|---|
+| Upload and link | [§7.2](#file-upload): validate an accepted-size PDF, parse outside long DB transactions, then save text/version/validation evidence when the private object is available. Clean failed objects/text. An explicit usable-file selection changes one application link; upload alone changes none. |
+| Delete a resume | [§7.3](#resume-delete): authorize and lock the file, tombstone it, unlink all affected applications with revision advances, clear current text and enqueue cleanup atomically; remove private bytes afterward. Retain historical messages/retrievals and prevent late parsing from reviving the item. |
+| Enter workspace / create conversation | §5.6: create/reuse the owned application's unique workspace. Only an explicit New conversation action creates an empty bound thread. Navigation performs no model call or conversation material synchronization. |
+| Accept input | [§7.4 step 1](#turn-initialization): save user input and a leased `preparing` attempt in one short transaction. `input_message_id` references the user message; the user message has NULL `generation_id`. Preparation has not yet fixed materials. |
+| Prepare materials | §7.4 steps 2–4: take a consistent snapshot, compare version/identity/availability tuples, execute only changed local material retrievals and atomically save tool records, retrievals, six associations, derived manifest and successful sync pointers. A pre-preparation failure may have no manifest or associations while retaining accepted input/attempt. |
+| Generate and save | §7.4 steps 5–6: assemble context and stream outside transactions; maintain the active lease. Save the complete assistant answer and `completed` state together after rechecking ownership. Resolve uncertain commits by run identity rather than blindly writing again. |
+
+Preparation failure rolls back preparation state. Model/context failure after successful preparation retains the committed material synchronization. Original failure handling, conversation-before-run locking and lease fencing apply to every participating writer. Do not collapse acceptance, preparation and completion into a single transaction.
+
+### C.2 Understand the Material Records
+
+| Record | Question it answers |
+|---|---|
+| `material_retrievals` | What exact content/revision or known absence did this conversation retrieve? |
+| `conversation_material_state` | Which successfully saved retrieval is its current synchronization pointer for each kind? |
+| `generation_materials` and referenced retrievals | Which saved results actually supplied this prepared attempt? These are authoritative for used materials. |
+| `generation_runs.material_manifest` | What summary was derived from those fixed associations when preparation committed? It is nullable before that boundary and is not maintained independently. |
+
+The six kinds use the current `company_website_url` name. Its value is the saved URL; optional fetched page content/source/time is a separate tool result. Current application fields and the selected resume remain authoritative live materials.
+
+**V1 → V2 example:** uploading V2 alone changes no link. After an application selects usable V2, each conversation independently checks it at its next material snapshot. An attempt whose snapshot already fixed V1 keeps using that saved V1 content; request acceptance alone does not fix a material version. Retain earlier answers and their supporting retrievals. Unchanged current materials remain in each model context even after their original tool messages leave the history window.
+
+### C.3 Message, API and Recovery Boundaries
+
+Original §5.8 defines application tool parts with execution identity, arguments, status and result/error metadata. Backend tool execution records do not establish a model-issued function call. Preserve genuine provider call IDs/order and test explicit application ↔ SDK ↔ UI adapters. Saved history resolves immutable same-conversation references, not current live fields.
+
+The current OpenAPI already describes workspace/conversation/history/generation/provenance routes and stream events. Reconcile durable attempt state after disconnects; transport EOF is not durable completion, and automatic POST replay or stream resumption is not guaranteed. A documented retry route remains conditional on the unresolved retry policy.
+
+Agree database service inputs/outputs and who opens/commits each transaction. Preserve the proposed same-input/new-attempt retry and fail-and-retry refresh fallback as proposals. Partial output, request-key semantics, context thresholds/windows and oversized-material handling remain open. Compression captures a complete history prefix, runs outside a DB transaction and validates before saving; failed compression does not advance coverage or replace current base materials.
+
+
+<a id="shared-identity"></a>
+
+## Appendix D. Shared User Identity — Added Proposal
+
+| Item | Contract / status |
+|---|---|
+| Authoritative identity | The actual Better Auth user primary key supplied by the auth owner |
+| Physical user table, PK column, and type | **PROPOSED:** `public.auth_user.id UUID`; the actual contract remains **OPEN** until the locked configuration and generated schema are reviewed |
+| Business owner columns | **PROPOSED:** `resumes.user_id` and `applications.user_id` use UUID FKs to `public.auth_user(id)`; the finalized type must match the actual auth key |
+| API/TypeScript identity | Use the agreed string representation as an opaque identifier |
+| Stable identity | Use the user ID for ownership; email and display name are attributes rather than relationship keys |
+| Trusted source | Backend authorization validates the Session and current email verification before providing identity to business modules |
+| Client input | Submitted user IDs, emails, verification flags, and model-supplied resource IDs are not authorization evidence |
+
+The recommended **PROPOSED** baseline uses the same PostgreSQL database as business data, the default `public` schema, and `auth_`-prefixed authentication tables. Explicit UUID configuration and reviewed generated SQL must establish the actual column types. An API string alone establishes neither UUID nor TEXT storage. If the accepted configuration differs, update this candidate contract and every dependent FK together before finalizing migrations.
+
+| Integration item | Recommended candidate / responsibility |
+|---|---|
+| User identity | `public.auth_user.id UUID`; immutable and shared by application, resume, storage and AI modules |
+| Core auth tables | `public.auth_user`, `public.auth_account`, `public.auth_session`, `public.auth_verification`; configured through Better Auth model mappings |
+| Project-specific state | `public.auth_credential_state`; one current credential per user and purpose |
+| Business FKs | Same owner-ID type and authoritative parent key; FK actions are agreed before migration approval |
+| HTTP / TypeScript IDs | UUID strings if this candidate is accepted; application code treats them as opaque strings |
+| Authorization | Valid Session, currently verified email, and ownership of the requested resource |
+
+See [the proposed authentication schema](#auth-schema) for fields, library mappings, and transaction requirements. UUID applies to the selected row IDs and matching FKs; it does not redefine Session tokens, provider identifiers, or email credentials.
+
+A minimal **PROPOSED** internal context is:
+
+```ts
+type VerifiedAuthContext = {
+  userId: string;
+  sessionId: string;
+  emailVerified: true;
+};
+```
+
+The proposed Express integration exposes this context through `res.locals.auth` after a `requireVerifiedUser` middleware succeeds; these names remain suggestions for team agreement. The authorization layer must construct it only after authoritative Session and current email-verification checks. `sessionId` identifies a Session record; it is not the Session token. Business reads/writes bind the trusted `userId`, for example in `WHERE id = $1 AND user_id = $2`, and still check resource ownership. Passwords and raw email credentials do not enter business tables or logs.
+
+For conversations and other indirect resources, derive ownership through conversation → workspace → application → user. Use email/name only as user attributes; changing either does not create a new owner identity. Frontend route guards and database FKs complement the backend checks without replacing them.
+
+Before dependent FKs land, the auth owner supplies the reviewed physical table/key/type, ordered auth migrations, the trusted identity interface, and test-account preparation instructions for verified and unverified users. Rongxin confirms the dependent business FKs and ordering; Justin and Jianye consume the same API identity and server context. Agree the account-deletion FK behavior rather than assuming a cascade; this document does not add an account-deletion feature.
+
+The base document's descriptions of a normally TEXT auth ID are retained as descriptive original wording. The physical key remains configuration-dependent and open: the UUID candidate here is not an override or an approved default. Adopt the reviewed identity contract consistently before finalizing business FKs.
+
+<a id="auth-schema"></a>
+
+## Appendix E. Proposed Authentication Database — Added
+
+**Status: PROPOSED implementation baseline.** The auth owner maintains these tables and their migrations. This proposal uses the same PostgreSQL database as business data, with `auth_` table prefixes in `public`. The final schema must be generated and reviewed for the locked Better Auth runtime, CLI, adapter, plugins and configuration. The summaries below are not complete runnable DDL.
+
+### E.1 Better Auth Core Tables
+
+| Candidate table | Main fields / responsibilities | Constraints and integration notes |
+|---|---|---|
+| `public.auth_user` | UUID `id`; email, name, `emailVerified`, timestamps | Unique email; initial verification false; authoritative owner identity |
+| `public.auth_account` | UUID `id`; UUID `userId`; text `providerId` / `accountId`; password hash and timestamps | User FK/index; preserve generated nullable/provider fields; password handling belongs to Better Auth |
+| `public.auth_session` | UUID `id`; UUID `userId`; text `token`; expiry, timestamps, optional IP/user agent | Unique token; user FK/index; `userId` is not unique because users may have multiple Sessions |
+| `public.auth_verification` | UUID `id`; text `identifier` / `value`; expiry and timestamps | Preserve the library's generic record shape, semantics and indexes |
+
+The mapping excerpt below proposes table names and UUID generation. It omits the database connection, confirmed email/password settings, mail callbacks and project-specific credential integration:
+
+```ts
+const proposedAuthSchemaOptions = {
+  user: { modelName: "auth_user" },
+  account: { modelName: "auth_account" },
+  session: { modelName: "auth_session" },
+  verification: { modelName: "auth_verification" },
+  advanced: {
+    database: { generateId: "uuid" },
+  },
+} as const;
+```
+
+Keep the generated core column names unless an explicit `fields` mapping is agreed; `userId` and `emailVerified` above use Better Auth names, while business/extension fields use snake_case. Review the generated SQL for UUID PKs and matching user FKs. Tokens, provider identifiers, and verification `identifier`/`value` retain their library-defined text semantics.
+
+Do not add a competing password column to business tables. The generic verification table need not contain `user_id` or `purpose`, and email-verification links must not be assumed to exist there as ordinary rows. The extra current-credential table below provides the project's user/purpose mapping. Preserve any additional tables/columns required by the final plugins/configuration.
+
+Better Auth documents [core schema, table mapping and UUID configuration](https://better-auth.com/docs/concepts/database), and [PostgreSQL integration and schema generation](https://better-auth.com/docs/adapters/postgresql). These support the candidate integration; they do not establish a project version or replace generated-schema review.
+
+### E.2 Project Extension: `auth_credential_state`
+
+This table tracks which credential is currently accepted for each user and purpose. It is not a second password store or an authentication-token history.
+
+| Column | Proposed type / constraints | Purpose |
+|---|---|---|
+| `user_id` | UUID NN FK to candidate `auth_user(id)` | Same type as the accepted authoritative user PK |
+| `purpose` | TEXT NN; CHECK in `('email_verification', 'password_reset')` | Separates verification from password recovery |
+| `current_issuance_id` | UUID NN | New cryptographically random issuance identity on every issue/resend |
+| `current_token_digest` | TEXT NN | Digest of the complete current credential; no additional plaintext token copy in this extension |
+| `issued_at` | TIMESTAMPTZ NN | Authoritative issuance instant |
+| `expires_at` | TIMESTAMPTZ NN | The same issuance instant plus 900 seconds |
+
+Use `PRIMARY KEY (user_id, purpose)`. A replacement updates only the relevant row and supersedes every earlier credential for that user/purpose. There is no need to retain all old tokens to enforce latest-only behavior. Token expiry and the stored expiry must describe the same issuance; an email-link GET never extends them.
+
+Freshness must be distinguishable even for two sends within one second. Include a random issuance identifier in the signed verification token, or use an equivalent unique-credential mechanism, and validate it against current state. Hashing a token alone does not make two otherwise identical tokens different. Purpose and user scope are checked by the server.
+
+For password reset, the native reset record remains the authority for whether the credential has already been consumed. Both that check and the extension's latest-credential check must pass. Do not introduce an independent `consumed_at` flag unless it is deliberately integrated into the same transaction. Email verification keeps the existing repeated-link behavior; this proposal does not add mandatory one-time consumption or promise another login for an already verified user.
+
+### E.3 Issuance, Validation, and Transaction Boundaries
+
+All signup/automatic/manual verification sends, verification callbacks, reset requests/resends, and reset callbacks/submissions must participate in the same credential rules. Library entry points must not bypass the project checks.
+
+| Operation | Required handling |
+|---|---|
+| Issue or resend | Resolve the real user and server-defined purpose; serialize replacement against concurrent use. Generate a fresh credential, save any required native reset record, and replace current state atomically. Handle first-row creation with an agreed user lock or unique-insert/upsert strategy; locking only an existing state row does not protect an absent row. |
+| Verify email | Preserve signature, expiry and trusted-callback validation. Under the same serialization boundary, recheck current issuance/digest/expiry before changing verified state and establishing the first automatic-login Session. Commit successful database work before sending the Session cookie or success redirect. |
+| Reset-link GET | Validate latest, expiry and native unused state, then redirect. Do not consume, renew, change the password or revoke Sessions. GET success does not authorize a later POST without rechecking. |
+| Reset POST | In one real authentication transaction, recheck latest/unexpired/unused state, consume the native credential, save the new password and revoke every existing user Session. Any failure rolls back the whole operation; concurrent use cannot produce two successful resets. No automatic login follows. |
+
+Use one consistent lock order across the participating auth writers, for example user → purpose state → native credential/Session operations. Serialize resend and use through the same state so that an old link cannot pass a check and mutate state after a replacement has taken effect.
+
+The custom state check/lock and Better Auth writes must share the actual adapter transaction context and database connection. Opening `BEGIN` through a separate `pg` client and then calling an auth API backed by another connection is not atomic. A before-hook precheck, an after-hook update, or an email-sending callback alone does not provide this guarantee. Select supported integration points for the locked version and verify rollback with injected failures.
+
+Preserve the existing cookie, error and redirect contracts. If wrapping a handler that signals a successful redirect through an exception, distinguish that successful control flow from a database failure when committing or rolling back.
+
+Keep email-service network calls outside held database locks. Issuance/activation and retry semantics when delivery fails remain [an open account decision](#open-decisions). The agreed policy must identify when a replacement is considered issued and preserve immediate invalidation of earlier same-user/same-purpose credentials at that point; this design does not choose the failed-delivery or retry behavior.
+
+### E.4 Sessions and Configuration Checklist
+
+The first-release recommendation is to use PostgreSQL as the authoritative Session store and disable `session.cookieCache`. Protected APIs and `get-session` must observe revocation immediately; a short cache TTL alone does not satisfy that requirement. Any later cache/secondary-store design must preserve the same authoritative behavior. See [Better Auth's Session caching and revocation guidance](https://better-auth.com/docs/concepts/session-management).
+
+The existing authentication contract supplies these configuration targets; verify them against the locked version and test the complete integration:
+
+| Confirmed behavior / proposed mechanism | Configuration target |
+|---|---|
+| Wait for verification after signup | `emailAndPassword`: `enabled=true`, `requireEmailVerification=true`, `autoSignIn=false`; `emailVerification.sendOnSignUp=true` |
+| First verification establishes a Session | `emailVerification.autoSignInAfterVerification=true` |
+| Both email credentials last 900 seconds | `emailVerification.expiresIn=900`; `emailAndPassword.resetPasswordTokenExpiresIn=900` |
+| Reset revokes all old Sessions | `emailAndPassword.revokeSessionsOnPasswordReset=true`, integrated with latest-check/consumption/password writes |
+| Immediate authoritative Session checks | **PROPOSED:** `session.cookieCache.enabled=false` and no stale application-level Session cache |
+
+The project-specific state/transaction integration remains necessary beyond these settings. Session lifetime, cooldown/rate-limit values, email provider and delivery-failure policy remain open; none is inferred from the 900-second credential lifetime.
+
+### E.5 Migration and Handoff
+
+The auth owner locks the configuration, generates and reviews the complete core SQL, adds the extension and coordinated flows, and hands off the user-key/context contract. Incorporate reviewed SQL into the same `node-pg-migrate` execution history used by business migrations: auth core tables → project credential state → dependent business FKs.
+
+Different owners may maintain different migration files in that history. Avoid applying an independent Better Auth migration history to the same shared schema after it is managed by the agreed runner. Follow [the migration plan](#migrations) and execute [the authentication integration checks](#acceptance) before reporting implementation success.
+
+<a id="auth-integration-handoff"></a>
+
+## Appendix F. Authentication Migration Handoff and Additional Checks — Added
+
+This supplement elaborates the original §10 prerequisite group without changing its planned business migrations or AI mutual-FK dependency. Keep one agreed `node-pg-migrate` execution history, with different contributors owning their files.
+
+| Order within the original prerequisite | Proposed deliverable | Owner / handoff |
+|---|---|---|
+| A1 — core authentication | Generate and review the complete Better Auth schema using locked configuration, including accepted table mappings and PK/FK types | Auth owner supplies SQL/migrations; Rongxin consumes the reviewed user-key contract |
+| A2 — credential replacement | Add `auth_credential_state`, constraints and the coordinated issuance/validation/reset integration | Auth owner supplies true shared-transaction behavior and flow evidence |
+| Then dependent business FKs | Apply the original business migration groups against the same authoritative identity | Rongxin; coordinate actual numbering and order with the auth owner |
+
+Do not establish an independent library migration history for this managed shared schema. The original group 005 still requires both message/run tables to exist before adding their mutual FKs. No command, applied migration or successful runtime behavior is claimed by this supplement.
+
+In addition to every original §11 case, execute these during implementation:
+
+| Added case | Expected evidence |
+|---|---|
+| Shared identity and auth schema | After candidate approval, reviewed core PKs and business owner FKs match; every module uses the same authoritative user. API identity remains an opaque string, and forged/unverified client identity cannot authorize access. |
+| Credential issuance races | Concurrent first issuance, resend and use serialize for the same user/purpose; same-second sends produce distinct credentials, and replacements invalidate older same-purpose credentials without affecting other purposes/users. |
+| Reset atomic rollback | Inject failure during native consumption, password persistence or Session revocation and verify rollback of participating writes. Concurrent use cannot succeed twice; a resend between GET and POST rejects the old credential without password/Session mutation. |
+
+Before dependent integration, supply the physical user table/key/type, reviewed ordered auth migrations, trusted context interface, and verified/unverified test-account instructions. Session TTL, email provider, cooldown/rate values and delivery-failure activation/retry semantics remain the original open decisions. None of these checks is reported passed here.
