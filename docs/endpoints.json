@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Job Application Tracker API",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests. AI Copilot contracts follow PRD 1.4, AI_Design.md, and Database_Design.md 1.4. AI operations require the same authoritative session, verified-email, and ownership checks. These contracts describe planned behavior, not deployed endpoints; explicitly marked retry and failure-policy proposals remain subject to the listed decisions."
   },
   "servers": [
@@ -1055,8 +1055,25 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "A generation is in progress for this application's AI conversations. Nothing was deleted; try again after it ends.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "GENERATION_ACTIVE",
+                    "message": "A generation is in progress for this application's AI conversations. Nothing was deleted; try again after it ends."
+                  }
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "Permanently hard-delete the owned application together with its interview arrangements, status history, AI workspace, and every conversation in that workspace (messages, material snapshots, generation records, and summaries). Library resumes and other applications are not affected. There is no undo or recovery; the client confirms with the user first, stating that this cannot be undone and that the application's AI conversations, if any, will also be deleted. If any conversation of the application has an active generation, nothing is deleted and 409 GENERATION_ACTIVE is returned."
       }
     },
     "/api/v1/resumes": {
@@ -1191,11 +1208,21 @@
           "Resumes"
         ],
         "summary": "Delete a resume",
-        "description": "Deletes the resume and its stored file. Applications referencing this resume are preserved and their resumeId is set to null.",
+        "description": "Delete the owned resume and its stored file. Applications referencing it are preserved and their resumeId is set to null. The client confirms with the user first, showing how many applications currently use the resume. Text snapshots that AI conversations saved from it remain as read-only history and never make the file current, downloadable, or linkable again.",
         "operationId": "deleteResume",
         "responses": {
-          "204": {
-            "description": "Resume deleted; no response body."
+          "200": {
+            "description": "Resume deleted; reports how many applications were unlinked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeDeleteResult"
+                },
+                "example": {
+                  "unlinkedApplicationCount": 3
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3990,6 +4017,20 @@
             "generation.error": "#/components/schemas/AiGenerationErrorEvent"
           }
         }
+      },
+      "ResumeDeleteResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "unlinkedApplicationCount"
+        ],
+        "properties": {
+          "unlinkedApplicationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of the user's applications whose link to this resume was removed by this deletion."
+          }
+        }
       }
     },
     "responses": {
@@ -4128,9 +4169,9 @@
   "x-ai-design": {
     "status": "proposed-contract-not-implementation-evidence",
     "requirements": [
-      "PRD.md 1.4: FR-02, FR-10 through FR-20, FR-25, FR-27 through FR-30, FR-34, FR-35",
+      "PRD.md 1.5: FR-02, FR-10 through FR-20, FR-25, FR-27 through FR-30, FR-34, FR-35",
       "AI_Design.md sections 1 through 7 (2026-11-11, fingerprint revision)",
-      "Database_Design.md 1.4 sections 5.6 through 5.10 and 7.4"
+      "Database_Design.md 1.5 sections 5.6 through 5.10 and 7.4"
     ],
     "authorization": "Resolve user -> application -> workspace -> conversation -> generation/snapshot on the server for every operation. A valid session and current verified email are mandatory. Return 404 for missing, inaccessible, or mismatched resource chains without disclosing another owner. Model arguments and client-supplied history cannot widen this boundary.",
     "context": "Every model request uses the fixed structure in AI Design section 4.2: system rules, all current base materials with version labels from the generation's fixed snapshots, a change notice when materials differ from the baseline, this conversation's usable compressed history, recent messages (annotated when based on superseded versions), and the current input exactly once. Base materials never depend on the history window. Only superseded or removed materials are historical-only. Summaries never replace base materials or delete full history.",

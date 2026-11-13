@@ -1,9 +1,9 @@
 ---
 artifact: database-design
-version: "1.4"
+version: "1.5"
 created: 2026-11-09
-updated: 2026-11-11
-requirements_baseline: "PRD 1.4 / AI_Design.md (2026-11-11)"
+updated: 2026-11-13
+requirements_baseline: "PRD 1.5 / AI_Design.md (2026-11-11)"
 status: proposed-design-with-open-decisions
 ---
 
@@ -20,6 +20,8 @@ The dated supplements below carry forward the relevant reading paths, authentica
 **AI context revision (v1.3, 2026-11-11):** Following the requester's confirmation recorded in PRD 1.3, base materials are loaded by backend code on every turn rather than through model function calling. Material retrievals are now backend-saved snapshots linked to the generation that first saved them, `conversation_material_state` is removed, and a conversation's comparison baseline is derived from its latest completed generation. Message tool parts are reserved for the optional website tool. Snapshots of a deleted resume's text are retained as read-only history. `endpoints.json` 1.4.0 aligns the AI contract with these changes; see Appendix A.
 
 **Material versioning revision (v1.4, 2026-11-11):** Material versions are now identified by a content fingerprint computed during turn preparation, not by revision counters maintained on `applications`. The six `*_revision` columns are removed, so application and resume writers take no part in AI versioning. `material_retrievals` is renamed `material_snapshots`, the set of material kinds is defined by a backend registry rather than by schema structure, and `generation_runs.material_manifest` is replaced by a `baseline_generation_id` column. `endpoints.json` 1.5.0 carries the matching contract. These changes remove work from `applications` and its update paths; the business database and application API owners should review them before migrations 002 and 005 are written.
+
+**Deletion revision (v1.5, 2026-11-13):** Application deletion is confirmed as a permanent hard delete of the application and all of its child records, including the AI workspace and conversations; it is rejected while a generation is active (§7.5). Resume deletion behavior is unchanged; its API now returns the number of applications unlinked. `endpoints.json` 1.6.0 carries both contracts.
 
 | Reader | Start here | Original implementation reference |
 |---|---|---|
@@ -39,7 +41,7 @@ This document defines the proposed PostgreSQL schema, relationships, constraints
 
 The requirements baseline is:
 
-- [PRD.md, version 1.4](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/PRD.md): authoritative product requirements, including confirmed authentication rules, database responsibilities, and the 2026-11-11 AI context and material fingerprint policies.
+- [PRD.md, version 1.5](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/PRD.md): authoritative product requirements, including confirmed authentication rules, database responsibilities, and the 2026-11-11 AI context and material fingerprint policies, and the 2026-11-13 deletion rules.
 - [AI_Design.md](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/AI_Design.md): workspace isolation, backend material loading and versioning, the fixed context structure, and conversation persistence. Its §7 recommendations are confirmed requirements through the PRD.
 - [endpoints.json, version 1.2.0](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/endpoints.json): API integration reference from the 2026-11-09 review. The alignment notes in §9 retain that review's scope; the API contract is not a requirements override.
 
@@ -247,7 +249,7 @@ Use `FOREIGN KEY (resume_id, user_id) REFERENCES resumes(id, user_id)` and a sin
 
 Do not deduplicate by company/position: users may legitimately keep several applications for the same role/company. A company is stored directly on an application; a separate company entity would add sharing behavior not required by the PRD.
 
-**Deletion policy gate:** The final hard/soft deletion and chat retention strategy is unresolved. Query examples below assume the set of current applications. If soft deletion is approved, add `deleted_at`, filter it in every list/count/access path, and exclude associated interviews/workspaces from active access. If hard deletion is approved, decide child-history retention/cascades before enabling it. Neither option authorizes resume deletion.
+**Deletion policy (confirmed 2026-11-13):** Applications are hard-deleted together with all child records; there is no `deleted_at` column and no recovery. Query examples below therefore need no active-record filter. Deleting an application never deletes a library resume. See [§7.5](#application-delete).
 
 ### 5.4 `application_status_history`
 
@@ -544,15 +546,26 @@ The proposed refresh-error fallback is to fail that attempt visibly and allow re
 
 <a id="application-delete"></a>
 
-### 7.5 Application Deletion — Unresolved Policy
+### 7.5 Application Deletion — Hard Delete
 
-The observable result is fixed: remove from current list, Dashboard totals and normal AI entry; keep library resumes and other applications' links intact. Physical hard/soft deletion and treatment of child chats remain undecided. Use restrictive child FKs while drafting migrations so a generic cascade cannot silently destroy conversation history. Before implementing deletion, agree on the policy and write the corresponding explicit transaction, access filters, cascade/restrict actions and acceptance checks. Do not expose restore/recovery controls without authorization.
+Confirmed 2026-11-13 (PRD FR-22): deleting an application permanently removes the application, its interviews, status history, AI workspace, and every conversation in that workspace with its messages, material snapshots, generation runs, generation materials, and summaries. Library resumes and other applications are untouched. No restore or recovery control exists.
+
+**Foreign-key actions.** Child FKs on the deletion path use `ON DELETE CASCADE`: `interviews` and `application_status_history` → `applications`; `ai_workspaces` → `applications`; `conversations` → `ai_workspaces`; and `messages`, `generation_runs`, `material_snapshots`, `generation_materials`, `conversation_summaries` → `conversations`. Several of these tables also reference one another within the same conversation: messages ↔ generation runs, snapshots and generation materials → generation runs, generation materials → snapshots, the run's baseline and summary predecessors. Declare those internal FKs `NO ACTION`, not `RESTRICT`. `NO ACTION` is checked at the end of the statement, after the cascade has removed every row of the conversation, while `RESTRICT` would fail mid-cascade. Cover this path with a migration test. The `applications.resume_id` FK points from the application to the resume, so deleting an application never touches `resumes`.
+
+Within one short transaction:
+
+1. Authorize and lock the application (`FOR UPDATE`, filtered by owner); return not-found for a missing or foreign application.
+2. Lock the workspace's conversations in sorted identity order. Generation acceptance locks a conversation before creating a run (§7.4 step 1), so after these locks no new attempt can start, and a conversation already deleted rejects new input as not found. No other path locks a conversation and then an application, so this application → conversation order cannot deadlock.
+3. If any run in those conversations is `preparing` or `streaming` with an unexpired lease, roll back and report `GENERATION_ACTIVE` (HTTP 409); nothing is deleted. Runs whose lease has already expired are abandoned and are deleted with the rest.
+4. Delete the application row; the cascades remove the child records. Commit.
+
+The deletion owns no object-storage data: resume files belong to the library, and website-tool results are stored in PostgreSQL. No cleanup job is enqueued. A worker that outlived an expired lease fails its next conditional write because its run row no longer exists, so it cannot recreate deleted records.
 
 <a id="sql"></a>
 
 ## 8. Query Patterns
 
-The following examples illustrate bound SQL and counting semantics. They assume `applications` contains current records only. Add an agreed active-record predicate everywhere if soft deletion is selected. Auth IDs and time boundaries come from trusted server context, never model input.
+The following examples illustrate bound SQL and counting semantics. They assume `applications` contains current records only. Applications are hard-deleted (§7.5), so no active-record predicate is needed. Auth IDs and time boundaries come from trusted server context, never model input.
 
 ### 8.1 List and Search
 
@@ -678,7 +691,7 @@ These are planned migration groups, not files already implemented:
 | 004 | Unique workspace and independent conversations | Core agreed structure |
 | 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | Create both message/run tables before adding their mutual FKs; resolve retry/fallback behavior before dependent execution paths and request-key constraints |
 | 006 | Cleanup outbox and private-file lifecycle support | Core cleanup requirement; deployment parameters TBD |
-| 007 | Explicit application deletion policy and any required access indexes/filters | Blocked on retention/hard-versus-soft decision |
+| 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 and add the deletion-path migration test; no extra filters or indexes | Policy confirmed 2026-11-13 (§7.5); can be folded into 002–005 |
 
 Implementation procedure:
 
@@ -738,7 +751,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Summary failure and material updates | Failed compression does not advance coverage; a summary discussing V1 cannot override current V2 or an unavailable material state |
 | Optional website reading | If implemented, page content has source/time metadata separate from the URL material; freshness is not inferred from an unchanged URL |
 | Auth integration | Registration returns token:null with no login session; unverified access denied; first verification auto-signs in; credentials expire at 900 seconds; replacements invalidate older same-purpose links only; reset GET does not consume; reset submission revalidates and atomically consumes/updates/revokes all sessions without auto-login; old sessions fail authoritatively; logout invalidates session. Auth owner provides flow evidence; business integration verifies protected access. |
-| Application delete | Execute after policy decision; current counts and access update, library resumes remain |
+| Application delete | Application, interviews, status history, workspace, conversations and all conversation records are gone after one delete; library resumes and other applications are unchanged; current counts update; deletion during an active generation returns 409 and removes nothing; a generation cannot start on a conversation of a deleted application |
 | Clean setup | Empty-database migration succeeds; teammate can reproduce schema and run flows from documented setup |
 
 <a id="open-decisions"></a>
@@ -747,7 +760,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 
 | Decision | Already confirmed | Remaining choice / owner coordination |
 |---|---|---|
-| Application deletion | Removed from active lists/counts; resumes retained | Hard/soft deletion, chat retention/cascade/recovery; requester with Zishi Yang and Rongxin Bi |
+| Application deletion | Hard delete of the application and all child records including chats, no recovery, 409 during an active generation, resumes retained (confirmed 2026-11-13, §7.5) | None |
 | Interview validation | Multiple individually editable records | Required name/time, states and count rules; requester/API owner |
 | Timeline | Actual status transitions retained | Extra event types; requester |
 | Account configuration | All flows and 900-second credential rules in §5.1; no session after registration; verified-only access; reset revokes all old sessions | Email provider, session lifetime, resend cooldown/rate limits, and email-delivery-failure issuance/retry semantics; auth owner/requester |
@@ -763,7 +776,7 @@ Resolve these within their affected implementation areas. They do not block writ
 
 This document is ready for team design review, subject to the explicit open items in §12. It is not evidence of a deployed schema, running backend, successful migrations or passed acceptance checks.
 
-Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. Retry and refresh-fallback proposals remain identified separately from confirmed requirements. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`.
+Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. Retry and refresh-fallback proposals remain identified separately from confirmed requirements. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007.
 
 The current scope is documentation only. SQL examples describe intended access behavior; migration grouping describes future work. No implementation is required to claim completion of this design deliverable.
 
@@ -782,7 +795,7 @@ This snapshot compares the checked-out [endpoints.json 1.3.0](endpoints.json) wi
 | Non-AI application list | Still documents `page`, `limit` and the older seven-value status enum | Align six statuses, keyword/sort options, complete counts and Dashboard read models |
 | Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation, individual interview identity/editing and unresolved validation |
 | Offer and timeline | Full historical-offer/status-history API models are still incomplete | Agree read/write fields and response models before final UI integration |
-| Resume library | Existing upload accepts PDF/DOCX; standard metadata lacks the parsing/link-count contract; deletion has an empty 204 response | Align PDF-only validation, parsing completion/status/errors, private viewing and affected-link reporting |
+| Resume library | Existing upload accepts PDF/DOCX; standard metadata lacks the parsing/link-count contract. Since 1.6.0, deletion returns 200 with `unlinkedApplicationCount` | Align PDF-only validation, parsing completion/status/errors and private viewing |
 | Concurrency and recovery | `row_version` has no agreed public non-AI contract; AI durable-attempt and stream-error contracts are described | Agree conflict handling if adopted; reconcile AI durable state after transport loss without assuming replay/resumption |
 | Open product/configuration choices | Original §12 and PRD §11 still apply | Resolve affected interview/deletion/retry/context/email settings without treating unrelated work as blocked |
 
