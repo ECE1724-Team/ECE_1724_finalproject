@@ -1,9 +1,9 @@
 ---
 artifact: database-design
-version: "1.5"
+version: "1.6"
 created: 2026-11-09
-updated: 2026-11-13
-requirements_baseline: "PRD 1.5 / AI_Design.md (2026-11-11)"
+updated: 2026-11-14
+requirements_baseline: "PRD 1.6 / AI_Design.md (2026-11-11)"
 status: proposed-design-with-open-decisions
 ---
 
@@ -23,6 +23,8 @@ The dated supplements below carry forward the relevant reading paths, authentica
 
 **Deletion revision (v1.5, 2026-11-13):** Application deletion is confirmed as a permanent hard delete of the application and all of its child records, including the AI workspace and conversations; it is rejected while a generation is active (§7.5). Resume deletion behavior is unchanged; its API now returns the number of applications unlinked. `endpoints.json` 1.6.0 carries both contracts.
 
+**Retry and interruption revision (v1.6, 2026-11-14):** The retry contract in §5.7 is confirmed. Only the latest user message can be retried, and only when its most recent attempt failed or was interrupted. There is no request-key deduplication, so `request_key` is removed. A client disconnect aborts the generation and no partial output is saved (PRD FR-29).
+
 | Reader | Start here | Original implementation reference |
 |---|---|---|
 | Justin Smith — non-AI frontend and OpenAPI | [Current API status](#current-integration-status), [Justin guide](#justin-guide), [shared identity](#shared-identity) | §5.1–5.5, §7.1–7.3, §8.1–8.3/8.5, and relevant §11–12 cases |
@@ -41,7 +43,7 @@ This document defines the proposed PostgreSQL schema, relationships, constraints
 
 The requirements baseline is:
 
-- [PRD.md, version 1.5](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/PRD.md): authoritative product requirements, including confirmed authentication rules, database responsibilities, and the 2026-11-11 AI context and material fingerprint policies, and the 2026-11-13 deletion rules.
+- [PRD.md, version 1.6](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/PRD.md): authoritative product requirements, including confirmed authentication rules, database responsibilities, and the 2026-11-11 AI context and material fingerprint policies, and the 2026-11-13 deletion rules.
 - [AI_Design.md](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/AI_Design.md): workspace isolation, backend material loading and versioning, the fixed context structure, and conversation persistence. Its §7 recommendations are confirmed requirements through the PRD.
 - [endpoints.json, version 1.2.0](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/endpoints.json): API integration reference from the 2026-11-09 review. The alignment notes in §9 retain that review's scope; the API contract is not a requirements override.
 
@@ -298,7 +300,6 @@ Create/reuse workspace with an ownership-scoped insert and conflict handling on 
 | `input_message_id` | UUID NN | User message that this attempt answers; same-conversation FK to `messages` |
 | `status` | TEXT NN | `preparing`, `streaming`, `completed`, `failed`, `interrupted` |
 | `baseline_generation_id` | UUID nullable | Latest completed generation used as the comparison baseline when preparation committed; NULL before preparation and when the conversation had no completed answer; same-conversation FK |
-| `request_key` | TEXT nullable | Request deduplication key; request identity and reuse rules require the retry contract below |
 | `lease_expires_at` | TIMESTAMPTZ nullable, required while active | Operational recovery from crashed workers |
 | `model_metadata` | JSONB nullable | Actual provider/model/configuration identifiers; no secrets |
 | `error_code` | TEXT nullable | Failure metadata |
@@ -321,7 +322,11 @@ Apply row CHECKs for required snapshot fields in `streaming`/`completed` and a n
 
 Enforce a partial unique index on conversation for status in `('preparing','streaming')`. Renew the lease only for the same active attempt while preparing or generating. Recovery atomically marks an expired run terminal before another attempt can acquire the slot and requests cancellation of the old worker. Cancellation is best-effort; conditional database writes enforce ownership. Preparation commits and final-answer writes must lock/recheck that the run is still active and its lease is valid. A stale worker cannot publish an answer or advance the baseline after recovery. Lease duration/heartbeat parameters remain implementation decisions. Do not hold a DB transaction open during a model request or stream.
 
-**Proposed retry contract, pending resolution of PRD §11:** retain the original user message and create a new attempt for an explicit retry, checking current materials again. Repeated delivery of the same accepted request identifies the existing attempt rather than creating another user message or answer. An explicit retry has a new request identity. Before implementing deduplication, define key scope, payload-mismatch handling, retention, and retry eligibility; if `request_key` identifies an attempt within a conversation, enforce uniqueness on `(conversation_id, request_key)` for non-null keys. Partial-output persistence remains open. The schema supports this proposal without treating it as a confirmed product rule.
+**Retry, duplicate-request, and interruption contract (confirmed 2026-11-14, PRD FR-29):**
+
+- **Retry.** An explicit retry keeps the original user message and creates a new attempt with the same `input_message_id`, reading current materials again. It is allowed only when the target is the conversation's latest user message and that message's most recent attempt is `failed` or `interrupted`; check this under the conversation lock. Earlier attempts stay as internal records and are never shown as messages. Regenerating a completed answer is out of scope.
+- **Duplicate requests.** There is no request-key deduplication. The active-run partial unique index rejects a concurrent send or retry with `GENERATION_ACTIVE` and saves nothing. A send after the previous answer completed is a new user message.
+- **Interruption.** When the client disconnects or the stream fails, the server aborts the model request, marks the still-owned attempt `interrupted`, and releases the slot. Partial output is never persisted, so the only assistant messages are complete answers.
 
 ### 5.8 `messages`
 
@@ -343,7 +348,7 @@ Base-material loading creates no messages. The materials behind an answer are re
 
 Tool parts exist only if the optional website-reading tool is implemented. They use a stable internal envelope containing `tool_name`, `provider_call_id`, `arguments`, `status`, and a validated inline result (page content, source URL, retrieval time) or a safe `error_code`. Every tool part corresponds to a genuine provider tool call, with its actual call ID and ordering, and belongs to the same generation as the assistant answer that used it. The tool's host comes from the authorized application's saved website URL, never from model arguments. No additional tool-execution table is required.
 
-System prompts are server configuration, not user-editable message rows. Retry behavior follows the proposed contract in §5.7 only after the open product decisions are resolved; a `request_key` alone does not define user-visible behavior.
+System prompts are server configuration, not user-editable message rows. Retry, duplicate-request, and interruption behavior follow the confirmed contract in §5.7.
 
 ### 5.9 Material Snapshots and Per-Generation Provenance
 
@@ -461,8 +466,6 @@ Authentication tables and authoritative checks are accessed through supported au
 
 These are initial access-path proposals, not performance claims. Case-insensitive substring search works with parameterized `ILIKE`; ordinary B-tree indexes do not accelerate arbitrary `%keyword%` matching. A trigram index is optional only if measured need justifies an extension. No vector index is needed.
 
-Add the request-key unique index described in §5.7 only with the agreed deduplication contract; the active-run constraint alone prevents overlapping attempts, not repeated delivery after completion.
-
 Review FK indexes for join, parent-delete/update and lifecycle access paths; use an appropriate leading-column index when needed, and avoid duplicating an existing covering index. PostgreSQL does not automatically create child-side FK indexes, and an FK does not by itself make an index mandatory. Add the composite unique targets explicitly during migration; PostgreSQL does not infer them from a different uniqueness definition.
 
 <a id="lifecycle"></a>
@@ -517,7 +520,7 @@ This tombstone supports immediate access removal and reliable cleanup; long-term
 
 Backend code reads and fixes all materials deterministically; the model does not decide whether a version check or refresh occurs and is offered no material tool.
 
-1. **Accept input and acquire the slot.** Resolve and authorize the conversation's parent chain. In a short transaction, lock the conversation to allocate message order, save the accepted user input, and create its `preparing` run with `input_message_id` and an active lease. Apply the agreed request-deduplication policy before creating records. Under the proposed retry contract, reference the existing input rather than inserting it again. The active-run constraint rejects concurrent attempts without leaving an extra accepted message from the rejected transaction. Commit before material preparation.
+1. **Accept input and acquire the slot.** Resolve and authorize the conversation's parent chain. In a short transaction, lock the conversation to allocate message order, save the accepted user input, and create its `preparing` run with `input_message_id` and an active lease. For an explicit retry, check §5.7 eligibility and reference the existing input rather than inserting it again. The active-run constraint rejects concurrent attempts without leaving an extra accepted message from the rejected transaction. Commit before material preparation.
 2. **Fix the material snapshot.** Open a short consistent-snapshot transaction, revalidate access, and lock the conversation before locking/checking the active run and lease. Read the current value, source identity and availability of every registered material, compute their fingerprints, and read this conversation's baseline (§5.9, query in §8.4). Use repeatable-read semantics or equivalent lock/version checks. Establish `snapshot_at` for the logical boundary; this timestamp is audit metadata, not a replacement for version identities.
 3. **Resolve snapshots.** For each kind, apply §5.9's reuse rule: reference a matching saved snapshot, including known absences, or read the current content or explicit absence within that same database snapshot and insert a new snapshot linked to this run. This is ordinary backend code performing local PostgreSQL operations only; no model call, website request, PDF parsing, or object-storage access occurs inside this transaction.
 4. **Commit preparation atomically.** Save new snapshots, insert one generation association per registered kind, and record `baseline_generation_id`. Validate the association set against the registry, reference ownership, and the still-active lease before marking the run `streaming` and committing. Only then report successful sync. A preparation failure rolls back these changes; the accepted input and attempt from step 1 remain available for failure reporting and retry. Preparation does not advance the baseline.
@@ -537,7 +540,7 @@ Failure handling separates successful material preparation from successful answe
 | Resume/JD or another optional material is absent | Save/reuse a successful `unavailable` snapshot and continue limited assistance with the remaining materials |
 | Material read or preparation write fails | Roll back preparation; the baseline is unchanged; in a separate short transaction, record a safe error code and mark the still-owned attempt failed; retain accepted input |
 | Preparation commits, then context assembly or model generation fails | Retain committed snapshots and associations; mark the attempt failed and report the error; the baseline is not advanced, so a later attempt reuses the snapshots and repeats any change notice |
-| Streaming is interrupted | Mark the still-owned attempt interrupted and release its slot; preserve committed preparation; the baseline is not advanced; partial-output storage follows the unresolved policy |
+| Streaming is interrupted or the client disconnects | Abort the model request, mark the still-owned attempt interrupted and release its slot; preserve committed preparation; the baseline is not advanced; discard partial output |
 | The final answer cannot be saved | Do not mark completed or report durable success; reconcile by run identity if commit outcome is unknown before attempting another write; if the transaction did not commit, report the persistence failure and terminalize the attempt when storage is available |
 | A recovered or replaced worker returns late | Reject its preparation/final writes using active-status and lease checks, regardless of whether cancellation reached the worker |
 | Storage is unavailable during failure recording | Report failure to the client where possible; use lease recovery to terminate the abandoned run once storage is available |
@@ -689,7 +692,7 @@ These are planned migration groups, not files already implemented:
 | 002 | Resumes, applications, composite ownership FK, row-version checks and list indexes | Core agreed structure |
 | 003 | Status history and individual interviews | Final interview nullability/validation needs confirmation |
 | 004 | Unique workspace and independent conversations | Core agreed structure |
-| 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | Create both message/run tables before adding their mutual FKs; resolve retry/fallback behavior before dependent execution paths and request-key constraints |
+| 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | Create both message/run tables before adding their mutual FKs; no request-key column or index; resolve the refresh-failure fallback before exposing that path |
 | 006 | Cleanup outbox and private-file lifecycle support | Core cleanup requirement; deployment parameters TBD |
 | 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 and add the deletion-path migration test; no extra filters or indexes | Policy confirmed 2026-11-13 (§7.5); can be folded into 002–005 |
 
@@ -744,7 +747,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Generation failure after preparation | Saved snapshots remain; the failed run releases its slot and does not become the baseline; the next attempt reuses the snapshots and repeats any change notice |
 | Missing materials | Explicit unavailable results allow limited assistance; old copies are not restored as current and read errors are not misreported as absence |
 | Final persistence failure | No completed state without a saved final answer; reconcile uncertain commits by run identity; retry/recovery cannot append a duplicate final answer |
-| Request replay and explicit retry | After policy agreement, duplicate request delivery resolves to the existing attempt; an explicit retry creates a new attempt linked to the agreed input and checks current materials |
+| Concurrent sends and explicit retry | A concurrent send or retry returns `GENERATION_ACTIVE` and saves nothing. A retry of the latest failed/interrupted message creates a new attempt on the same input and rereads materials. Retry is rejected for older messages and completed answers. A disconnect leaves an `interrupted` attempt and no partial assistant message |
 | Concurrent generation | One active run per conversation, independent conversations/users can generate concurrently |
 | Worker crash | Active leases are maintained; recovery terminalizes expired runs before replacement; stale callbacks cannot commit preparation or append another final answer |
 | History compression | Full messages retained, exact complete-prefix boundary respected, current input included once, unchanged base materials remain complete regardless of the history window, and version-specific summary points are tagged |
@@ -764,7 +767,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Interview validation | Multiple individually editable records | Required name/time, states and count rules; requester/API owner |
 | Timeline | Actual status transitions retained | Extra event types; requester |
 | Account configuration | All flows and 900-second credential rules in §5.1; no session after registration; verified-only access; reset revokes all old sessions | Email provider, session lifetime, resend cooldown/rate limits, and email-delivery-failure issuance/retry semantics; auth owner/requester |
-| AI failures/retries | Visible errors, retry, one active run per thread; committed material preparation is separate from answer completion, and only completion advances the baseline | Resolve §5.7's proposed same-input/new-attempt retry contract, request-key scope/payload mismatch/retention and eligibility, partial-output persistence, and §7.4's proposed fail-and-retry refresh fallback; AI owner/requester |
+| AI failures/retries | Visible errors, retry, one active run per thread; committed material preparation is separate from answer completion, and only completion advances the baseline | Retry, duplicate-request, and partial-output rules confirmed 2026-11-14 (§5.7). Remaining: §7.4's proposed fail-and-retry refresh fallback; AI owner/requester |
 | Context sizing | Current materials outside history compression | Thresholds, recent window, oversized-material handling; AI owner/requester |
 | Conversation controls | Persistent independent conversations | Rename/delete requirements; requester |
 | Validation/pagination | Company+position only required; literal substring search | Detailed limits, URL rules, pagination; requester/API owner |
@@ -776,7 +779,7 @@ Resolve these within their affected implementation areas. They do not block writ
 
 This document is ready for team design review, subject to the explicit open items in §12. It is not evidence of a deployed schema, running backend, successful migrations or passed acceptance checks.
 
-Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. Retry and refresh-fallback proposals remain identified separately from confirmed requirements. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007.
+Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. Retry and refresh-fallback proposals remain identified separately from confirmed requirements. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007. Version 1.6 confirms the retry contract with latest-message eligibility, removes `request_key` and request deduplication, and specifies abort-on-disconnect with no partial-output persistence; `endpoints.json` 1.7.0 carries the matching contract.
 
 The current scope is documentation only. SQL examples describe intended access behavior; migration grouping describes future work. No implementation is required to claim completion of this design deliverable.
 
@@ -790,7 +793,7 @@ This snapshot compares the checked-out [endpoints.json 1.3.0](endpoints.json) wi
 |---|---|---|
 | Authentication | Confirmed signup/verification/reset/session policies remain documented | Implement and verify the auth schema, latest-credential rules, atomic reset and authoritative access |
 | Shared company materials | `companyWebsiteUrl` and `companyNotes` exist in `ApplicationFields`; `notes` is explicitly personal | Map to `company_website_url`, `company_notes` and `personal_notes`; saving a URL does not read its page |
-| AI Copilot | Workspace, conversation, message history, generation/stream/status, retry proposal and material-snapshot contracts are present. 1.3.0 described base materials as backend tool executions. 1.4.0 (2026-11-11) replaces `toolMessageId` with `generationId` on snapshots and removes material-tool parts, keeping website-tool parts only. It derives `materialState` from the latest completed generation, defines `changedKinds` against that baseline, and adds `baselineGenerationId`. 1.5.0 (2026-11-11) replaces `materialRevision` and `sourceContentVersion` with `fingerprint`, renames `retrievalId` to `snapshotId` and the route to `/material-snapshots/{snapshotId}`, and makes the material maps registry-keyed instead of six fixed properties | Implement against 1.5.0 and the SDK/UI adapters; keep conditional retry/fallback decisions open |
+| AI Copilot | Workspace, conversation, message history, generation/stream/status, retry proposal and material-snapshot contracts are present. 1.3.0 described base materials as backend tool executions. 1.4.0 (2026-11-11) replaces `toolMessageId` with `generationId` on snapshots and removes material-tool parts, keeping website-tool parts only. It derives `materialState` from the latest completed generation, defines `changedKinds` against that baseline, and adds `baselineGenerationId`. 1.5.0 (2026-11-11) replaces `materialRevision` and `sourceContentVersion` with `fingerprint`, renames `retrievalId` to `snapshotId` and the route to `/material-snapshots/{snapshotId}`, and makes the material maps registry-keyed instead of six fixed properties | Implement against 1.7.0 and the SDK/UI adapters. 1.7.0 (2026-11-14) confirms the retry route, abort-on-disconnect with no partial output, and no request-key deduplication; only the refresh-failure fallback stays open |
 | AI application selector | `GET /api/v1/ai/applications` describes `q` plus a six-status filter and no side effects on navigation | Coordinate with the non-AI listing while preserving the selector's documented behavior |
 | Non-AI application list | Still documents `page`, `limit` and the older seven-value status enum | Align six statuses, keyword/sort options, complete counts and Dashboard read models |
 | Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation, individual interview identity/editing and unresolved validation |
@@ -873,9 +876,9 @@ The registry uses the current `company_website_url` name. Its value is the saved
 
 Base materials never appear as tool messages; the core chat request defines no tools. §5.8 tool parts apply only to the optional website tool and always correspond to genuine provider calls with their actual IDs and order. Test explicit application ↔ SDK ↔ UI adapters. Saved history resolves immutable same-conversation snapshots, not current live fields.
 
-The current OpenAPI already describes workspace/conversation/history/generation/provenance routes and stream events. Reconcile durable attempt state after disconnects; transport EOF is not durable completion, and automatic POST replay or stream resumption is not guaranteed. A documented retry route remains conditional on the unresolved retry policy.
+The current OpenAPI already describes workspace/conversation/history/generation/provenance routes and stream events. Reconcile durable attempt state after disconnects; transport EOF is not durable completion, and automatic POST replay or stream resumption is not guaranteed. The retry route follows the confirmed §5.7 contract; `endpoints.json` 1.7.0 documents its eligibility rule and 409 codes.
 
-Agree database service inputs/outputs and who opens/commits each transaction. Preserve the proposed same-input/new-attempt retry and fail-and-retry refresh fallback as proposals. Partial output, request-key semantics, context thresholds/windows and oversized-material handling remain open. Compression captures a complete history prefix, runs outside a DB transaction and validates before saving; failed compression does not advance coverage or replace current base materials.
+Agree database service inputs/outputs and who opens/commits each transaction. The retry, duplicate-request, and interruption contract in §5.7 is confirmed. The fail-and-retry refresh fallback remains a proposal; context thresholds/windows and oversized-material handling remain open. Compression captures a complete history prefix, runs outside a DB transaction and validates before saving; failed compression does not advance coverage or replace current base materials.
 
 
 <a id="shared-identity"></a>
