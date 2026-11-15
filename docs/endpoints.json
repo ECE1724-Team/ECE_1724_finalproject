@@ -1115,7 +1115,7 @@
           "Resumes"
         ],
         "summary": "Upload a resume",
-        "description": "Accepts a PDF or DOCX resume as multipart/form-data.",
+        "description": "Accepts only a PDF resume as multipart/form-data.",
         "operationId": "createResume",
         "requestBody": {
           "required": true,
@@ -1126,7 +1126,7 @@
               },
               "encoding": {
                 "file": {
-                  "contentType": "application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  "contentType": "application/pdf"
                 }
               }
             }
@@ -1261,12 +1261,6 @@
             },
             "content": {
               "application/pdf": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -2113,7 +2107,7 @@
           "file": {
             "type": "string",
             "format": "binary",
-            "description": "PDF or DOCX file."
+            "description": "PDF file only."
           }
         }
       },
@@ -2143,8 +2137,7 @@
           "mimeType": {
             "type": "string",
             "enum": [
-              "application/pdf",
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              "application/pdf"
             ]
           },
           "sizeBytes": {
@@ -4092,7 +4085,7 @@
         }
       },
       "UnsupportedMediaType": {
-        "description": "Uploaded file type is not supported. Only PDF and DOCX are allowed.",
+        "description": "Uploaded file type is not supported. Only PDF is allowed.",
         "content": {
           "application/json": {
             "schema": {
