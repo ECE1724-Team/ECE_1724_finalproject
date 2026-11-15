@@ -2,24 +2,41 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/server.js",
+  "engines": { "node": ">=24" },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
+    "test": "node scripts/test-with-postgres.mjs",
+    "test:contract": "node --import tsx --test tests/contract/*.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/*.test.ts",
+    "migrate": "node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js up --migrations-dir migrations",
+    "migrate:down": "node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js down --migrations-dir migrations"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
-    "better-auth": "^1.7.20",
+    "@better-auth/core": "1.7.20",
+    "better-auth": "1.7.20",
+    "cors": "2.8.6",
     "express": "^5.3.0",
+    "jose": "6.2.17",
+    "nodemailer": "10.5.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {
+    "@types/cors": "2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
+    "@types/nodemailer": "8.0.2",
     "@types/pg": "^8.23.1",
     "node-pg-migrate": "^9.0.0",
+    "tsx": "4.23.15",
     "typescript": "^7.0.2"
   }
 }
