@@ -65,7 +65,9 @@ This deliverable documents schema, relationships, constraints, access patterns, 
 
 Confirmed product rules are treated as requirements. Table names, fingerprint columns, generation records, cleanup outbox and transaction mechanisms below are proposed database solutions, not additional product features or uniquely required implementations. AI persistence details require agreement with the AI owner. Remaining PRD decisions stay explicitly open and block only dependent work.
 
-**Stack:** PostgreSQL; parameterized SQL through `pg`; versioned business migrations through `node-pg-migrate`; no business ORM. Authentication uses Better Auth with PostgreSQL-backed sessions, with physical schema determined by the selected configuration. Original PDFs reside in private S3-compatible storage; extracted text and metadata reside in PostgreSQL. The actual storage provider remains open.
+**Stack:** PostgreSQL; parameterized SQL through `pg`; versioned business migrations through `node-pg-migrate`; no business ORM. Authentication uses Better Auth with PostgreSQL-backed sessions, with physical schema determined by the selected configuration. Original PDFs reside in private Cloudflare R2 storage through its S3-compatible API (confirmed 2026-11-15); extracted text and metadata reside in PostgreSQL.
+
+**R2 configuration:** The backend uses a configured private bucket, S3 endpoint, access key ID/secret, and region `auto`; see `backend/.env.example` and the root README. Keep public bucket access disabled. Store opaque object keys in `resumes.object_key`, not URLs; bucket configuration stays outside the database. This provider choice requires no schema change.
 
 <a id="design-rules"></a>
 
@@ -437,7 +439,7 @@ This is a retry mechanism for object cleanup, not a user recovery feature. The o
 
 A conversation authorization query must join conversation→workspace→application and filter `applications.user_id = authenticated user`. Material preparation derives the application from the authorized conversation; the model supplies no workspace/application ID and has no material tool. The optional website tool derives its host from the same authorized application, so its arguments cannot widen scope.
 
-All application reads/updates/deletes filter by owner. Resume link changes prove both same-owner integrity through the composite FK and current usability under a transaction lock. Download/view endpoints authorize the current resume row and its non-deleted state before streaming private bytes. Prefer a backend-authorized stream for this release: it can reject new downloads immediately after deletion without an already-issued signed URL remaining usable. Do not log extracted text, password/reset tokens, or private object credentials.
+All application reads/updates/deletes filter by owner. Resume link changes prove both same-owner integrity through the composite FK and current usability under a transaction lock. Download/view endpoints authorize the current resume row and its non-deleted state before streaming private bytes from R2. Use a backend-authorized stream for this release: it can reject new downloads immediately after deletion without an already-issued signed URL remaining usable. Do not log extracted text, password/reset tokens, or private object credentials.
 
 Authentication tables and authoritative checks are accessed through supported auth integration owned by the authentication/authorization owner. Protected business access requires valid session and current email verification before resource-ownership checks. Business authorization remains explicit even when using the auth library. DB row-level security may be considered later but is not assumed to protect pooled requests in this design.
 
@@ -498,7 +500,7 @@ Use a consistent lock order for resume-link changes and deletion: resume rows fi
 5. On failure, save a safe error reason; the item is unusable. Remove temporary bytes and any saved extracted text. Enqueue cleanup if immediate deletion fails.
 6. Uploading never changes application links. Explicitly selecting a successful file changes only that application.
 
-Object storage and PostgreSQL do not share a transaction. Use compensating cleanup for objects uploaded before DB failure and a periodic reconciliation/temporary-key expiry process for crashes before an outbox row can be committed. Cleanup timing does not create a user-facing restoration promise.
+R2 and PostgreSQL do not share a transaction. Use compensating cleanup for objects uploaded before DB failure and a periodic reconciliation/temporary-key expiry process for crashes before an outbox row can be committed. Cleanup uses R2's S3 `DeleteObject` operation with the stored object key; failed deletions are retried through `storage_cleanup_jobs`. Cleanup timing does not create a user-facing restoration promise.
 
 <a id="resume-delete"></a>
 
@@ -771,7 +773,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Context sizing | Current materials outside history compression | Thresholds, recent window, oversized-material handling; AI owner/requester |
 | Conversation controls | Persistent independent conversations | Rename/delete requirements; requester |
 | Validation/pagination | Company+position only required; literal substring search | Detailed limits, URL rules, pagination; requester/API owner |
-| Infrastructure and identity integration | PostgreSQL, private S3-compatible storage; auth schema owned by authentication owner | Actual providers/configuration; authentication owner supplies generated physical schema, user PK type and migration dependency; technical owners |
+| Infrastructure and identity integration | PostgreSQL, private Cloudflare R2 storage; auth schema owned by authentication owner | PostgreSQL hosting and service configuration, including R2 bucket/credentials; authentication owner supplies generated physical schema, user PK type and migration dependency; technical owners |
 
 Resolve these within their affected implementation areas. They do not block writing migrations or queries for already confirmed independent behavior, and they do not authorize changing the established scope.
 

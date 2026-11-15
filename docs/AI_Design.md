@@ -17,7 +17,7 @@ Each job application has an AI workspace, similar to a separate project. Users e
 
 **A new conversation starts with an empty chat history but can still access the workspace materials without requiring another upload. Existing conversations are retained.** Data from different applications is isolated, and conversations within the same application do not automatically read one another's chat history.
 
-Materials are stored in PostgreSQL and cloud storage. Their database records provide the shared foundational long-term memory described in Section 3.2. The backend reads these materials directly for each turn and saves a per-conversation snapshot of the exact content it supplied, as a record of what each answer was based on. Here, "shared memory" means a shared source of materials, rather than a single chat history shared by all conversations.
+Materials are stored in PostgreSQL, with original PDFs in private Cloudflare R2 storage. Their database records provide the shared foundational long-term memory described in Section 3.2. The backend reads these materials directly for each turn and saves a per-conversation snapshot of the exact content it supplied, as a record of what each answer was based on. Here, "shared memory" means a shared source of materials, rather than a single chat history shared by all conversations.
 
 ## 2. What Users Can Do
 
@@ -56,7 +56,7 @@ A conversation's comparison baseline advances only when an answer completes. If 
 
 ### 3.2 Sliding Window, Context Compression, and Long-Term Memory
 
-After a PDF is uploaded, the backend parses it and saves the extracted resume text in a PostgreSQL `TEXT` field, together with its parsing status and version. The original PDF remains in cloud storage. Once parsing succeeds, conversations read the saved text without downloading or parsing the PDF again.
+After a PDF is uploaded, the backend parses it and saves the extracted resume text in a PostgreSQL `TEXT` field, together with its parsing status and version. The original PDF remains in private Cloudflare R2 storage. Once parsing succeeds, conversations read the saved text without downloading or parsing the PDF again.
 
 The JD, company, position, website URL, and company notes remain in their corresponding database fields. These records and the linked resume text form the shared foundational long-term memory for all conversations within the same application. No `.md` file or separate duplicate memory field is required. The backend saves and updates materials through upload and editing operations and reads them for each conversation turn.
 

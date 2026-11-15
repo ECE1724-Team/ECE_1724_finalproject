@@ -389,17 +389,17 @@ The following is a manual checklist. Fix each check's input and expected result 
 | Frontend | React, TypeScript, Tailwind CSS, and shadcn/ui; responsive pages. |
 | Backend | Node.js, Express.js, and TypeScript; frontend/backend communication through RESTful APIs. |
 | Database | PostgreSQL using `pg`, parameterized SQL, and `node-pg-migrate`; no ORM. |
-| Files | Original PDFs in private S3-compatible object storage; backend validation and text extraction. |
+| Files | Original PDFs in private Cloudflare R2 object storage through its S3-compatible API (confirmed 2026-11-15); backend validation and text extraction. |
 | AI | Vercel AI SDK, an external LLM, backend-assembled context, multi-turn conversations, and streaming responses; corresponding React integration on the frontend. Bounded tool calling is used only by the optional website-reading extension. |
 | Authentication | Better Auth, PostgreSQL-backed sessions, Secure/HttpOnly cookies, verified-email-only business access, and resource-ownership checks; automatic sign-in occurs after first successful email verification, not immediately after registration. |
 | API documentation | OpenAPI describing requests, responses, authentication, and errors. |
 
-Do not independently specify dependency versions, an LLM model/provider, an S3 provider, route paths, table names, or a deployment platform in this PRD.
+Do not independently specify dependency versions, an LLM model/provider, route paths, table names, or a deployment platform in this PRD.
 
 ### 7.2 Integration Constraints
 
 - Frontend and backend must agree on authentication/authorization, validation errors, file states, and streaming states. Authentication request/response models, cookie behavior, errors, and email-link redirects are recorded in `endpoints.json` version `1.2.0` and must implement this PRD's confirmed policy; documenting a contract does not establish that its backend behavior is implemented.
-- Database records and private-file access must retain user-ownership associations. The specific download-authorization mechanism remains to be designed.
+- Database records and private-file access must retain user-ownership associations. The backend verifies ownership and non-deleted state before streaming PDFs from private R2 storage to the browser.
 - AI material loading reads authorized application records in backend code. The model has no tool that reads base materials and cannot change the retrieval boundary by supplying an arbitrary workspace ID.
 - Material saves, version records, and conversation persistence must remain consistent. One generation per conversation, fixed versions during generation, retry of the latest failed or interrupted message, no request-key deduplication, and discarding partial output after interruption are confirmed (FR-29).
 - Backend credential handling must enforce the latest valid issuance for each user and purpose, coordinate replacement and validation atomically, and reject superseded links before verification or password changes. Verification and reset are separate purposes. Signature/expiry checks alone do not satisfy the replacement rule; it requires project-specific backend state beyond the default email-link behavior.
@@ -533,7 +533,7 @@ Assignments follow the Proposal except for the user's explicit confirmation that
 | Authentication and application APIs | Zishi Yang | Registration waits for verification; unverified login/business access is blocked; first verification automatically signs in; 900-second credential expiry, replacement, and reset-time session revocation are confirmed. Remaining application rules are in §11. |
 | Verification/reset email delivery | Zishi Yang | Requires a working email-delivery service and configuration. Provider selection is open; an on-screen notice cannot substitute for actual delivery. |
 | Non-AI frontend and OpenAPI | Justin Smith | Must align the upload dialog, application selection, and error-state contracts. |
-| Storage, PDF processing, AI frontend/backend | Jianye Zhou, supported by Rongxin Bi | Storage provider, model, and limits remain open. The personal library and parsing are dependencies for AI retrieval. |
+| Storage, PDF processing, AI frontend/backend | Jianye Zhou, supported by Rongxin Bi | Cloudflare R2 is selected for storage; model and service limits remain open. The personal library and parsing are dependencies for AI retrieval. |
 | Integration and delivery | All team members | Cross-checks, startup documentation, and a clean-environment run are required. |
 
 ### 9.2 Risks
@@ -567,6 +567,6 @@ The following remain undecided without invalidating confirmed scope. Answers com
 2. **Remaining account configuration and delivery details:** Select the email provider, session lifetime, resend cooldown/rate-limit values, and the handling of credential replacement/retries when email sending fails. These choices have not been specified. Registration without a login session, blocking unverified login/business access, automatic sign-in after first verification, 900-second verification/reset credentials, button-triggered resending that supersedes earlier same-user/same-purpose links, and revocation of all old sessions after reset are confirmed requirements, not open questions. Do not infer a 900-second session lifetime or revoke sessions merely because a reset email was requested.
 3. **Application deletion:** Resolved on 2026-11-13; see FR-22. Deletion is a permanent hard delete of the application, its interviews, status history, AI workspace, and conversations, with no recovery. Keeping resumes when deleting an application and removing all application links when deleting a library file were already confirmed.
 4. **AI implementation parameters and error details:** Model/provider, website-tool step limits (if implemented), summary thresholds/window, oversized base materials, and explicit fallback after refresh failure. Retry, duplicate-request, and partial-output rules were resolved on 2026-11-14; see FR-29. A complex evaluation or moderation system is not a prerequisite.
-5. **Other delivery details:** Whether conversation renaming/deletion is needed, the external storage provider, and notification of any further changes to Proposal assignments. Authentication-related database ownership has already been confirmed under §9.1. Page action labels and module names follow the approved prototype; developers determine route paths and component implementation.
+5. **Other delivery details:** Whether conversation renaming/deletion is needed, and notification of any further changes to Proposal assignments. Cloudflare R2 is confirmed as the storage provider (2026-11-15). Authentication-related database ownership has already been confirmed under §9.1. Page action labels and module names follow the approved prototype; developers determine route paths and component implementation.
 
 Numerical performance/concurrency targets, a final deadline, complex AI refusal categories, and an evaluation platform are **not open items that must be completed for this release** and must not block delivery.
