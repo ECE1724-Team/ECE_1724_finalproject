@@ -4,30 +4,42 @@ import type { MigrationBuilder } from "node-pg-migrate";
 /**
  * Migration 002: Resumes and Applications
  *
- * DRAFT ONLY.
+ * DRAFT ONLY — do not execute yet.
  *
- * Before enabling this migration:
- * 1. Confirm the Auth user table name.
- * 2. Confirm the Auth user primary-key type.
- * 3. Add the user_id columns and ownership foreign keys.
- * 4. Confirm Auth migrations run first.
+ * Confirmed:
+ * - Auth identity: public.auth_user.id UUID
+ * - Resumes and applications belong to a user
+ * - Resume deletion unlinks applications first
+ * - Application deletion does not delete library resumes
  *
- * Do not run this migration yet.
+ * Pending:
+ * - Final approval of text_unavailable DB status
+ * - Auth migration availability and execution order
+ * - Final migration naming and rollback implementation
  */
 
 export async function up(pgm: MigrationBuilder): Promise<void> {
     if (process.env.ENABLE_DRAFT_MIGRATION_002 !== "confirmed") {
         throw new Error(
-            "Migration 002 is blocked until Auth dependencies are finalized."
+            "Migration 002 is blocked until dependencies are finalized."
         );
     }
 
-    // Planned schema: resumes
+    // =========================================================
+    // 1. RESUMES
+    // =========================================================
+
     pgm.createTable("resumes", {
         id: {
             type: "uuid",
             primaryKey: true,
             default: pgm.func("gen_random_uuid()"),
+        },
+        user_id: {
+            type: "uuid",
+            notNull: true,
+            references: "public.auth_user(id)",
+            onDelete: "RESTRICT",
         },
         name: {
             type: "text",
@@ -85,29 +97,55 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
-    // Resume validation constraints
+    // Same-owner resume references.
+    pgm.addConstraint(
+        "resumes",
+        "resumes_id_user_id_unique",
+        "UNIQUE (id, user_id)"
+    );
+
+    pgm.createIndex("resumes", "user_id", {
+        name: "resumes_user_id_idx",
+    });
+
+    // =========================================================
+    // 2. RESUME VALIDATION
+    // =========================================================
+
     pgm.addConstraint(
         "resumes",
         "resumes_mime_type_check",
         "CHECK (mime_type = 'application/pdf')"
     );
 
+    // Maximum accepted PDF size: 2 MiB.
     pgm.addConstraint(
         "resumes",
         "resumes_size_bytes_check",
         "CHECK (size_bytes BETWEEN 1 AND 2097152)"
     );
 
+    // Accepted PDFs must contain 1 or 2 pages.
+    // Pending and failed rows may not yet have a page count.
     pgm.addConstraint(
         "resumes",
         "resumes_page_count_check",
         "CHECK (page_count IS NULL OR page_count BETWEEN 1 AND 2)"
     );
 
+    // text_unavailable is proposed, pending team approval.
     pgm.addConstraint(
         "resumes",
         "resumes_parse_status_check",
-        "CHECK (parse_status IN ('pending', 'processing', 'succeeded', 'failed'))"
+        `CHECK (
+            parse_status IN (
+                'pending',
+                'processing',
+                'succeeded',
+                'text_unavailable',
+                'failed'
+            )
+        )`
     );
 
     pgm.addConstraint(
@@ -116,34 +154,46 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         "CHECK (content_version >= 1)"
     );
 
-    // Resume name must contain non-whitespace characters
     pgm.addConstraint(
         "resumes",
         "resumes_name_check",
         "CHECK (length(btrim(name)) > 0)"
     );
 
-    // Original filename must not be blank
     pgm.addConstraint(
         "resumes",
         "resumes_original_filename_check",
         "CHECK (length(btrim(original_filename)) > 0)"
     );
 
-    // Extracted character count cannot be negative
     pgm.addConstraint(
         "resumes",
         "resumes_non_whitespace_chars_check",
-        "CHECK (non_whitespace_chars IS NULL OR non_whitespace_chars >= 0)"
+        `CHECK (
+            non_whitespace_chars IS NULL
+            OR non_whitespace_chars >= 0
+        )`
     );
 
-    // Successfully parsed resumes require valid extracted data
+    // =========================================================
+    // 3. SUCCESSFUL PDF EXTRACTION
+    // =========================================================
+
+    // Live succeeded rows require:
+    // - a private storage object
+    // - a valid page count
+    // - extracted text
+    // - at least 100 non-whitespace characters
+    //
+    // Per-page text validation is performed by pdf-policy.ts.
+    // Deleted rows may have extracted text cleared.
 
     pgm.addConstraint(
         "resumes",
         "resumes_succeeded_check",
         `CHECK (
-            parse_status <> 'succeeded'
+            deleted_at IS NOT NULL
+            OR parse_status <> 'succeeded'
             OR (
                 object_key IS NOT NULL
                 AND length(btrim(object_key)) > 0
@@ -156,22 +206,64 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         )`
     );
 
+    // =========================================================
+    // 4. PDF WITH UNAVAILABLE TEXT
+    // =========================================================
 
+    // Proposed behavior:
+    //
+    // A PDF may be valid and stored successfully even when
+    // its extracted text cannot be used by AI.
+    //
+    // Live text_unavailable rows require:
+    // - a stored private object
+    // - 1 or 2 pages
+    // - no extracted text
+    // - no parse error code
+    //
+    // non_whitespace_chars may retain the measured count.
+    //
+    // This state is not equivalent to a failed upload.
 
-    // Each stored resume object must have a unique storage key
+    pgm.addConstraint(
+        "resumes",
+        "resumes_text_unavailable_check",
+        `CHECK (
+            deleted_at IS NOT NULL
+            OR parse_status <> 'text_unavailable'
+            OR (
+                object_key IS NOT NULL
+                AND length(btrim(object_key)) > 0
+                AND page_count IS NOT NULL
+                AND page_count BETWEEN 1 AND 2
+                AND extracted_text IS NULL
+                AND parse_error_code IS NULL
+            )
+        )`
+    );
+
+    // Each stored object key must be unique.
     pgm.createIndex("resumes", "object_key", {
         name: "resumes_object_key_unique_idx",
         unique: true,
         where: "object_key IS NOT NULL",
     });
 
+    // =========================================================
+    // 5. APPLICATIONS
+    // =========================================================
 
-    // Planned schema: applications
     pgm.createTable("applications", {
         id: {
             type: "uuid",
             primaryKey: true,
             default: pgm.func("gen_random_uuid()"),
+        },
+        user_id: {
+            type: "uuid",
+            notNull: true,
+            references: "public.auth_user(id)",
+            onDelete: "RESTRICT",
         },
         company_name: {
             type: "text",
@@ -229,12 +321,50 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
+    // =========================================================
+    // 6. APPLICATION -> RESUME OWNERSHIP
+    // =========================================================
 
-    // Application validation constraints
+    // A user can link only their own resume.
+    //
+    // Backend must first set resume_id = NULL on all
+    // referencing applications before deleting the resume.
+    //
+    // Deleting an application never deletes its resume.
+
+    pgm.addConstraint(
+        "applications",
+        "applications_resume_owner_fk",
+        `FOREIGN KEY (resume_id, user_id)
+         REFERENCES resumes(id, user_id)
+         ON DELETE RESTRICT`
+    );
+
+    pgm.createIndex("applications", "user_id", {
+        name: "applications_user_id_idx",
+    });
+
+    pgm.createIndex("applications", "resume_id", {
+        name: "applications_resume_id_idx",
+    });
+
+    // =========================================================
+    // 7. APPLICATION VALIDATION
+    // =========================================================
+
     pgm.addConstraint(
         "applications",
         "applications_status_check",
-        "CHECK (status IN ('saved', 'applied', 'oa', 'interview', 'offer', 'rejected'))"
+        `CHECK (
+            status IN (
+                'saved',
+                'applied',
+                'oa',
+                'interview',
+                'offer',
+                'rejected'
+            )
+        )`
     );
 
     pgm.addConstraint(
@@ -254,10 +384,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         "applications_row_version_check",
         "CHECK (row_version >= 1)"
     );
-    // Find applications associated with a resume
-    pgm.createIndex("applications", "resume_id", {
-        name: "applications_resume_id_idx",
-    });
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
