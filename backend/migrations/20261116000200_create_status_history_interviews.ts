@@ -168,9 +168,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 
-
 export async function down(pgm: MigrationBuilder): Promise<void> {
-    throw new Error(
-        "Migration 003 rollback is blocked until schema is finalized."
-    );
+    // Drop tables created by Migration 003.
+    pgm.dropTable("interviews");
+    pgm.dropTable("application_status_history");
 }

@@ -15,7 +15,6 @@ import type { MigrationBuilder } from "node-pg-migrate";
  * Pending:
  * - Final approval of text_unavailable DB status
  * - Auth migration availability and execution order
- * - Final migration naming and rollback implementation
  */
 
 export async function up(pgm: MigrationBuilder): Promise<void> {
@@ -420,7 +419,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-    throw new Error(
-        "Migration 002 rollback is blocked until schema is finalized."
-    );
+    // Drop applications before resumes because applications
+    // references resumes through resume_id.
+    pgm.dropTable("applications");
+    pgm.dropTable("resumes");
 }

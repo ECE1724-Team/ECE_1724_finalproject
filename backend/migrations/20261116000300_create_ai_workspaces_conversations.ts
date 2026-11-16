@@ -132,7 +132,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-    throw new Error(
-        "Migration 004 rollback is blocked until schema is finalized."
-    );
+    // Drop conversations before their parent workspaces.
+    pgm.dropTable("conversations");
+    pgm.dropTable("ai_workspaces");
 }
