@@ -1,14 +1,14 @@
 ---
 artifact: prd
-version: "1.6"
+version: "1.7"
 created: 2026-11-08
-updated: 2026-11-14
+updated: 2026-11-16
 status: approved-with-open-items
 ---
 
 # JobFlow AI Product Requirements Document (PRD)
 
-This document specifies the deliverables for the complete course project and is intended for the team and coding agents. It does not claim that the features have been implemented. It is based on the Proposal, AI Design, and the user's confirmations on 2026-11-08, 2026-11-09, 2026-11-11, 2026-11-13, and 2026-11-14; these confirmations supersede the corresponding earlier descriptions in the source documents. The user has approved the current interactive prototype. The Dashboard, application list, creation/editing forms, resume dialog, and AI entry points form the approved implementation baseline. This revision incorporates the confirmed account rules and ownership of authentication-related database work. Section 11 retains unresolved technical and business details; these open items do not invalidate the confirmed scope.
+This document specifies the deliverables for the complete course project and is intended for the team and coding agents. It does not claim that the features have been implemented. It is based on the Proposal, AI Design, and the user's confirmations on 2026-11-08, 2026-11-09, 2026-11-11, 2026-11-13, 2026-11-14, and 2026-11-16; these confirmations supersede the corresponding earlier descriptions in the source documents. The user has approved the current interactive prototype. The Dashboard, application list, creation/editing forms, resume dialog, and AI entry points form the approved implementation baseline. This revision incorporates the confirmed account rules and ownership of authentication-related database work. Section 11 retains unresolved technical and business details; these open items do not invalidate the confirmed scope.
 
 **Confirmed scope:** Registration, logout, deletion, search/filtering, and status history; a personal resume library with files reusable across applications and at most one linked resume per application; email-and-password authentication with email verification and password reset; resume deletion that removes all related application links; all recommendations in AI Design §7; continued assistance with limitations explained when materials are insufficient; AI behavior guided through system prompts without a complex constraint framework; support for Chrome, Edge, and concurrent users, without numerical performance targets.
 
@@ -435,6 +435,7 @@ Resumes belong to the user's personal library. Multiple applications can referen
 
 - Support Chrome and Edge with responsive layouts. No hard minimum browser versions or mobile-device matrix is specified.
 - Support multiple concurrent users with isolated accounts and data. "One generation per conversation" does not block other conversations or users.
+- Deploy a single backend instance (confirmed 2026-11-16). One process serves many concurrent users and conversations. If it crashes or restarts during a generation, it marks unfinished generations as interrupted on startup, and users can retry them (Database Design §5.7). Running several backend instances at once is not planned; it would first require enabling the deferred lease-based recovery documented there.
 - No numerical targets are set for response duration, time to first token, concurrency count, or throughput. A load-testing platform is not a delivery prerequisite.
 - Acceptance focuses on completing core operations, having no known workflow-blocking or data-corrupting issues, and usable streaming AI feedback without clearly abnormal delays. Investigate hangs or abnormal slowness as issues. "Clearly slow" has no numerical threshold; the requester ultimately judges the experience.
 - AI/external services may fail. Provide visible status and error feedback rather than waiting indefinitely without feedback. Explain specific timeout settings before implementation; do not invent durations in the PRD.
