@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { buffer } from "node:stream/consumers";
 import { test } from "node:test";
 import { readR2Config } from "../../src/config/env.js";
 import { createObjectKey, createR2Storage } from "../../src/integrations/object-storage/r2.js";
@@ -14,28 +13,19 @@ test("real R2: write, collision, read, metadata, delete and absence", { skip }, 
   const storage = createR2Storage(readR2Config());
   const key = `integration-tests/${createObjectKey()}`;
   const bytes = makePdf();
-  let created = false;
   try {
     await storage.putNew(key, bytes);
-    created = true;
     await assert.rejects(storage.putNew(key, bytes), { code: "conflict" });
-    const object = await storage.open(key);
-    assert.ok(object);
-    assert.deepEqual(await buffer(object.body), bytes);
+    assert.deepEqual((await storage.read(key))?.bytes, bytes);
     const metadata = await storage.head(key);
     assert.equal(metadata?.contentType, "application/pdf");
     assert.equal(metadata?.contentLength, bytes.length);
     await storage.delete(key);
     await storage.delete(key);
     assert.equal(await storage.head(key), null);
-    assert.equal(await storage.open(key), null);
+    assert.equal(await storage.read(key), null);
   } finally {
-    try {
-      // Never delete a pre-existing object if the initial conditional write failed.
-      if (created) await storage.delete(key);
-      else console.error(`R2 write outcome unconfirmed; inspect only this test key if needed: ${key}`);
-    } finally {
-      storage.close();
-    }
+    // The key is a fresh random UUID, so this can only remove this test's own object.
+    await storage.delete(key).finally(() => storage.close());
   }
 });

@@ -5,9 +5,11 @@ Prepared for Jianye Zhou on November 15, 2026, from the current local checkout.
 **Implementation update (November 15, 2026):** Source code and manual test entry
 points for Phases 1–3 are now present. See the [backend handoff](../backend/README_jianye_part.md)
 for module interfaces, configuration, runtime choice, commands and remaining
-integration work. At the requester's direction, builds, typechecks, tests and live
-R2 verification were not executed. The completion criteria below therefore remain
-pending verification. The original checkout observations below describe the
+integration work. Typecheck, build and the offline unit tests now pass; live R2
+verification has not been run, so that completion criterion remains pending.
+Two deliberate deviations from the text below: reads return the whole file instead
+of a stream (files are at most 2 MiB), and the region is fixed to `auto` in code
+instead of an `R2_REGION` setting. The original checkout observations below describe the
 planning snapshot, not the updated implementation. Phase 4 is not implemented.
 
 ## Recommendation

@@ -10,12 +10,11 @@ export async function validateResumePdf(
   options: { signal?: AbortSignal } = {},
 ): Promise<PdfExtraction> {
   if (bytes.byteLength > MAX_RESUME_BYTES) throw new PdfError("too_large");
-  // Signature is an early filter; successful parsing below is still required.
-  if (bytes.byteLength === 0 || !Buffer.from(bytes.subarray(0, 1024)).toString("latin1").includes("%PDF-")) {
-    throw new PdfError("invalid_pdf");
-  }
+  // Cheap signature check so obvious non-PDFs never start a parser worker.
+  // Successful parsing below is what actually proves the file is a readable PDF.
+  if (!Buffer.from(bytes.subarray(0, 1024)).includes("%PDF-")) throw new PdfError("invalid_pdf");
+  // The extractor rejects more than maxPages with "too_many_pages" before reading text.
   const result = await extractor.extract(bytes, { maxPages: MAX_RESUME_PAGES, signal: options.signal });
-  if (result.pageCount < 1 || result.pageCount > MAX_RESUME_PAGES) throw new PdfError("too_many_pages");
   if (result.nonWhitespaceChars < MIN_RESUME_CHARACTERS || result.pages.some((page) => page.nonWhitespaceChars === 0)) {
     throw new PdfError("insufficient_text");
   }

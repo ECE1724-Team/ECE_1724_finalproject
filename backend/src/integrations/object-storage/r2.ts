@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { finished } from "node:stream/promises";
+import { buffer } from "node:stream/consumers";
 import {
   S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand,
   type GetObjectCommandOutput, type HeadObjectCommandOutput,
@@ -15,10 +15,10 @@ export interface R2Config {
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
-  region: string;
-  maxAttempts: number;
-  requestTimeoutMs: number;
 }
+
+// Per-operation deadline, including SDK retries and reading the response body.
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export function createObjectKey(): string {
   return `resumes/${randomUUID()}.pdf`;
@@ -26,14 +26,15 @@ export function createObjectKey(): string {
 
 type ServiceError = { name?: string; code?: string; $metadata?: { httpStatusCode?: number } };
 
-function isMissing(error: unknown, head = false): boolean {
+function isMissingKey(error: unknown): boolean {
   const { name, $metadata } = (error ?? {}) as ServiceError;
   // A missing bucket is a configuration failure, not an absent resume.
-  return name === "NoSuchKey" || (head && name !== "NoSuchBucket" && $metadata?.httpStatusCode === 404);
+  if (name === "NoSuchBucket") return false;
+  // HEAD responses have no body, so a missing key there is only a bare 404.
+  return name === "NoSuchKey" || $metadata?.httpStatusCode === 404;
 }
 
-function storageError(error: unknown, signal: AbortSignal): StorageError {
-  if (signal.aborted && signal.reason instanceof StorageError) return signal.reason;
+function toStorageError(error: unknown): StorageError {
   if (error instanceof StorageError) return error;
   const { name, code, $metadata } = (error ?? {}) as ServiceError;
   const status = $metadata?.httpStatusCode;
@@ -47,137 +48,96 @@ function storageError(error: unknown, signal: AbortSignal): StorageError {
   return new StorageError("service_error");
 }
 
-function requestScope(timeoutMs: number, caller?: AbortSignal) {
-  const controller = new AbortController();
-  const cancel = () => controller.abort(new StorageError("cancelled"));
-  if (caller?.aborted) cancel();
-  else caller?.addEventListener("abort", cancel, { once: true });
-  const timer = setTimeout(() => controller.abort(new StorageError("timeout")), timeoutMs);
-  return {
-    signal: controller.signal,
-    dispose() {
-      clearTimeout(timer);
-      caller?.removeEventListener("abort", cancel);
-    },
-  };
-}
-
 function metadata(result: GetObjectCommandOutput | HeadObjectCommandOutput): ObjectMetadata {
   return { contentType: result.ContentType, contentLength: result.ContentLength, etag: result.ETag };
 }
 
-// SDK types stay in this adapter. Tests may supply a fake send implementation.
+// SDK types stay in this adapter. Tests may supply a fake client.
 export class R2Storage implements ObjectStorage {
   constructor(
-    private readonly client: Pick<S3Client, "send">,
+    private readonly client: Pick<S3Client, "send" | "destroy">,
     private readonly bucket: string,
-    private readonly requestTimeoutMs = 30_000,
+    private readonly timeoutMs = REQUEST_TIMEOUT_MS,
   ) {}
 
+  // Runs one operation under the caller's signal plus the deadline and converts every
+  // failure to a StorageError. With missingIsNull, an absent key resolves to null.
   private async request<T>(
-    operation: (signal: AbortSignal) => Promise<T>,
     options: StorageRequestOptions,
-  ): Promise<T> {
-    const scope = requestScope(this.requestTimeoutMs, options.signal);
+    missingIsNull: boolean,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T | null> {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), this.timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
     try {
-      scope.signal.throwIfAborted();
-      return await operation(scope.signal);
+      signal.throwIfAborted();
+      return await operation(signal);
     } catch (error) {
-      throw storageError(error, scope.signal);
+      if (deadline.signal.aborted) throw new StorageError("timeout");
+      if (signal.aborted) throw new StorageError("cancelled");
+      if (missingIsNull && isMissingKey(error)) return null;
+      throw toStorageError(error);
     } finally {
-      scope.dispose();
+      clearTimeout(timer);
     }
   }
 
   async putNew(key: string, bytes: Uint8Array, options: StorageRequestOptions = {}): Promise<void> {
-    await this.request(async (signal) => {
-      await this.client.send(new PutObjectCommand({
-        Bucket: this.bucket, Key: key, Body: bytes,
-        ContentType: "application/pdf", ContentLength: bytes.byteLength,
-        CacheControl: "private, no-store", IfNoneMatch: "*",
+    await this.request(options, false, (signal) => this.client.send(new PutObjectCommand({
+      Bucket: this.bucket, Key: key, Body: bytes,
+      ContentType: "application/pdf", ContentLength: bytes.byteLength,
+      // IfNoneMatch makes R2 reject the write instead of overwriting an existing key.
+      CacheControl: "private, no-store", IfNoneMatch: "*",
+    }), { abortSignal: signal }));
+  }
+
+  async read(key: string, options: StorageRequestOptions = {}): Promise<StoredObject | null> {
+    return this.request(options, true, async (signal) => {
+      const result = await this.client.send(new GetObjectCommand({
+        Bucket: this.bucket, Key: key,
       }), { abortSignal: signal });
-    }, options);
+      const body = result.Body;
+      if (!(body instanceof Readable)) throw new StorageError("service_error");
+      // Let the deadline or cancellation also stop a stalled body download.
+      const stop = () => body.destroy();
+      signal.addEventListener("abort", stop, { once: true });
+      if (signal.aborted) stop();
+      try {
+        return { ...metadata(result), bytes: await buffer(body) };
+      } finally {
+        signal.removeEventListener("abort", stop);
+      }
+    });
   }
 
   async head(key: string, options: StorageRequestOptions = {}): Promise<ObjectMetadata | null> {
-    return this.request(async (signal) => {
-      try {
-        return metadata(await this.client.send(new HeadObjectCommand({
-          Bucket: this.bucket, Key: key,
-        }), { abortSignal: signal }));
-      } catch (error) {
-        if (!signal.aborted && isMissing(error, true)) return null;
-        throw error;
-      }
-    }, options);
+    return this.request(options, true, async (signal) => metadata(await this.client.send(
+      new HeadObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal },
+    )));
   }
 
+  // Deleting an already absent key succeeds, so cleanup can be retried safely.
   async delete(key: string, options: StorageRequestOptions = {}): Promise<void> {
-    await this.request(async (signal) => {
-      try {
-        await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }), {
-          abortSignal: signal,
-        });
-      } catch (error) {
-        if (signal.aborted || !isMissing(error)) throw error;
-      }
-    }, options);
+    await this.request(options, true, (signal) => this.client.send(
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal },
+    ));
   }
 
-  async open(key: string, options: StorageRequestOptions = {}): Promise<StoredObject | null> {
-    const scope = requestScope(this.requestTimeoutMs, options.signal);
-    try {
-      scope.signal.throwIfAborted();
-      const result = await this.client.send(new GetObjectCommand({
-        Bucket: this.bucket, Key: key,
-      }), { abortSignal: scope.signal });
-      const source = result.Body;
-      if (!(source instanceof Readable)) throw new StorageError("service_error");
-
-      // Keep the deadline alive through body consumption, not just response headers.
-      // finished attaches an error listener even before the consumer starts reading.
-      const completion = finished(source, { cleanup: true });
-      const abort = () => source.destroy(storageError(scope.signal.reason, scope.signal));
-      scope.signal.addEventListener("abort", abort, { once: true });
-      void completion.catch(() => {}).finally(() => {
-        scope.dispose();
-        scope.signal.removeEventListener("abort", abort);
-      });
-      if (scope.signal.aborted) abort();
-      const body = Readable.from((async function* () {
-        try {
-          for await (const chunk of source) yield chunk;
-        } catch (error) {
-          throw storageError(error, scope.signal);
-        } finally {
-          source.destroy();
-        }
-      })(), { objectMode: false });
-      // Also handle consumers that destroy the returned stream without reading it.
-      body.once("close", () => source.destroy());
-      return { ...metadata(result), body };
-    } catch (error) {
-      scope.dispose();
-      if (!scope.signal.aborted && isMissing(error)) return null;
-      throw storageError(error, scope.signal);
-    }
+  // Releases the SDK client's sockets on application shutdown.
+  close(): void {
+    this.client.destroy();
   }
 }
 
-export function createR2Storage(config: R2Config): R2Storage & { close(): void } {
-  for (const field of ["endpoint", "bucket", "accessKeyId", "secretAccessKey", "region"] as const) {
-    if (!config[field]?.trim()) throw new Error(`R2 configuration is missing ${field}.`);
-  }
+export function createR2Storage(config: R2Config): R2Storage {
   const client = new S3Client({
     endpoint: config.endpoint,
-    region: config.region,
+    region: "auto", // R2 has no regions; Cloudflare's SDK examples use "auto".
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
-    maxAttempts: config.maxAttempts,
-    retryMode: "standard",
+    // Send checksums only when an operation requires them, as recommended for R2.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   });
-  return Object.assign(new R2Storage(client, config.bucket, config.requestTimeoutMs), {
-    close: () => client.destroy(),
-  });
+  return new R2Storage(client, config.bucket);
 }

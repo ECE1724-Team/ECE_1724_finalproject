@@ -44,7 +44,5 @@ export type PdfWorkerResult =
 
 // Count Unicode code points, not UTF-16 code units or UTF-8 bytes.
 export function countNonWhitespace(text: string): number {
-  let count = 0;
-  for (const character of text) if (!/\s/u.test(character)) count++;
-  return count;
+  return [...text.replace(/\s/gu, "")].length;
 }

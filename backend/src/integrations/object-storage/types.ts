@@ -1,5 +1,3 @@
-import type { Readable } from "node:stream";
-
 export interface StorageRequestOptions {
   signal?: AbortSignal;
 }
@@ -10,14 +8,15 @@ export interface ObjectMetadata {
   etag: string | undefined;
 }
 
+// Resume PDFs are capped at 2 MiB, so reads return the whole file instead of a stream.
 export interface StoredObject extends ObjectMetadata {
-  body: Readable;
+  bytes: Uint8Array;
 }
 
 // Keys come from the server/database, never from an upload form.
 export interface ObjectStorage {
   putNew(key: string, bytes: Uint8Array, options?: StorageRequestOptions): Promise<void>;
-  open(key: string, options?: StorageRequestOptions): Promise<StoredObject | null>;
+  read(key: string, options?: StorageRequestOptions): Promise<StoredObject | null>;
   head(key: string, options?: StorageRequestOptions): Promise<ObjectMetadata | null>;
   delete(key: string, options?: StorageRequestOptions): Promise<void>;
 }

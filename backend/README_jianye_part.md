@@ -4,21 +4,20 @@ The backend contains the storage adapter, PDF extractor, resume acceptance polic
 offline test sources and an opt-in real R2 check. It does not yet start an HTTP
 server or persist resume records. Phase 4 workflow orchestration is not included.
 
-At the requester's direction, no build, typecheck, test or live R2 check was run
-for this implementation. Commands below are provided for manual execution;
-runtime compatibility, fixture results and real storage compatibility remain
-unverified. The plan's acceptance milestones should not be marked passed yet.
+`npm run typecheck`, `npm test` (14 offline tests) and `npm run build` pass on
+Node 26.8.2. The live R2 check has not been run yet (it needs a development
+bucket), so real storage compatibility remains unverified.
 
 ## PDF storage: Cloudflare R2
 
 Resume PDFs use a private Cloudflare R2 bucket through its S3-compatible API.
-The intended integration checks file ownership on the backend before streaming
+The intended integration checks file ownership on the backend before sending
 a PDF to the browser, with extracted text and metadata stored in PostgreSQL.
 Authentication, routes, persistence, and durable cleanup remain later integration work.
 
 1. Create a private R2 bucket. Keep public access via `r2.dev` and public custom domains disabled.
 2. Create R2 S3 credentials with object read/write permissions scoped to that bucket. Keep credentials on the backend only.
-3. Set the variables listed in [.env.example](.env.example): `R2_ENDPOINT` (normally `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`), `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_REGION=auto`. Use the endpoint shown for your bucket.
+3. Set the variables listed in [.env.example](.env.example): `R2_ENDPOINT` (normally `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`), `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`. Use the endpoint shown for your bucket. The region is fixed to `auto` in code.
 
 `R2_PUBLIC_BASE_URL` is not needed: the intended browser access path is the
 authenticated backend file endpoint. The R2 adapter, worker-based PDF extraction,
@@ -62,19 +61,16 @@ npm run test:r2
 Without opt-in or credentials, the check is reported as **skipped**, not passed.
 It uses one random key below `integration-tests/`, checks collision rejection,
 compares original bytes, inspects metadata, deletes twice and verifies absence.
-Cleanup targets only the object whose initial write was confirmed successful.
-If the initial write fails with an uncertain outcome, the test prints its one
-generated key for manual reconciliation; it does not risk deleting a pre-existing
-object after a collision. A process crash or late write can still leave that test
-object behind. This check never lists or bulk-deletes the bucket.
+Cleanup deletes only that freshly generated key. A process crash can still leave
+the test object behind. This check never lists or bulk-deletes the bucket.
 
 ## Module entry points
 
 | File | Responsibility |
 |---|---|
-| `src/config/env.ts` | Explicit configuration readers; no import-time secrets or client creation |
+| `src/config/env.ts` | Explicit R2 configuration reader; no import-time secrets or client creation |
 | `src/integrations/object-storage/types.ts` | Project-owned storage interface and safe error categories |
-| `src/integrations/object-storage/r2.ts` | Conditional creation, streaming reads, metadata, idempotent deletion, random keys |
+| `src/integrations/object-storage/r2.ts` | Conditional creation, whole-file reads, metadata, idempotent deletion, random keys |
 | `src/integrations/pdf/types.ts` | Extracted page evidence, character counting and internal errors |
 | `src/integrations/pdf/extractor.ts` | Shared concurrency limit, worker lifetime, deadline and cancellation |
 | `src/integrations/pdf/worker.mts` | PDF.js parsing, local font/CMap resources, text joining and cleanup |
@@ -88,12 +84,12 @@ the future server. The following illustrates the adapter boundary, not a complet
 upload transaction:
 
 ```ts
-import { readPdfConfig, readR2Config } from "./config/env.js";
+import { readR2Config } from "./config/env.js";
 import { createPdfExtractor } from "./integrations/pdf/extractor.js";
 import { createObjectKey, createR2Storage } from "./integrations/object-storage/r2.js";
 import { validateResumePdf } from "./modules/resumes/pdf-policy.js";
 
-const pdf = createPdfExtractor(readPdfConfig());
+const pdf = createPdfExtractor();
 const storage = createR2Storage(readR2Config());
 
 // Within a future authorized handler, after bounded multipart reception:
@@ -106,12 +102,12 @@ await storage.putNew(objectKey, bytes, { signal });
 
 `putNew` accepts only server-generated keys and writes immutable PDF bytes using
 `If-None-Match: *`. It does not perform PDF validation; call the resume policy first.
-`open` and `head` return `null` for an absent object. `delete` is safe to repeat.
+`read` and `head` return `null` for an absent object. `delete` is safe to repeat.
 All other failures remain errors. Never accept a storage key from browser input.
-Consumers must consume or destroy `open(...).body`; use `pipeline` when connecting
-it to an HTTP response, and pass a signal tied to client disconnection. Download
-deadlines cover the body as well as response headers. Stream failures propagate
-as errors; callers must not report a truncated download as successful.
+Because resumes are at most 2 MiB, `read` returns the complete file as `bytes`
+rather than a stream; the deadline covers the whole download, and a truncated
+download is an error, never a shorter file. Pass a signal tied to client
+disconnection so abandoned downloads stop.
 
 No list-bucket, rename, overwrite, public URL or direct browser upload operation
 is provided. The personal resume list will come from PostgreSQL. Bucket public
@@ -147,16 +143,16 @@ fingerprinting; parser upgrades require another extraction-quality review.
 
 ## Operational defaults and error handling
 
-These are tunable implementation choices in `.env.example`, not new product rules
-or measured performance guarantees:
+These are constants in code, not environment variables, product rules or
+measured performance guarantees. Change them in the named file if needed:
 
-| Setting | Default | Reason |
+| Value | Where | Reason |
 |---|---|---|
-| `R2_MAX_ATTEMPTS` | 3 total attempts | Bounded SDK retries for transient failures |
-| `R2_REQUEST_TIMEOUT_MS` | 30,000 ms | Caps the operation including retries and stream consumption |
-| `PDF_MAX_CONCURRENT` | 2 per process | Keeps CPU/memory use bounded without an unbounded input queue |
-| `PDF_PARSE_TIMEOUT_MS` | 15,000 ms | Allows small PDFs time to load while terminating stalled work |
-| `PDF_WORKER_MEMORY_MB` | 256 MiB | Caps each worker's V8 old-generation heap |
+| 3 total attempts | AWS SDK default | Bounded retries for transient failures |
+| 30,000 ms | `REQUEST_TIMEOUT_MS` in `r2.ts` | Caps each operation including retries and the body download |
+| 2 per process | `MAX_CONCURRENT` in `extractor.ts` | Keeps CPU/memory use bounded without an unbounded input queue |
+| 15,000 ms | `TIMEOUT_MS` in `extractor.ts` | Allows small PDFs time to load while terminating stalled work |
+| 256 MiB | `WORKER_MEMORY_MB` in `extractor.ts` | Caps each worker's V8 old-generation heap |
 
 The PDF deadline includes worker startup and resource cleanup. Cancellation and
 timeout terminate the worker and await its termination before freeing its slot.
@@ -195,7 +191,7 @@ and capacity release. At the requester's direction, the failing cross-page
 remain unresolved, and those behaviors are not established by the remaining tests.
 Unicode fixtures use ToUnicode mappings for extraction;
 they are not typography/rendering reference files. Fake S3 tests cover the four
-operations, failures and stream lifecycle. None has been executed for this change.
+operations, failures, cancellation and deadlines.
 
 Before HTTP integration, the team still needs to supply verified authentication,
 bounded multipart receiving (stop at 2 MiB while receiving), ownership checks,

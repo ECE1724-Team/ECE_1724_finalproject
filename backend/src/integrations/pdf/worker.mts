@@ -5,6 +5,9 @@ import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { TextItem, TextMarkedContent } from "pdfjs-dist/types/src/display/api.js";
 import { countNonWhitespace, PdfError, type PdfPageText, type PdfWorkerResult } from "./types.js";
 
+// Joins PDF.js text items in content order. Between two items on the same baseline a
+// small gap becomes a space and a large gap (e.g. between columns) a newline; a change
+// of baseline is also a newline. Thresholds are relative to the font height.
 function pageText(items: (TextItem | TextMarkedContent)[]): string {
   let text = "";
   let previous: TextItem | undefined;

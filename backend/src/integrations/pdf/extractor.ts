@@ -2,17 +2,17 @@ import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { PdfError, type PdfExtraction, type PdfExtractor, type PdfWorkerResult } from "./types.js";
 
-export interface PdfExtractorOptions {
-  maxConcurrent?: number;
-  timeoutMs?: number;
-  workerMemoryMb?: number;
-}
+// Operational limits, not product rules. Excess concurrent work fails fast with "busy".
+const MAX_CONCURRENT = 2;
+const TIMEOUT_MS = 15_000;
+// Caps the worker's V8 heap only; it is not a limit on total process memory.
+const WORKER_MEMORY_MB = 256;
 
-export function createPdfExtractor(options: PdfExtractorOptions = {}): PdfExtractor {
-  const { maxConcurrent = 2, timeoutMs = 15_000, workerMemoryMb = 256 } = options;
-  for (const value of [maxConcurrent, timeoutMs, workerMemoryMb]) {
-    if (!Number.isSafeInteger(value) || value < 1) throw new Error("PDF limits must be positive integers.");
-  }
+// Create ONE extractor per process; the concurrency limit is per instance.
+// The options exist so tests can use small limits.
+export function createPdfExtractor(
+  { maxConcurrent = MAX_CONCURRENT, timeoutMs = TIMEOUT_MS } = {},
+): PdfExtractor {
   let active = 0;
 
   return {
@@ -20,25 +20,28 @@ export function createPdfExtractor(options: PdfExtractorOptions = {}): PdfExtrac
       if (signal?.aborted) throw new PdfError("cancelled");
       if (active >= maxConcurrent) throw new PdfError("busy");
       active++;
+      // PDF.js cannot be interrupted mid-parse, so it runs in a worker we can terminate.
       let worker: Worker | undefined;
-      let timer: NodeJS.Timeout | undefined;
-      let abort: (() => void) | undefined;
+      let removeListeners = () => {};
       try {
         worker = new Worker(join(__dirname, "worker.mjs"), {
-          // Structured cloning preserves the caller's original bytes for R2.
+          // Structured cloning gives the worker a copy; the caller's bytes stay intact for R2.
           workerData: { bytes, maxPages },
-          resourceLimits: { maxOldGenerationSizeMb: workerMemoryMb },
+          resourceLimits: { maxOldGenerationSizeMb: WORKER_MEMORY_MB },
           stdout: true,
           stderr: true,
         });
-        // Parser diagnostics may contain document content; do not forward them to logs.
+        // Parser diagnostics may contain document content; discard them instead of logging.
         worker.stdout.resume();
         worker.stderr.resume();
         return await new Promise<PdfExtraction>((resolve, reject) => {
-          abort = () => reject(new PdfError("cancelled"));
-          signal?.addEventListener("abort", abort, { once: true });
-          if (signal?.aborted) abort();
-          timer = setTimeout(() => reject(new PdfError("timeout")), timeoutMs);
+          const timer = setTimeout(() => reject(new PdfError("timeout")), timeoutMs);
+          const cancel = () => reject(new PdfError("cancelled"));
+          signal?.addEventListener("abort", cancel, { once: true });
+          removeListeners = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", cancel);
+          };
           worker!.once("message", (message: PdfWorkerResult) => {
             if (message.ok) resolve(message.result);
             else reject(new PdfError(message.code));
@@ -49,14 +52,10 @@ export function createPdfExtractor(options: PdfExtractorOptions = {}): PdfExtrac
       } catch (error) {
         throw error instanceof PdfError ? error : new PdfError("processing_failed");
       } finally {
-        clearTimeout(timer);
-        if (abort) signal?.removeEventListener("abort", abort);
-        // Await termination before releasing the slot, including timeout/abort paths.
-        try {
-          if (worker) await worker.terminate();
-        } finally {
-          active--;
-        }
+        removeListeners();
+        // Release the slot only after the worker is really gone, including on timeout/cancel.
+        await worker?.terminate().catch(() => {});
+        active--;
       }
     },
   };

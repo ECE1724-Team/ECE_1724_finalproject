@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Readable } from "node:stream";
-import { buffer } from "node:stream/consumers";
 import {
   PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand, type S3Client,
 } from "@aws-sdk/client-s3";
@@ -11,8 +10,11 @@ import { makePdf } from "../fixtures/pdf.js";
 
 type Command = PutObjectCommand | GetObjectCommand | HeadObjectCommand | DeleteObjectCommand;
 function storageWith(send: (command: Command, signal: AbortSignal) => Promise<unknown>, timeoutMs = 1000) {
-  const client = { send: ((command: Command, options: { abortSignal: AbortSignal }) =>
-    send(command, options.abortSignal)) as S3Client["send"] };
+  const client = {
+    send: ((command: Command, options: { abortSignal: AbortSignal }) =>
+      send(command, options.abortSignal)) as S3Client["send"],
+    destroy() {},
+  };
   return new R2Storage(client, "fictional-bucket", timeoutMs);
 }
 const serviceError = (name: string, status: number) => ({ name, $metadata: { httpStatusCode: status } });
@@ -44,12 +46,10 @@ test("fake S3 round trip uses private immutable PDF objects", async () => {
   assert.match(key, /^resumes\/[0-9a-f-]{36}\.pdf$/);
   assert.notEqual(key, createObjectKey());
   const bytes = makePdf();
-  assert.equal(await storage.open(key), null);
+  assert.equal(await storage.read(key), null);
   await storage.putNew(key, bytes);
   await assert.rejects(storage.putNew(key, Buffer.from("replacement")), { code: "conflict" });
-  const object = await storage.open(key);
-  assert.ok(object);
-  assert.deepEqual(await buffer(object.body), bytes);
+  assert.deepEqual((await storage.read(key))?.bytes, bytes);
   assert.deepEqual(await storage.head(key), {
     contentType: "application/pdf", contentLength: bytes.length, etag: '"fictional-etag"',
   });
@@ -66,14 +66,14 @@ test("absence stays distinct from denied access, missing bucket, timeout and ser
     [{ name: "TimeoutError" }, "timeout"],
   ] as const) {
     const storage = storageWith(async () => { throw error; });
-    for (const operation of [() => storage.open("key"), () => storage.head("key"), () => storage.delete("key")]) {
+    for (const operation of [() => storage.read("key"), () => storage.head("key"), () => storage.delete("key")]) {
       await assert.rejects(operation(), { code });
     }
   }
   const missing = storageWith(async () => { throw serviceError("NoSuchKey", 404); });
-  assert.equal(await missing.open("key"), null);
+  assert.equal(await missing.read("key"), null);
   await missing.delete("key");
-  await assert.rejects(storageWith(async () => ({})).open("key"), { code: "service_error" });
+  await assert.rejects(storageWith(async () => ({})).read("key"), { code: "service_error" });
 });
 
 test("request cancellation and deadline reach the SDK", async () => {
@@ -93,21 +93,17 @@ test("read stream errors do not become empty or successful PDFs", async () => {
     yield Buffer.from("partial");
     throw new Error("network failure");
   })()) }));
-  const object = await storage.open("key");
-  assert.ok(object);
-  await assert.rejects(buffer(object.body), { code: "service_error" });
+  await assert.rejects(storage.read("key"), { code: "service_error" });
 });
 
-test("cancellation and deadline also stop an already-open read stream", async () => {
+test("cancellation and deadline also stop a stalled body download", async () => {
   for (const cancel of [false, true]) {
     const source = new Readable({ read() {} });
     const storage = storageWith(async () => ({ Body: source }), 20);
     const controller = new AbortController();
-    const object = await storage.open("key", { signal: controller.signal });
-    assert.ok(object);
-    const consumed = buffer(object.body);
-    if (cancel) controller.abort();
-    await assert.rejects(consumed, { code: cancel ? "cancelled" : "timeout" });
+    const pending = storage.read("key", { signal: controller.signal });
+    if (cancel) setImmediate(() => controller.abort());
+    await assert.rejects(pending, { code: cancel ? "cancelled" : "timeout" });
     assert.equal(source.destroyed, true);
   }
 });
