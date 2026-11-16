@@ -3,7 +3,7 @@
 Prepared for Jianye Zhou on November 15, 2026, from the current local checkout.
 
 **Implementation update (November 15, 2026):** Source code and manual test entry
-points for Phases 1–3 are now present. See the [backend handoff](../backend/README_jianye_part.md)
+points for Phases 1–3 are now present. See the [backend README](../backend/README.md)
 for module interfaces, configuration, runtime choice, commands and remaining
 integration work. Typecheck, build and the offline unit tests now pass; live R2
 verification has not been run, so that completion criterion remains pending.
@@ -149,3 +149,34 @@ The project targets the non-AI workflow before November 25, 2026. Complete the i
 ## Project references
 
 The [PRD](PRD.md), especially §5.2, FR-02, FR-08–09, FR-26–28, and FR-34, establishes file acceptance, access, linking, and deletion behavior. The [Database Design](Database_Design.md), especially §5.2, §5.11, §6.1, §7.1–7.3, and Appendix D, supplies proposed persistence and identity boundaries. The [AI Design](AI_Design.md) establishes saved-text reuse, fingerprints, and historical snapshots. The [Proposal](Project_Proposal.md) establishes team responsibilities. The current [OpenAPI contract](endpoints.json) supplies route shapes, while the [root README](../README.md) and [environment example](../backend/.env.example) record the R2 configuration.
+
+## Implementation record (Phases 1–3, as of November 16, 2026)
+
+What exists now, so later work builds on it instead of redoing it. Phase 4 and HTTP/DB integration are not started. Typecheck, build and 15 unit tests pass; the live R2 check has not been run.
+
+**Setup**
+- `package.json`: added `@aws-sdk/client-s3` and `pdfjs-dist` (pinned); scripts `build`, `typecheck`, `test`, `test:r2`. Tests use Node's built-in runner, no test framework.
+- `.nvmrc` / `engines`: Node 26. The backend stays CommonJS; only the PDF worker is ESM (`.mts` → `.mjs`) because PDF.js is ESM-only.
+- `tsconfig.json` also compiles `.mts`; `tsconfig.test.json` adds `tests/` and outputs to `dist/tests/`; `tests/tsconfig.json` just extends it so VS Code sees Node types in tests.
+- `.env.example`: only the 4 R2 variables and `R2_INTEGRATION_TEST`. Region is hardcoded to `auto`; timeouts and limits are constants in code, not env vars.
+
+**Source**
+- `src/config/env.ts` — `readR2Config()`: reads the 4 R2 variables at startup (not on import) and requires an HTTPS endpoint without embedded credentials.
+- `src/integrations/object-storage/types.ts` — storage interface (`putNew`, `read`, `head`, `delete`) and `StorageError` codes.
+- `src/integrations/object-storage/r2.ts` — R2 adapter. `createObjectKey()` makes random `resumes/<uuid>.pdf` keys. `putNew` uses `If-None-Match: *`, so it never overwrites. `read` returns the whole file as bytes (files ≤ 2 MiB, so no stream). Missing key → `null`; `delete` of a missing key succeeds; a missing *bucket* is an error. A 30 s deadline covers retries and the body download. SDK checksums are set to `WHEN_REQUIRED` for R2.
+- `src/integrations/pdf/types.ts` — extraction result types, `PdfError` codes, and `countNonWhitespace` (counts Unicode code points).
+- `src/integrations/pdf/extractor.ts` — runs each parse in a worker thread that can be killed on timeout (15 s) or cancel. At most 2 parses at a time; extras fail fast with `busy`. Create one extractor per process. Worker stdout/stderr are discarded so document text never reaches logs.
+- `src/integrations/pdf/worker.mts` — PDF.js parsing: rejects more than `maxPages` before reading text, joins text items into lines/words by position, maps password/invalid-PDF errors to `PdfError` codes.
+- `src/modules/resumes/pdf-policy.ts` — `validateResumePdf()`: the PRD rules. Rejects >2 MiB, non-PDF, damaged, password-protected and >2 pages. Otherwise returns `textStatus: "available"` (≥100 chars and text on every page) or `"unavailable"`, which deliberately contains no text. The `unavailable` rule is a proposal pending team confirmation (PRD §5.2).
+
+**Tests**
+- `tests/fixtures/pdf.ts` builds small fictional PDFs in code (pages, columns, images, compression, exact sizes).
+- `tests/unit/pdf.test.ts` and `tests/unit/r2.test.ts` cover the rules above with a fake S3 client. `tests/integration/r2.test.ts` is the opt-in real R2 round trip.
+- Encrypted-PDF and "99 + 1 characters across pages" tests were dropped because their fixtures failed; that behavior is untested.
+
+**Changes from the original plan text, made on purpose**
+- Whole-file reads instead of streams; fixed region; limits as code constants (simplification on November 15).
+- Text-unavailable PDFs are accepted instead of rejected (proposal; the `insufficient_text` error no longer exists).
+- Setup and usage docs live in [backend/README.md](../backend/README.md).
+
+**Keep, even if it looks like extra work:** the worker-thread isolation and the "busy" limit (PDF.js cannot be interrupted otherwise), `If-None-Match` on writes, never accepting storage keys from the browser, and returning no text for `unavailable` resumes.

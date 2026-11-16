@@ -1,9 +1,9 @@
 ---
 artifact: database-design
-version: "1.7"
+version: "1.9"
 created: 2026-11-09
-updated: 2026-11-15
-requirements_baseline: "PRD 1.6 / AI_Design.md (2026-11-11)"
+updated: 2026-11-16
+requirements_baseline: "PRD 1.8 / AI_Design.md (2026-11-11)"
 status: proposed-design-with-open-decisions
 ---
 
@@ -27,6 +27,10 @@ The reading paths and supplements carry forward the relevant integration guidanc
 
 **Retry and interruption revision (v1.6, 2026-11-14):** The retry contract in §5.7 is confirmed. Only the latest user message can be retried, and only when its most recent attempt failed or was interrupted. There is no request-key deduplication, so `request_key` is removed. A client disconnect aborts the generation and no partial output is saved (PRD FR-29).
 
+**Crash recovery revision (v1.8, 2026-11-16):** The project runs a single backend instance. On startup, the backend marks every `preparing` or `streaming` run as `interrupted` before accepting requests, which replaces lease-based recovery. `lease_expires_at` and the lease rules are moved to a deferred subsection of §5.7. They are kept for a possible upgrade to multiple backend instances and are not enabled now.
+
+**Interview field revision (v1.9, 2026-11-16):** PRD 1.8 FR-07 confirms that `interview_name` and `starts_at` are both required and that `interviews` has no other business columns and no state column (§5.5). The provisional nullability is removed.
+
 | Reader | Start here | Original implementation reference |
 |---|---|---|
 | Justin Smith — non-AI frontend and OpenAPI | [Current API status](#current-integration-status), [Justin guide](#justin-guide), [shared identity](#shared-identity) | §5.1–5.5, §7.1–7.3, §8.1–8.3/8.5, and relevant §11–12 cases |
@@ -45,7 +49,7 @@ This document defines the PostgreSQL schema, relationships, constraints, transac
 
 The requirements baseline is:
 
-- [PRD.md, version 1.6](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/PRD.md): authoritative product requirements, including confirmed authentication rules, database responsibilities, and the 2026-11-11 AI context and material fingerprint policies, and the 2026-11-13 deletion rules.
+- [PRD.md, version 1.7](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/PRD.md): authoritative product requirements, including confirmed authentication rules, database responsibilities, and the 2026-11-11 AI context and material fingerprint policies, and the 2026-11-13 deletion rules.
 - [AI_Design.md](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/AI_Design.md): workspace isolation, backend material loading and versioning, the fixed context structure, and conversation persistence. Its §7 recommendations are confirmed requirements through the PRD.
 - [endpoints.json, version 1.2.0](https://github.com/ECE1724-Team/ECE_1724_finalproject/blob/main/endpoints.json): API integration reference from the 2026-11-09 review. The alignment notes in §9 retain that review's scope; the API contract is not a requirements override.
 
@@ -278,11 +282,11 @@ CHECK both values against the six statuses and `old_status <> new_status`. UNIQU
 |---|---|---|
 | `id` | UUID PK | Individual interview identity |
 | `application_id` | UUID NN FK | Parent |
-| `interview_name` | TEXT nullable pending validation decision | Type/name shown in schedule |
-| `starts_at` | TIMESTAMPTZ nullable pending validation decision | Scheduled instant |
+| `interview_name` | TEXT NN | Type/name shown in schedule; free text, not an enum |
+| `starts_at` | TIMESTAMPTZ NN | Scheduled instant; past values allowed |
 | `created_at`, `updated_at` | TIMESTAMPTZ NN | Audit |
 
-Use independent rows for add/edit/delete. Do not store the interview schedule as an application JSON array or maintain a conflicting single interview date. Until the PRD's required-field decision is made, nullability is provisional, not permission to expose incomplete scheduling behavior. Unscheduled rows are excluded from the upcoming list. Cancellation/completion states, their effects on counts, and extra interview fields are not invented here.
+Use independent rows for add/edit/delete. Do not store the interview schedule as an application JSON array or maintain a conflicting single interview date. Confirmed 2026-11-16 (PRD FR-07): both fields are required. CHECK `interview_name = btrim(interview_name)` and `char_length(interview_name) BETWEEN 1 AND 100`; the backend trims the submitted name before validating and storing it. `starts_at` has no past/future CHECK, so completed rounds can be recorded. An interview without a known time is not stored as a row. The table has no location, meeting-link, interviewer, duration, notes or outcome column and no cancelled/completed state: a cancelled interview is deleted, and every row counts as one interview session.
 
 <a id="ai-schema"></a>
 
@@ -306,7 +310,6 @@ Create/reuse workspace with an ownership-scoped insert and conflict handling on 
 | `input_message_id` | UUID NN | User message that this attempt answers; same-conversation FK to `messages` |
 | `status` | TEXT NN | `preparing`, `streaming`, `completed`, `failed`, `interrupted` |
 | `baseline_generation_id` | UUID nullable | Latest completed generation used as the comparison baseline when preparation committed; NULL before preparation and when the conversation had no completed answer; same-conversation FK |
-| `lease_expires_at` | TIMESTAMPTZ nullable, required while active | Operational recovery from crashed workers |
 | `model_metadata` | JSONB nullable | Actual provider/model/configuration identifiers; no secrets |
 | `error_code` | TEXT nullable | Failure metadata |
 | `started_at` | TIMESTAMPTZ NN | Request acceptance and attempt creation |
@@ -324,9 +327,31 @@ Use a composite FK `(input_message_id, conversation_id)` to `messages(id, conver
 | `completed` | Complete material associations and the final assistant answer are saved; final answer and terminal transition commit atomically. The latest completed run becomes the conversation's material baseline |
 | `failed` / `interrupted` | May terminate before or after preparation; preserve any successfully committed material snapshots and website-tool records; never becomes the baseline |
 
-Apply row CHECKs for required snapshot fields in `streaming`/`completed` and a non-null lease while active. Validate in the preparation transaction that the association set matches the backend registry exactly, since a row CHECK cannot inspect child rows. A failure before preparation commits leaves no partial material associations.
+Apply row CHECKs for required snapshot fields in `streaming`/`completed`. Validate in the preparation transaction that the association set matches the backend registry exactly, since a row CHECK cannot inspect child rows. A failure before preparation commits leaves no partial material associations.
 
-Enforce a partial unique index on conversation for status in `('preparing','streaming')`. Renew the lease only for the same active attempt while preparing or generating. Recovery atomically marks an expired run terminal before another attempt can acquire the slot and requests cancellation of the old worker. Cancellation is best-effort; conditional database writes enforce ownership. Preparation commits and final-answer writes must lock/recheck that the run is still active and its lease is valid. A stale worker cannot publish an answer or advance the baseline after recovery. Lease duration/heartbeat parameters remain implementation decisions. Do not hold a DB transaction open during a model request or stream.
+Enforce a partial unique index on conversation for status in `('preparing','streaming')`. Do not hold a DB transaction open during a model request or stream.
+
+**Crash recovery (single backend instance).** The project runs exactly one backend instance. That one process can serve many users and conversations concurrently. If the process crashes or restarts mid-generation, its runs would stay `preparing` or `streaming` and block their conversations. Therefore, on startup and before accepting requests, the backend runs one statement that marks every `preparing` or `streaming` run `interrupted` and sets `completed_at` and an error code such as `GENERATION_INTERRUPTED`. The user then sees the interruption notice and can retry under the contract below. While the process is running, it owns all of its active runs. Preparation commits and final-answer writes still use conditional updates that require the run to be in the expected active status, so a run already marked terminal cannot be revived. This rule assumes a single instance; running several instances at once requires the deferred lease design below.
+
+#### Deferred: Lease-Based Recovery for Multiple Backend Instances
+
+**Not enabled in the current project plan.** The project runs a single backend instance and uses startup recovery (above). The lease design below is kept for a possible later upgrade and should be enabled only if the backend runs as more than one instance at the same time (for example, several containers behind a load balancer or a PM2 cluster). In that setup, startup recovery is unsafe: a restarting instance would mark other instances' live generations as interrupted.
+
+If enabled, it adds:
+
+| Column | Type / nullability | Purpose |
+|---|---|---|
+| `lease_expires_at` | TIMESTAMPTZ nullable, required while active | Operational recovery from crashed workers |
+
+with a row CHECK requiring a non-null lease while the run is `preparing` or `streaming`, and these rules:
+
+- **Renewal.** The worker renews the lease only for its own active attempt while preparing or generating. Lease duration and heartbeat interval are implementation parameters. A lease-only update may lock the run alone but must not then acquire the conversation lock.
+- **Recovery.** Recovery atomically marks an expired run terminal before another attempt can acquire the slot, and requests cancellation of the old worker. Cancellation is best-effort; conditional database writes enforce ownership.
+- **Fencing.** Preparation commits (§7.4 step 4) and final-answer writes (§7.4 step 6) must lock and recheck that the run is still active and its lease unexpired. A recovered or replaced worker that returns late is rejected by these checks and cannot publish an answer or advance the baseline. If storage is unavailable while a failure is recorded, lease expiry later terminates the abandoned run.
+- **Application deletion.** §7.5 step 3 treats only runs with an unexpired lease as active; runs whose lease has expired are abandoned and are deleted with the rest.
+- **Acceptance.** Active leases are maintained; recovery terminalizes expired runs before replacement; stale callbacks cannot commit preparation or append another final answer.
+
+Enabling it requires a migration adding the column and CHECK, plus the renewal and fencing code paths; the rest of the schema does not change.
 
 **Retry, duplicate-request, and interruption contract (confirmed 2026-11-14, PRD FR-29):**
 
@@ -526,14 +551,14 @@ This tombstone supports immediate access removal and reliable cleanup; long-term
 
 Backend code reads and fixes all materials deterministically; the model does not decide whether a version check or refresh occurs and is offered no material tool.
 
-1. **Accept input and acquire the slot.** Resolve and authorize the conversation's parent chain. In a short transaction, lock the conversation to allocate message order, save the accepted user input, and create its `preparing` run with `input_message_id` and an active lease. For an explicit retry, check §5.7 eligibility and reference the existing input rather than inserting it again. The active-run constraint rejects concurrent attempts without leaving an extra accepted message from the rejected transaction. Commit before material preparation.
-2. **Fix the material snapshot.** Open a short consistent-snapshot transaction, revalidate access, and lock the conversation before locking/checking the active run and lease. Read the current value, source identity and availability of every registered material, compute their fingerprints, and read this conversation's baseline (§5.9, query in §8.4). Use repeatable-read semantics or equivalent lock/version checks. Establish `snapshot_at` for the logical boundary; this timestamp is audit metadata, not a replacement for version identities.
+1. **Accept input and acquire the slot.** Resolve and authorize the conversation's parent chain. In a short transaction, lock the conversation to allocate message order, save the accepted user input, and create its `preparing` run with `input_message_id`. For an explicit retry, check §5.7 eligibility and reference the existing input rather than inserting it again. The active-run constraint rejects concurrent attempts without leaving an extra accepted message from the rejected transaction. Commit before material preparation.
+2. **Fix the material snapshot.** Open a short consistent-snapshot transaction, revalidate access, and lock the conversation before locking/checking the active run. Read the current value, source identity and availability of every registered material, compute their fingerprints, and read this conversation's baseline (§5.9, query in §8.4). Use repeatable-read semantics or equivalent lock/version checks. Establish `snapshot_at` for the logical boundary; this timestamp is audit metadata, not a replacement for version identities.
 3. **Resolve snapshots.** For each kind, apply §5.9's reuse rule: reference a matching saved snapshot, including known absences, or read the current content or explicit absence within that same database snapshot and insert a new snapshot linked to this run. This is ordinary backend code performing local PostgreSQL operations only; no model call, website request, PDF parsing, or object-storage access occurs inside this transaction.
-4. **Commit preparation atomically.** Save new snapshots, insert one generation association per registered kind, and record `baseline_generation_id`. Validate the association set against the registry, reference ownership, and the still-active lease before marking the run `streaming` and committing. Only then report successful sync. A preparation failure rolls back these changes; the accepted input and attempt from step 1 remain available for failure reporting and retry. Preparation does not advance the baseline.
-5. **Assemble and generate outside transactions.** Build the fixed structure in AI Design §4.2: system rules; base materials with version labels from the run's fixed snapshots; a change notice when a baseline exists and `changed_kinds` is non-empty; the usable conversation summary; recent history, annotating assistant messages whose generation used a superseded snapshot; and the input referenced by `input_message_id` exactly once. Resolve historical provenance from saved snapshots; do not substitute current application fields into old records. The request defines no material tools. If the optional website tool is enabled, it is the only tool, with a fixed step limit; persist its genuine provider exchanges under §5.8. Maintain the lease while assembling context and streaming; stop work if ownership is lost.
-6. **Save completion atomically.** After streaming finishes, use a short transaction to lock the conversation, then lock/recheck the run's active status and unexpired lease, allocate final-message order, insert the complete assistant answer with its `generation_id`, and mark the run `completed`. This commit is what makes the run the conversation's new baseline. A repeated or stale callback cannot publish another final answer. Report durable completion only after this transaction commits.
+4. **Commit preparation atomically.** Save new snapshots, insert one generation association per registered kind, and record `baseline_generation_id`. Validate the association set against the registry, reference ownership, and that the run is still `preparing` before marking it `streaming` and committing. Only then report successful sync. A preparation failure rolls back these changes; the accepted input and attempt from step 1 remain available for failure reporting and retry. Preparation does not advance the baseline.
+5. **Assemble and generate outside transactions.** Build the fixed structure in AI Design §4.2: system rules; base materials with version labels from the run's fixed snapshots; a change notice when a baseline exists and `changed_kinds` is non-empty; the usable conversation summary; recent history, annotating assistant messages whose generation used a superseded snapshot; and the input referenced by `input_message_id` exactly once. Resolve historical provenance from saved snapshots; do not substitute current application fields into old records. The request defines no material tools. If the optional website tool is enabled, it is the only tool, with a fixed step limit; persist its genuine provider exchanges under §5.8. Keep the run's abort handle in process memory while assembling context and streaming, so a client disconnect can abort it.
+6. **Save completion atomically.** After streaming finishes, use a short transaction to lock the conversation, then lock/recheck that the run is still `streaming`, allocate final-message order, insert the complete assistant answer with its `generation_id`, and mark the run `completed`. This commit is what makes the run the conversation's new baseline. A repeated or stale callback cannot publish another final answer. Report durable completion only after this transaction commits.
 
-Any transaction requiring both conversation and run locks acquires them in that order, including failure recording and recovery that appends messages. A lease-only update may lock the run alone but must not then acquire the conversation lock. No conversation lock spans model generation or streaming.
+Any transaction requiring both conversation and run locks acquires them in that order, including failure recording. No conversation lock spans model generation or streaming.
 
 Snapshot acquisition in step 2 is the logical material-version boundary, distinct from request acceptance. Changes committed afterward are observed on the next attempt's snapshot. Preparation saves the exact content from that boundary, so later live edits or deletion cannot change a response already in progress.
 
@@ -548,8 +573,8 @@ Failure handling separates successful material preparation from successful answe
 | Preparation commits, then context assembly or model generation fails | Retain committed snapshots and associations; mark the attempt failed and report the error; the baseline is not advanced, so a later attempt reuses the snapshots and repeats any change notice |
 | Streaming is interrupted or the client disconnects | Abort the model request, mark the still-owned attempt interrupted and release its slot; preserve committed preparation; the baseline is not advanced; discard partial output |
 | The final answer cannot be saved | Do not mark completed or report durable success; reconcile by run identity if commit outcome is unknown before attempting another write; if the transaction did not commit, report the persistence failure and terminalize the attempt when storage is available |
-| A recovered or replaced worker returns late | Reject its preparation/final writes using active-status and lease checks, regardless of whether cancellation reached the worker |
-| Storage is unavailable during failure recording | Report failure to the client where possible; use lease recovery to terminate the abandoned run once storage is available |
+| The backend crashes or restarts during a generation | Startup recovery marks the run interrupted before new requests are accepted; preserve committed preparation; the user can retry |
+| Storage is unavailable during failure recording | Report failure to the client where possible; record the terminal state once storage is available, or let startup recovery mark the run interrupted after a restart |
 
 The proposed refresh-error fallback is to fail that attempt visibly and allow retry, without generating from stale materials. This remains subject to PRD §11 resolution before the dependent path is exposed. A known missing material is not an infrastructure read error and must not block chat. Model failure after successful preparation does not roll the saved snapshots back.
 
@@ -565,10 +590,10 @@ Within one short transaction:
 
 1. Authorize and lock the application (`FOR UPDATE`, filtered by owner); return not-found for a missing or foreign application.
 2. Lock the workspace's conversations in sorted identity order. Generation acceptance locks a conversation before creating a run (§7.4 step 1), so after these locks no new attempt can start, and a conversation already deleted rejects new input as not found. No other path locks a conversation and then an application, so this application → conversation order cannot deadlock.
-3. If any run in those conversations is `preparing` or `streaming` with an unexpired lease, roll back and report `GENERATION_ACTIVE` (HTTP 409); nothing is deleted. Runs whose lease has already expired are abandoned and are deleted with the rest.
+3. If any run in those conversations is `preparing` or `streaming`, roll back and report `GENERATION_ACTIVE` (HTTP 409); nothing is deleted. Startup recovery guarantees that no run from a crashed process remains active.
 4. Delete the application row; the cascades remove the child records. Commit.
 
-The deletion owns no object-storage data: resume files belong to the library, and website-tool results are stored in PostgreSQL. No cleanup job is enqueued. A worker that outlived an expired lease fails its next conditional write because its run row no longer exists, so it cannot recreate deleted records.
+The deletion owns no object-storage data: resume files belong to the library, and website-tool results are stored in PostgreSQL. No cleanup job is enqueued. Because deletion is rejected while a run is active, no in-process generation can still be writing to a deleted conversation.
 
 <a id="sql"></a>
 
@@ -696,7 +721,7 @@ The business groups below remain planned. Prerequisite A now has concrete auth m
 |---|---|---|
 | Prerequisite A | `20261111000100_auth_core.cjs` → `20261111000200_auth_credentials.cjs`; Better Auth schema, current-credential state and request limits | Files exist; authoritative user key is `public.auth_user.id UUID`; apply before dependent business FKs, as detailed in Appendix F |
 | 002 | Resumes, applications, composite ownership FK, row-version checks and list indexes | Core agreed structure |
-| 003 | Status history and individual interviews | Final interview nullability/validation needs confirmation |
+| 003 | Status history and individual interviews | Interview columns are NOT NULL with the §5.5 name CHECK (confirmed 2026-11-16) |
 | 004 | Unique workspace and independent conversations | Core agreed structure |
 | 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | Create both message/run tables before adding their mutual FKs; no request-key column or index; resolve the refresh-failure fallback before exposing that path |
 | 006 | Cleanup outbox and private-file lifecycle support | Core cleanup requirement; deployment parameters TBD |
@@ -727,6 +752,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Status edits | Six statuses allowed; arbitrary transitions work; unchanged status creates no history |
 | Offer receipt | Offer marks receipt; later Rejected preserves receipt; explicit correction is persisted; count once per application |
 | Three interviews | One application contributes 1 application, 3 interview sessions, at most 1 offer |
+| Interview required fields | A NULL, blank, untrimmed or over-100-character `interview_name` and a NULL `starts_at` are rejected; a past `starts_at` is accepted |
 | Search/counts | Literal case-insensitive company/position substring; combined status filter; status buttons ignore keyword |
 | Time boundaries | Include local midnight today; exclude midnight seven dates later; verify a DST-crossing window |
 | Shared resume | Link one successful file to two owned applications; replace one link without changing the other |
@@ -755,7 +781,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Final persistence failure | No completed state without a saved final answer; reconcile uncertain commits by run identity; retry/recovery cannot append a duplicate final answer |
 | Concurrent sends and explicit retry | A concurrent send or retry returns `GENERATION_ACTIVE` and saves nothing. A retry of the latest failed/interrupted message creates a new attempt on the same input and rereads materials. Retry is rejected for older messages and completed answers. A disconnect leaves an `interrupted` attempt and no partial assistant message |
 | Concurrent generation | One active run per conversation, independent conversations/users can generate concurrently |
-| Worker crash | Active leases are maintained; recovery terminalizes expired runs before replacement; stale callbacks cannot commit preparation or append another final answer |
+| Backend crash/restart | After a restart, startup recovery marks every `preparing`/`streaming` run `interrupted` before requests are accepted; affected conversations accept new input and a retry; no partial answer exists |
 | History compression | Full messages retained, exact complete-prefix boundary respected, current input included once, unchanged base materials remain complete regardless of the history window, and version-specific summary points are tagged |
 | Summary failure and material updates | Failed compression does not advance coverage; a summary discussing V1 cannot override current V2 or an unavailable material state |
 | Optional website reading | If implemented, page content has source/time metadata separate from the URL material; freshness is not inferred from an unchanged URL |
@@ -770,7 +796,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Decision | Already confirmed | Remaining choice / owner coordination |
 |---|---|---|
 | Application deletion | Hard delete of the application and all child records including chats, no recovery, 409 during an active generation, resumes retained (confirmed 2026-11-13, §7.5) | None |
-| Interview validation | Multiple individually editable records | Required name/time, states and count rules; requester/API owner |
+| Interview validation | Multiple individually editable records; name and time required, name at most 100 characters, no other fields or states (confirmed 2026-11-16, §5.5) | Individual interview identity and edit operations in the API; API owner |
 | Timeline | Actual status transitions retained | Extra event types; requester |
 | Account configuration | §5.1 flows; 900-second links; default seven-day Sessions; 60-second email cooldown and five requests per 900-second window; SMTP acceptance gates activation and failed sends preserve the old link | Actual SMTP provider and deployment configuration; any future durable-mail/recovery policy requires separate agreement; auth owner/requester |
 | AI failures/retries | Visible errors, retry, one active run per thread; committed material preparation is separate from answer completion, and only completion advances the baseline | Retry, duplicate-request, and partial-output rules confirmed 2026-11-14 (§5.7). Remaining: §7.4's proposed fail-and-retry refresh fallback; AI owner/requester |
@@ -785,7 +811,9 @@ Resolve these within their affected implementation areas. They do not block writ
 
 This document is ready for team design review, subject to the explicit open items in §12. It is not evidence of a deployed schema, running backend, successful migrations or passed acceptance checks.
 
-Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. At those earlier revisions, retry and refresh-fallback mechanisms were tracked as proposals; the later confirmations are recorded below. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007. Version 1.6 confirms the retry contract with latest-message eligibility, removes `request_key` and request deduplication, and specifies abort-on-disconnect with no partial-output persistence; `endpoints.json` 1.7.0 carries the matching contract. Version 1.7 integrates the current authentication implementation: `public.auth_user.id UUID`, UUID owner FKs, the trusted user context, concrete auth migrations and the confirmed email/Session configuration. The business/AI rules from versions 1.3–1.6 remain in force.
+Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. At those earlier revisions, retry and refresh-fallback mechanisms were tracked as proposals; the later confirmations are recorded below. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007. Version 1.6 confirms the retry contract with latest-message eligibility, removes `request_key` and request deduplication, and specifies abort-on-disconnect with no partial-output persistence; `endpoints.json` 1.7.0 carries the matching contract. Version 1.7 integrates the current authentication implementation: `public.auth_user.id UUID`, UUID owner FKs, the trusted user context, concrete auth migrations and the confirmed email/Session configuration. The business/AI rules from versions 1.3–1.6 remain in force. Version 1.8 replaces lease-based crash recovery with startup recovery for the single-instance deployment and keeps the lease design as a deferred, not-enabled subsection of §5.7 for a possible multi-instance upgrade.
+
+Version 1.9 records the confirmed interview field rules: `interview_name` and `starts_at` are NOT NULL, the name is trimmed and limited to 100 characters, and no other interview columns or states are added.
 
 This revision changes documentation only. Business SQL examples and migration groups describe intended work; authentication sections reference existing source and migration files without reporting deployment or acceptance results.
 
@@ -793,7 +821,7 @@ This revision changes documentation only. Business SQL examples and migration gr
 
 ## Appendix A. Current API Integration Snapshot — Updated 2026-11-15
 
-This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `f136368`, together with the current authentication implementation and identity contract. Documented business routes and schemas remain integration contracts, not evidence of running or tested endpoints. Retain [the original API review](#api-alignment) as historical context.
+This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `f136368`, together with the current authentication implementation and identity contract. The local 1.8.0 revision (2026-11-16) changes only the `Interview` schema, as noted in the interviews row below. Documented business routes and schemas remain integration contracts, not evidence of running or tested endpoints. Retain [the original API review](#api-alignment) as historical context.
 
 **2026-11-13 identity update:** the authentication implementation, UUID identity contract and migration handoff are now recorded in Appendices D–F. The remaining rows retain this snapshot's business/API review scope.
 
@@ -804,7 +832,7 @@ This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `
 | AI Copilot | Workspace, conversation, message history, generation/stream/status, confirmed retry and material-snapshot contracts are present. 1.3.0 described base materials as backend tool executions. 1.4.0 (2026-11-11) replaces `toolMessageId` with `generationId` on snapshots and removes material-tool parts, keeping website-tool parts only. It derives `materialState` from the latest completed generation, defines `changedKinds` against that baseline, and adds `baselineGenerationId`. 1.5.0 (2026-11-11) replaces `materialRevision` and `sourceContentVersion` with `fingerprint`, renames `retrievalId` to `snapshotId` and the route to `/material-snapshots/{snapshotId}`, and makes the material maps registry-keyed instead of six fixed properties | Implement against 1.7.0 and the SDK/UI adapters. 1.7.0 (2026-11-14) confirms the retry route, abort-on-disconnect with no partial output, and no request-key deduplication; only the refresh-failure fallback stays open |
 | AI application selector | `GET /api/v1/ai/applications` describes `q` plus a six-status filter and no side effects on navigation | Coordinate with the non-AI listing while preserving the selector's documented behavior |
 | Non-AI application list | Still documents `page`, `limit` and the older seven-value status enum | Align six statuses, keyword/sort options, complete counts and Dashboard read models |
-| Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation, individual interview identity/editing and unresolved validation |
+| Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation and individual interview identity/editing. Interview validation is confirmed (§5.5); 1.8.0 aligns the `Interview` schema with it |
 | Offer and timeline | Full historical-offer/status-history API models are still incomplete | Agree read/write fields and response models before final UI integration |
 | Resume library | Existing upload accepts PDF/DOCX; standard metadata lacks the parsing/link-count contract. Since 1.6.0, deletion returns 200 with `unlinkedApplicationCount` | Align PDF-only validation, parsing completion/status/errors and private viewing |
 | Concurrency and recovery | `row_version` has no agreed public non-AI contract; AI durable-attempt and stream-error contracts are described | Agree conflict handling if adopted; reconcile AI durable state after transport loss without assuming replay/resumption |
@@ -828,7 +856,7 @@ Justin owns non-AI pages and maintains OpenAPI with backend contributors. Jianye
 | JD, posting and personal notes | `jobDescription`, `jobUrl`, `notes` | `job_description`, `job_url`, `personal_notes`; personal notes stay outside automatic AI materials |
 | Company website/background | `companyWebsiteUrl`, `companyNotes` | `company_website_url`, `company_notes`; distinct from posting URL and personal notes |
 | Historical offers and timeline | Complete public models still need alignment | `offer_received`, `application_status_history` |
-| Interviews | `interviews[]` with `type` and `scheduledAt`; no stable item ID | Independent interview rows; coordinate IDs and individual edits |
+| Interviews | `interviews[]` with required `type` and `scheduledAt` only (1.8.0); no stable item ID | Independent interview rows: `type` → `interview_name`, `scheduledAt` → `starts_at`; coordinate IDs and individual edits |
 | Resume controls | Multipart `name`/`file`; library metadata includes file identity/name/type/size/time | Parsing-state, failure and library link-count metadata still need agreement; DELETE returns 200 with `unlinkedApplicationCount` |
 
 The non-AI application list's current query model is not the complete Dashboard/search contract. Counts describe the complete owned set, not one page of results; use the original §8 explanations for counting, filtering and calendar boundaries. AI selection has its own documented `q`/six-status route.
@@ -861,11 +889,11 @@ Jianye owns storage/PDF processing and both AI frontend and backend. Rongxin sup
 | Upload and link | [§7.2](#file-upload): validate an accepted-size PDF, parse outside long DB transactions, then save text/version/validation evidence when the private object is available. Clean failed objects/text. *Proposed:* files failing only the text checks are kept as `text_unavailable`. An explicit usable-file selection changes one application link; upload alone changes none. |
 | Delete a resume | [§7.3](#resume-delete): authorize and lock the file, tombstone it, unlink all affected applications with `row_version` advances, clear current text and enqueue cleanup atomically; remove private bytes afterward. Retain historical messages and material snapshots, including the deleted resume's text, as read-only history, and prevent late parsing from reviving the item. |
 | Enter workspace / create conversation | §5.6: create/reuse the owned application's unique workspace. Only an explicit New conversation action creates an empty bound thread. Navigation performs no model call or conversation material synchronization. |
-| Accept input | [§7.4 step 1](#turn-initialization): save user input and a leased `preparing` attempt in one short transaction. `input_message_id` references the user message; the user message has NULL `generation_id`. Preparation has not yet fixed materials. |
+| Accept input | [§7.4 step 1](#turn-initialization): save user input and a `preparing` attempt in one short transaction. `input_message_id` references the user message; the user message has NULL `generation_id`. Preparation has not yet fixed materials. |
 | Prepare materials | §7.4 steps 2–4: take a consistent snapshot, fingerprint every registered material, compare with the baseline, reuse snapshots with the same fingerprint or save new ones in backend code, and atomically save new snapshots, one association per kind and `baseline_generation_id`. No model tool is involved. A pre-preparation failure may have no associations while retaining accepted input/attempt. |
-| Generate and save | §7.4 steps 5–6: assemble the fixed context structure (labeled materials, change notice, summary, annotated recent history, input) and stream outside transactions; maintain the active lease. Save the complete assistant answer and `completed` state together after rechecking ownership; that commit advances the baseline. Resolve uncertain commits by run identity rather than blindly writing again. |
+| Generate and save | §7.4 steps 5–6: assemble the fixed context structure (labeled materials, change notice, summary, annotated recent history, input) and stream outside transactions; keep the abort handle in memory. Save the complete assistant answer and `completed` state together after rechecking ownership; that commit advances the baseline. Resolve uncertain commits by run identity rather than blindly writing again. |
 
-Preparation failure rolls back preparation state. Model/context failure after successful preparation retains the saved snapshots but does not advance the baseline. Original failure handling, conversation-before-run locking and lease fencing apply to every participating writer. Do not collapse acceptance, preparation and completion into a single transaction.
+Preparation failure rolls back preparation state. Model/context failure after successful preparation retains the saved snapshots but does not advance the baseline. Original failure handling, conversation-before-run locking and conditional status updates apply to every participating writer; startup recovery handles crashes (§5.7). Do not collapse acceptance, preparation and completion into a single transaction.
 
 ### C.2 Understand the Material Records
 
