@@ -1,9 +1,9 @@
 ---
 artifact: database-design
-version: "1.8"
+version: "1.9"
 created: 2026-11-09
 updated: 2026-11-16
-requirements_baseline: "PRD 1.7 / AI_Design.md (2026-11-11)"
+requirements_baseline: "PRD 1.8 / AI_Design.md (2026-11-11)"
 status: proposed-design-with-open-decisions
 ---
 
@@ -28,6 +28,8 @@ The reading paths and supplements carry forward the relevant integration guidanc
 **Retry and interruption revision (v1.6, 2026-11-14):** The retry contract in §5.7 is confirmed. Only the latest user message can be retried, and only when its most recent attempt failed or was interrupted. There is no request-key deduplication, so `request_key` is removed. A client disconnect aborts the generation and no partial output is saved (PRD FR-29).
 
 **Crash recovery revision (v1.8, 2026-11-16):** The project runs a single backend instance. On startup, the backend marks every `preparing` or `streaming` run as `interrupted` before accepting requests, which replaces lease-based recovery. `lease_expires_at` and the lease rules are moved to a deferred subsection of §5.7. They are kept for a possible upgrade to multiple backend instances and are not enabled now.
+
+**Interview field revision (v1.9, 2026-11-16):** PRD 1.8 FR-07 confirms that `interview_name` and `starts_at` are both required and that `interviews` has no other business columns and no state column (§5.5). The provisional nullability is removed.
 
 | Reader | Start here | Original implementation reference |
 |---|---|---|
@@ -280,11 +282,11 @@ CHECK both values against the six statuses and `old_status <> new_status`. UNIQU
 |---|---|---|
 | `id` | UUID PK | Individual interview identity |
 | `application_id` | UUID NN FK | Parent |
-| `interview_name` | TEXT nullable pending validation decision | Type/name shown in schedule |
-| `starts_at` | TIMESTAMPTZ nullable pending validation decision | Scheduled instant |
+| `interview_name` | TEXT NN | Type/name shown in schedule; free text, not an enum |
+| `starts_at` | TIMESTAMPTZ NN | Scheduled instant; past values allowed |
 | `created_at`, `updated_at` | TIMESTAMPTZ NN | Audit |
 
-Use independent rows for add/edit/delete. Do not store the interview schedule as an application JSON array or maintain a conflicting single interview date. Until the PRD's required-field decision is made, nullability is provisional, not permission to expose incomplete scheduling behavior. Unscheduled rows are excluded from the upcoming list. Cancellation/completion states, their effects on counts, and extra interview fields are not invented here.
+Use independent rows for add/edit/delete. Do not store the interview schedule as an application JSON array or maintain a conflicting single interview date. Confirmed 2026-11-16 (PRD FR-07): both fields are required. CHECK `interview_name = btrim(interview_name)` and `char_length(interview_name) BETWEEN 1 AND 100`; the backend trims the submitted name before validating and storing it. `starts_at` has no past/future CHECK, so completed rounds can be recorded. An interview without a known time is not stored as a row. The table has no location, meeting-link, interviewer, duration, notes or outcome column and no cancelled/completed state: a cancelled interview is deleted, and every row counts as one interview session.
 
 <a id="ai-schema"></a>
 
@@ -719,7 +721,7 @@ The business groups below remain planned. Prerequisite A now has concrete auth m
 |---|---|---|
 | Prerequisite A | `20261111000100_auth_core.cjs` → `20261111000200_auth_credentials.cjs`; Better Auth schema, current-credential state and request limits | Files exist; authoritative user key is `public.auth_user.id UUID`; apply before dependent business FKs, as detailed in Appendix F |
 | 002 | Resumes, applications, composite ownership FK, row-version checks and list indexes | Core agreed structure |
-| 003 | Status history and individual interviews | Final interview nullability/validation needs confirmation |
+| 003 | Status history and individual interviews | Interview columns are NOT NULL with the §5.5 name CHECK (confirmed 2026-11-16) |
 | 004 | Unique workspace and independent conversations | Core agreed structure |
 | 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | Create both message/run tables before adding their mutual FKs; no request-key column or index; resolve the refresh-failure fallback before exposing that path |
 | 006 | Cleanup outbox and private-file lifecycle support | Core cleanup requirement; deployment parameters TBD |
@@ -750,6 +752,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Status edits | Six statuses allowed; arbitrary transitions work; unchanged status creates no history |
 | Offer receipt | Offer marks receipt; later Rejected preserves receipt; explicit correction is persisted; count once per application |
 | Three interviews | One application contributes 1 application, 3 interview sessions, at most 1 offer |
+| Interview required fields | A NULL, blank, untrimmed or over-100-character `interview_name` and a NULL `starts_at` are rejected; a past `starts_at` is accepted |
 | Search/counts | Literal case-insensitive company/position substring; combined status filter; status buttons ignore keyword |
 | Time boundaries | Include local midnight today; exclude midnight seven dates later; verify a DST-crossing window |
 | Shared resume | Link one successful file to two owned applications; replace one link without changing the other |
@@ -793,7 +796,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Decision | Already confirmed | Remaining choice / owner coordination |
 |---|---|---|
 | Application deletion | Hard delete of the application and all child records including chats, no recovery, 409 during an active generation, resumes retained (confirmed 2026-11-13, §7.5) | None |
-| Interview validation | Multiple individually editable records | Required name/time, states and count rules; requester/API owner |
+| Interview validation | Multiple individually editable records; name and time required, name at most 100 characters, no other fields or states (confirmed 2026-11-16, §5.5) | Individual interview identity and edit operations in the API; API owner |
 | Timeline | Actual status transitions retained | Extra event types; requester |
 | Account configuration | §5.1 flows; 900-second links; default seven-day Sessions; 60-second email cooldown and five requests per 900-second window; SMTP acceptance gates activation and failed sends preserve the old link | Actual SMTP provider and deployment configuration; any future durable-mail/recovery policy requires separate agreement; auth owner/requester |
 | AI failures/retries | Visible errors, retry, one active run per thread; committed material preparation is separate from answer completion, and only completion advances the baseline | Retry, duplicate-request, and partial-output rules confirmed 2026-11-14 (§5.7). Remaining: §7.4's proposed fail-and-retry refresh fallback; AI owner/requester |
@@ -810,13 +813,15 @@ This document is ready for team design review, subject to the explicit open item
 
 Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. At those earlier revisions, retry and refresh-fallback mechanisms were tracked as proposals; the later confirmations are recorded below. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007. Version 1.6 confirms the retry contract with latest-message eligibility, removes `request_key` and request deduplication, and specifies abort-on-disconnect with no partial-output persistence; `endpoints.json` 1.7.0 carries the matching contract. Version 1.7 integrates the current authentication implementation: `public.auth_user.id UUID`, UUID owner FKs, the trusted user context, concrete auth migrations and the confirmed email/Session configuration. The business/AI rules from versions 1.3–1.6 remain in force. Version 1.8 replaces lease-based crash recovery with startup recovery for the single-instance deployment and keeps the lease design as a deferred, not-enabled subsection of §5.7 for a possible multi-instance upgrade.
 
+Version 1.9 records the confirmed interview field rules: `interview_name` and `starts_at` are NOT NULL, the name is trimmed and limited to 100 characters, and no other interview columns or states are added.
+
 This revision changes documentation only. Business SQL examples and migration groups describe intended work; authentication sections reference existing source and migration files without reporting deployment or acceptance results.
 
 <a id="current-integration-status"></a>
 
 ## Appendix A. Current API Integration Snapshot — Updated 2026-11-15
 
-This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `f136368`, together with the current authentication implementation and identity contract. Documented business routes and schemas remain integration contracts, not evidence of running or tested endpoints. Retain [the original API review](#api-alignment) as historical context.
+This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `f136368`, together with the current authentication implementation and identity contract. The local 1.8.0 revision (2026-11-16) changes only the `Interview` schema, as noted in the interviews row below. Documented business routes and schemas remain integration contracts, not evidence of running or tested endpoints. Retain [the original API review](#api-alignment) as historical context.
 
 **2026-11-13 identity update:** the authentication implementation, UUID identity contract and migration handoff are now recorded in Appendices D–F. The remaining rows retain this snapshot's business/API review scope.
 
@@ -827,7 +832,7 @@ This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `
 | AI Copilot | Workspace, conversation, message history, generation/stream/status, confirmed retry and material-snapshot contracts are present. 1.3.0 described base materials as backend tool executions. 1.4.0 (2026-11-11) replaces `toolMessageId` with `generationId` on snapshots and removes material-tool parts, keeping website-tool parts only. It derives `materialState` from the latest completed generation, defines `changedKinds` against that baseline, and adds `baselineGenerationId`. 1.5.0 (2026-11-11) replaces `materialRevision` and `sourceContentVersion` with `fingerprint`, renames `retrievalId` to `snapshotId` and the route to `/material-snapshots/{snapshotId}`, and makes the material maps registry-keyed instead of six fixed properties | Implement against 1.7.0 and the SDK/UI adapters. 1.7.0 (2026-11-14) confirms the retry route, abort-on-disconnect with no partial output, and no request-key deduplication; only the refresh-failure fallback stays open |
 | AI application selector | `GET /api/v1/ai/applications` describes `q` plus a six-status filter and no side effects on navigation | Coordinate with the non-AI listing while preserving the selector's documented behavior |
 | Non-AI application list | Still documents `page`, `limit` and the older seven-value status enum | Align six statuses, keyword/sort options, complete counts and Dashboard read models |
-| Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation, individual interview identity/editing and unresolved validation |
+| Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation and individual interview identity/editing. Interview validation is confirmed (§5.5); 1.8.0 aligns the `Interview` schema with it |
 | Offer and timeline | Full historical-offer/status-history API models are still incomplete | Agree read/write fields and response models before final UI integration |
 | Resume library | Existing upload accepts PDF/DOCX; standard metadata lacks the parsing/link-count contract. Since 1.6.0, deletion returns 200 with `unlinkedApplicationCount` | Align PDF-only validation, parsing completion/status/errors and private viewing |
 | Concurrency and recovery | `row_version` has no agreed public non-AI contract; AI durable-attempt and stream-error contracts are described | Agree conflict handling if adopted; reconcile AI durable state after transport loss without assuming replay/resumption |
@@ -851,7 +856,7 @@ Justin owns non-AI pages and maintains OpenAPI with backend contributors. Jianye
 | JD, posting and personal notes | `jobDescription`, `jobUrl`, `notes` | `job_description`, `job_url`, `personal_notes`; personal notes stay outside automatic AI materials |
 | Company website/background | `companyWebsiteUrl`, `companyNotes` | `company_website_url`, `company_notes`; distinct from posting URL and personal notes |
 | Historical offers and timeline | Complete public models still need alignment | `offer_received`, `application_status_history` |
-| Interviews | `interviews[]` with `type` and `scheduledAt`; no stable item ID | Independent interview rows; coordinate IDs and individual edits |
+| Interviews | `interviews[]` with required `type` and `scheduledAt` only (1.8.0); no stable item ID | Independent interview rows: `type` → `interview_name`, `scheduledAt` → `starts_at`; coordinate IDs and individual edits |
 | Resume controls | Multipart `name`/`file`; library metadata includes file identity/name/type/size/time | Parsing-state, failure and library link-count metadata still need agreement; DELETE returns 200 with `unlinkedApplicationCount` |
 
 The non-AI application list's current query model is not the complete Dashboard/search contract. Counts describe the complete owned set, not one page of results; use the original §8 explanations for counting, filtering and calendar boundaries. AI selection has its own documented `q`/six-status route.
