@@ -203,11 +203,11 @@ The requester also confirmed a 60-second same-recipient/purpose email cooldown, 
 | `object_key` | TEXT nullable, unique when present | Private object identity; no public or signed URL persisted |
 | `mime_type` | TEXT NN | Accepted type is `application/pdf` |
 | `size_bytes` | BIGINT NN | Actual size, positive and at most 2,097,152 for an accepted upload |
-| `page_count` | INTEGER nullable | Parsed page count; successful file has 1–2 pages |
-| `extracted_text` | TEXT nullable | Saved parsed text used by AI |
+| `page_count` | INTEGER nullable | Parsed page count; an accepted file (`succeeded` or proposed `text_unavailable`) has 1–2 pages |
+| `extracted_text` | TEXT nullable | Saved parsed text used by AI; NULL for proposed `text_unavailable` |
 | `non_whitespace_chars` | INTEGER nullable | Extraction validation evidence; at least 100 for success |
-| `parse_status` | TEXT NN | Proposed internal values `pending`, `processing`, `succeeded`, `failed` |
-| `parse_error_code` | TEXT nullable | Stable parse/validation failure reason for UI mapping |
+| `parse_status` | TEXT NN | Proposed internal values `pending`, `processing`, `succeeded`, `failed`; *proposed 2026-11-15, pending team confirmation:* add `text_unavailable` (accepted and linkable PDF without usable text, PRD §5.2) |
+| `parse_error_code` | TEXT nullable | Stable parse/validation failure reason for UI mapping; NULL for `text_unavailable`, whose status already states the reason |
 | `content_version` | BIGINT NN default 1 | Explicit extraction-content revision for audit; AI change detection does not depend on it |
 | `deleted_at` | TIMESTAMPTZ nullable | Access tombstone during deletion/cleanup; not a recovery feature |
 | `created_at`, `updated_at` | TIMESTAMPTZ NN | Upload/processing audit |
@@ -215,6 +215,8 @@ The requester also confirmed a 60-second same-recipient/purpose email cooldown, 
 Use `UNIQUE(id, user_id)` for ownership-safe resume links. A new resume version is a new row with a new UUID; a V1→V2 link change is detected because the resume fingerprint includes the resume identity (§5.9), even if both files contain identical text.
 
 For a live row (`deleted_at IS NULL`) with `parse_status = succeeded`, require a non-null object key/text, 1–2 pages and at least 100 non-whitespace characters. Express conditional CHECKs with explicit `IS NOT NULL` terms so SQL NULL does not accidentally satisfy validation. Deleted rows are exempt from live-success completeness requirements, allowing extracted text to be cleared while retaining historical parse status. File-size and basic metadata-domain checks still apply. The parser must also validate every page has extractable nonblank text, a genuine readable PDF, and exact size limits. DB metadata checks cannot establish those content properties. Reject oversize bodies before accepting a library item. Failed items may retain error metadata for the upload result, but their object/text must be cleaned up and they cannot be selected. Reprocessing policy is not a user-facing feature; if internal re-extraction changes saved usable text, increment `content_version` atomically.
+
+**Proposed `text_unavailable` state (2026-11-15, pending team confirmation; PRD §5.2):** a live row with `parse_status = text_unavailable` requires a non-null object key, 1–2 pages and NULL `extracted_text`; `non_whitespace_chars` may record the measured count as evidence. It is selectable for application links like `succeeded`, so the link-usability check becomes `parse_status IN ('succeeded', 'text_unavailable')`. Only `succeeded` rows supply resume text to the AI. A `failed` row is never selectable and is not listed in the library.
 
 <a id="application-schema"></a>
 
@@ -498,9 +500,9 @@ Use a consistent lock order for resume-link changes and deletion: resume rows fi
 1. Authenticate; validate name, upload limit and server-side PDF content. Temporary uploads use random private keys.
 2. Create pending metadata only for an accepted-size upload; parse outside a long-lived DB transaction.
 3. Check maximum two pages, at least 100 non-whitespace characters across the file, and extractable text on every page. No OCR.
-4. On success, atomically save extracted text, page/character metadata, version and succeeded state after the private object is available.
-5. On failure, save a safe error reason; the item is unusable. Remove temporary bytes and any saved extracted text. Enqueue cleanup if immediate deletion fails.
-6. Uploading never changes application links. Explicitly selecting a successful file changes only that application.
+4. On success, atomically save extracted text, page/character metadata, version and succeeded state after the private object is available. *Proposed (2026-11-15):* when only the text checks fail, still store the object and save `text_unavailable` with page/character metadata and no extracted text; the upload result carries a warning.
+5. On failure (rejected file or processing failure), save a safe error reason; the item is unusable. Remove temporary bytes and any saved extracted text. Enqueue cleanup if immediate deletion fails.
+6. Uploading never changes application links. Explicitly selecting a successful file (or, if adopted, a `text_unavailable` file) changes only that application.
 
 Object storage and PostgreSQL do not share a transaction. Use compensating cleanup for objects uploaded before DB failure and a periodic reconciliation/temporary-key expiry process for crashes before an outbox row can be committed. Cleanup timing does not create a user-facing restoration promise.
 
@@ -856,7 +858,7 @@ Jianye owns storage/PDF processing and both AI frontend and backend. Rongxin sup
 
 | Workflow | Integration behavior / original reference |
 |---|---|
-| Upload and link | [§7.2](#file-upload): validate an accepted-size PDF, parse outside long DB transactions, then save text/version/validation evidence when the private object is available. Clean failed objects/text. An explicit usable-file selection changes one application link; upload alone changes none. |
+| Upload and link | [§7.2](#file-upload): validate an accepted-size PDF, parse outside long DB transactions, then save text/version/validation evidence when the private object is available. Clean failed objects/text. *Proposed:* files failing only the text checks are kept as `text_unavailable`. An explicit usable-file selection changes one application link; upload alone changes none. |
 | Delete a resume | [§7.3](#resume-delete): authorize and lock the file, tombstone it, unlink all affected applications with `row_version` advances, clear current text and enqueue cleanup atomically; remove private bytes afterward. Retain historical messages and material snapshots, including the deleted resume's text, as read-only history, and prevent late parsing from reviving the item. |
 | Enter workspace / create conversation | §5.6: create/reuse the owned application's unique workspace. Only an explicit New conversation action creates an empty bound thread. Navigation performs no model call or conversation material synchronization. |
 | Accept input | [§7.4 step 1](#turn-initialization): save user input and a leased `preparing` attempt in one short transaction. `input_message_id` references the user message; the user message has NULL `generation_id`. Preparation has not yet fixed materials. |

@@ -4,7 +4,7 @@ The backend contains the storage adapter, PDF extractor, resume acceptance polic
 offline test sources and an opt-in real R2 check. It does not yet start an HTTP
 server or persist resume records. Phase 4 workflow orchestration is not included.
 
-`npm run typecheck`, `npm test` (14 offline tests) and `npm run build` pass on
+`npm run typecheck`, `npm test` (15 offline tests) and `npm run build` pass on
 Node 26.8.2. The live R2 check has not been run yet (it needs a development
 bucket), so real storage compatibility remains unverified.
 
@@ -93,10 +93,12 @@ const pdf = createPdfExtractor();
 const storage = createR2Storage(readR2Config());
 
 // Within a future authorized handler, after bounded multipart reception:
-const extraction = await validateResumePdf(bytes, pdf, { signal });
+// Throws PdfError for rejected files; otherwise the file is accepted and stored.
+const result = await validateResumePdf(bytes, pdf, { signal });
 const objectKey = createObjectKey();
 await storage.putNew(objectKey, bytes, { signal });
-// Future workflow saves objectKey, extraction.text and validation evidence in SQL.
+// Future workflow saves objectKey and, when result.textStatus === "available",
+// result.extraction.text; "unavailable" saves no text and returns the AI warning.
 // storage.close() releases the SDK client on application shutdown.
 ```
 
@@ -115,15 +117,26 @@ access must remain disabled; SDK code does not change bucket permissions.
 
 ## Acceptance rules and deterministic text
 
-The policy accepts at most **2,097,152 bytes**, **one or two pages**, at least
-**100 non-whitespace Unicode code points across the whole document**, and at least
-one non-whitespace character on **each** page. An exact byte/character boundary
-passes if all other checks pass. File name and declared MIME type are not trusted.
-The first 1024 bytes are checked for the PDF signature as an inexpensive filter,
-then PDF.js must successfully parse the bytes and extract every accepted page.
-Empty, damaged, unreadable/password-required, oversized, overlength, blank-page
-and image-only-page documents are rejected. Readable encryption with an empty
-user password is allowed. There is no OCR or image-count restriction.
+This follows the text-unavailable rule proposed on 2026-11-15 (PRD §5.2), which
+is still pending team confirmation.
+
+`validateResumePdf` **rejects** (throws `PdfError`) files over **2,097,152 bytes**,
+non-PDF, damaged or password-required files, and files with more than **two pages**.
+File name and declared MIME type are not trusted. The first 1024 bytes are checked
+for the PDF signature as an inexpensive filter, then PDF.js must successfully parse
+the bytes. Readable encryption with an empty user password is allowed.
+
+Every other file is **accepted**, with one of two results:
+
+- `{ textStatus: "available", extraction }`: at least **100 non-whitespace Unicode
+  code points across the whole document** and at least one on **each** page. An exact
+  byte/character boundary passes. `extraction.text` is what the AI will use.
+- `{ textStatus: "unavailable", pageCount, nonWhitespaceChars }`: the text rules
+  failed (e.g. a scanned, image-only or blank page). The file is still stored and
+  linkable, but no text is saved and the UI warns that AI features cannot read it.
+  This result deliberately contains no text, so partial text never reaches the AI.
+
+There is no OCR or image-count restriction.
 
 Text retains PDF.js content order. Explicit end-of-line markers and changes in
 baseline introduce line breaks; horizontal gaps separate words or text blocks.
@@ -162,7 +175,7 @@ The memory setting is **not** a hard process RSS or native/ArrayBuffer allocatio
 cap; deployment memory limits remain a separate integration responsibility.
 
 `PdfError.code` is one of `invalid_pdf`, `too_large`, `too_many_pages`,
-`insufficient_text`, `unreadable_encryption`, `processing_failed`, `timeout`,
+`unreadable_encryption`, `processing_failed`, `timeout`,
 `cancelled`, or `busy`. The last four describe execution state, not proof that
 the user's PDF is invalid. Excess concurrent requests return `busy` immediately;
 the caller may offer retry. Policy errors and operational errors have separate

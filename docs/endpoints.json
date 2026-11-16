@@ -1115,7 +1115,7 @@
           "Resumes"
         ],
         "summary": "Upload a resume",
-        "description": "Accepts only a PDF resume as multipart/form-data.",
+        "description": "Accepts only a PDF resume as multipart/form-data. Proposed 2026-11-15 (PRD §5.2): a readable PDF within the limits whose text cannot be extracted is still created with textStatus unavailable, and the client shows the AI warning; oversized, non-PDF, damaged, password-required and overlength files are rejected.",
         "operationId": "createResume",
         "requestBody": {
           "required": true,
@@ -2120,7 +2120,8 @@
           "fileName",
           "mimeType",
           "sizeBytes",
-          "createdAt"
+          "createdAt",
+          "textStatus"
         ],
         "properties": {
           "id": {
@@ -2148,6 +2149,15 @@
             "type": "string",
             "format": "date-time",
             "readOnly": true
+          },
+          "textStatus": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "readOnly": true,
+            "description": "Proposed 2026-11-15, pending team confirmation (PRD §5.2); bump the API version when adopted. available: extracted text is saved and AI features can use it. unavailable: the PDF was accepted (readable, at most 2 pages and 2 MiB) but has no usable text, for example a scanned resume; it can be viewed, downloaded and linked, but AI features cannot read it, and the UI shows a warning. Rejected uploads never produce a Resume."
           }
         }
       },
@@ -3022,7 +3032,7 @@
             "$ref": "#/components/schemas/AiRevision"
           }
         },
-        "description": "Current successful, non-deleted linked resume. No storage key or download credential is exposed."
+        "description": "Current successful, non-deleted linked resume. No storage key or download credential is exposed. Proposed 2026-11-15: a linked resume with textStatus unavailable supplies no text; the AI context reports it as linked but unreadable."
       },
       "AiWorkspace": {
         "type": "object",
