@@ -17,7 +17,7 @@ Each job application has an AI workspace, similar to a separate project. Users e
 
 **A new conversation starts with an empty chat history but can still access the workspace materials without requiring another upload. Existing conversations are retained.** Data from different applications is isolated, and conversations within the same application do not automatically read one another's chat history.
 
-Materials are stored in PostgreSQL and cloud storage. Their database records provide the shared foundational long-term memory described in Section 3.2. The backend reads these materials directly for each turn and saves a per-conversation snapshot of the exact content it supplied, as a record of what each answer was based on. Here, "shared memory" means a shared source of materials, rather than a single chat history shared by all conversations.
+Materials are stored in PostgreSQL, with original PDFs in private Cloudflare R2 storage. Their database records provide the shared foundational long-term memory described in Section 3.2. The backend reads these materials directly for each turn and saves a per-conversation snapshot of the exact content it supplied, as a record of what each answer was based on. Here, "shared memory" means a shared source of materials, rather than a single chat history shared by all conversations.
 
 ## 2. What Users Can Do
 
@@ -56,7 +56,9 @@ A conversation's comparison baseline advances only when an answer completes. If 
 
 ### 3.2 Sliding Window, Context Compression, and Long-Term Memory
 
-After a PDF is uploaded, the backend parses it and saves the extracted resume text in a PostgreSQL `TEXT` field, together with its parsing status and version. The original PDF remains in cloud storage. Once parsing succeeds, conversations read the saved text without downloading or parsing the PDF again.
+After a PDF is uploaded, the backend parses it and saves the extracted resume text in a PostgreSQL `TEXT` field, together with its parsing status and version. The original PDF remains in private Cloudflare R2 storage. Once parsing succeeds, conversations read the saved text without downloading or parsing the PDF again.
+
+*Proposed 2026-11-15, pending team confirmation (PRD §5.2):* a readable PDF whose text fails the extraction checks (for example a scanned resume) is still stored and may be linked, but is marked text unavailable and has no saved text. For the AI it counts as an unavailable resume material: the context states that a resume is linked but cannot be read, the model must not claim to know its contents, and chat continues with limited assistance (PRD FR-30). Partial text from such a file is never supplied. Linking or unlinking it is still a material change for the next turn, because the resume identity is part of its fingerprint.
 
 The JD, company, position, website URL, and company notes remain in their corresponding database fields. These records and the linked resume text form the shared foundational long-term memory for all conversations within the same application. No `.md` file or separate duplicate memory field is required. The backend saves and updates materials through upload and editing operations and reads them for each conversation turn.
 
@@ -133,8 +135,8 @@ Every request checks ownership relationships between the user, application works
 
 ## 7. Additional Suggestions: Avoiding Common Problems
 
-- **New resume parsing fails:** Switch the current version only after parsing succeeds. If parsing fails, notify the user rather than implying that the new file has been used.
+- **New resume parsing fails:** Switch the current version only after parsing succeeds. If parsing fails, notify the user rather than implying that the new file has been used. *Proposed (2026-11-15):* a text-unavailable file may be linked after a warning; the AI then reports that the linked resume cannot be read instead of using an older version's text.
 - **Materials change during generation:** Continue the current response using the versions confirmed at its start. Refresh on the next message to avoid mixing versions within one response.
 - **Materials are deleted or unlinked:** Treat this as an update and tell the AI that the material is no longer available, so it is not treated as a current source.
 - **Deleted resume history:** Deleting a resume removes its PDF and its use as a current material. The text snapshots saved by conversations that used it are retained, so earlier answers can still show what they were based on. These snapshots are read-only history and never authorize downloading or relinking the file.
-- **Update notifications and failure handling:** Show a message such as "Latest resume synced." Clearly report refresh failures rather than silently presenting old materials as current. Allow retries after interrupted streaming, and initially limit each conversation to one generation at a time.
+- **Update notifications and failure handling:** Show a message such as "Latest resume synced." Clearly report refresh failures rather than silently presenting old materials as current. Limit each conversation to one generation at a time. If streaming is interrupted, abort the generation, keep no partial answer, and let the user retry the latest message; a retry reuses that message and reads current materials again (PRD FR-29).

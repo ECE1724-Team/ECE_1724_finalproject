@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Job Application Tracker API",
-    "version": "1.5.0",
+    "version": "1.7.0",
     "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests. AI Copilot contracts follow PRD 1.4, AI_Design.md, and Database_Design.md 1.4. AI operations require the same authoritative session, verified-email, and ownership checks. These contracts describe planned behavior, not deployed endpoints; explicitly marked retry and failure-policy proposals remain subject to the listed decisions."
   },
   "servers": [
@@ -1055,8 +1055,25 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "A generation is in progress for this application's AI conversations. Nothing was deleted; try again after it ends.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "GENERATION_ACTIVE",
+                    "message": "A generation is in progress for this application's AI conversations. Nothing was deleted; try again after it ends."
+                  }
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "Permanently hard-delete the owned application together with its interview arrangements, status history, AI workspace, and every conversation in that workspace (messages, material snapshots, generation records, and summaries). Library resumes and other applications are not affected. There is no undo or recovery; the client confirms with the user first, stating that this cannot be undone and that the application's AI conversations, if any, will also be deleted. If any conversation of the application has an active generation, nothing is deleted and 409 GENERATION_ACTIVE is returned."
       }
     },
     "/api/v1/resumes": {
@@ -1098,7 +1115,7 @@
           "Resumes"
         ],
         "summary": "Upload a resume",
-        "description": "Accepts a PDF or DOCX resume as multipart/form-data.",
+        "description": "Accepts only a PDF resume as multipart/form-data. Proposed 2026-11-15 (PRD §5.2): a readable PDF within the limits whose text cannot be extracted is still created with textStatus unavailable, and the client shows the AI warning; oversized, non-PDF, damaged, password-required and overlength files are rejected.",
         "operationId": "createResume",
         "requestBody": {
           "required": true,
@@ -1109,7 +1126,7 @@
               },
               "encoding": {
                 "file": {
-                  "contentType": "application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  "contentType": "application/pdf"
                 }
               }
             }
@@ -1191,11 +1208,21 @@
           "Resumes"
         ],
         "summary": "Delete a resume",
-        "description": "Deletes the resume and its stored file. Applications referencing this resume are preserved and their resumeId is set to null.",
+        "description": "Delete the owned resume and its stored file. Applications referencing it are preserved and their resumeId is set to null. The client confirms with the user first, showing how many applications currently use the resume. Text snapshots that AI conversations saved from it remain as read-only history and never make the file current, downloadable, or linkable again.",
         "operationId": "deleteResume",
         "responses": {
-          "204": {
-            "description": "Resume deleted; no response body."
+          "200": {
+            "description": "Resume deleted; reports how many applications were unlinked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeDeleteResult"
+                },
+                "example": {
+                  "unlinkedApplicationCount": 3
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -1234,12 +1261,6 @@
             },
             "content": {
               "application/pdf": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -1570,7 +1591,7 @@
         ],
         "operationId": "listAiGenerations",
         "summary": "List conversation generation attempts",
-        "description": "Read durable execution records for this conversation, including preparing, failed, and interrupted attempts. Use after reconnecting or losing the accepted event to inspect acceptance before resubmitting. It neither resumes a stream nor performs retry/deduplication.",
+        "description": "Read durable execution records for this conversation, including preparing, failed, and interrupted attempts. Use after reconnecting or losing the accepted event to inspect acceptance before resubmitting. It neither resumes a stream nor performs a retry; use retryAiGeneration for an eligible attempt.",
         "responses": {
           "200": {
             "description": "List conversation generation attempts.",
@@ -1605,7 +1626,7 @@
         ],
         "operationId": "createAiGeneration",
         "summary": "Send a message and stream a response",
-        "description": "Accept a new user input and create one preparing attempt atomically after authorization. Only one preparing/streaming attempt may exist per conversation; an active conflict returns 409 without saving the rejected input. Backend code (not a model tool call) reads every material in the backend registry from one database snapshot, fingerprints each one, compares the fingerprints with the conversation's baseline (the latest completed generation), reuses saved snapshots with the same fingerprint, and atomically saves new snapshots, one association per registered kind, and the baseline reference before answer generation. All current material content is supplied with version labels in every request independently of history compression, together with a change notice when a baseline exists and materials changed. The core model request defines no tools; only the optional website tool may be offered. Missing materials allow limited assistance. Only a completed generation advances the baseline. Website-tool records, if any, and final replies are persisted in this conversation; complete answers and completed status commit together. No model or network wait occurs inside a database transaction. Errors before stream establishment use JSON HTTP responses. Once the response begins, failures use generation.error where possible; a dropped connection may have no terminal event. Do not treat EOF as completion or automatically repeat POST: read the generation or attempt list to reconcile durable state. Stream resumption/replay and request-key deduplication are not guaranteed by this contract. Retry/fallback/partial-output choices remain explicitly open.",
+        "description": "Accept a new user input and create one preparing attempt atomically after authorization. Only one preparing/streaming attempt may exist per conversation; an active conflict returns 409 without saving the rejected input. Backend code (not a model tool call) reads every material in the backend registry from one database snapshot, fingerprints each one, compares the fingerprints with the conversation's baseline (the latest completed generation), reuses saved snapshots with the same fingerprint, and atomically saves new snapshots, one association per registered kind, and the baseline reference before answer generation. All current material content is supplied with version labels in every request independently of history compression, together with a change notice when a baseline exists and materials changed. The core model request defines no tools; only the optional website tool may be offered. Missing materials allow limited assistance. Only a completed generation advances the baseline. Website-tool records, if any, and final replies are persisted in this conversation; complete answers and completed status commit together. No model or network wait occurs inside a database transaction. Errors before stream establishment use JSON HTTP responses. Once the response begins, failures use generation.error where possible; a dropped connection may have no terminal event. If the client disconnects or the stream fails, the server aborts the model request, marks the attempt interrupted, and saves no partial output; only complete answers become messages. Do not treat EOF as completion or automatically repeat POST: read the generation or attempt list to reconcile durable state, then offer retry. There is no request-key deduplication or stream resumption: the frontend disables sending while a generation is active, and a concurrent send gets 409 GENERATION_ACTIVE without saving its input. A send after the previous answer completed is a new message. Retry follows retryAiGeneration (PRD FR-29).",
         "responses": {
           "200": {
             "$ref": "#/components/responses/AiGenerationStream"
@@ -1700,8 +1721,8 @@
           "AI Copilot"
         ],
         "operationId": "retryAiGeneration",
-        "summary": "Retry an interrupted or failed generation",
-        "description": "Proposed contract pending the retry decisions in PRD section 11 and Database Design section 5.7. Resolve the path attempt within its conversation and retain its original user input; create a new attempt with a new identity and recheck current materials. Preserve the previous attempt and its saved material snapshots; a failed or interrupted attempt never advanced the baseline, so the new attempt repeats any change notice. No request body or client replacement history is accepted. Reuse the generation SSE transport. Eligibility, duplicate retry requests, key scope/retention, and partial-output handling must be agreed before this route is exposed; this description does not declare those rules approved.",
+        "summary": "Retry the latest failed or interrupted generation",
+        "description": "Confirmed contract (PRD FR-29, Database Design section 5.7). Resolve the path attempt within its conversation. Retry is allowed only when the attempt's input is the conversation's latest user message and this attempt is that message's most recent attempt with status failed or interrupted; completed answers cannot be regenerated. Keep the original user message, create a new attempt with a new identity on the same input, and read current materials again. Preserve the previous attempt and its saved material snapshots as internal records; they are not shown as messages. A failed or interrupted attempt never advanced the baseline, so the new attempt repeats any change notice. No request body or client replacement history is accepted. Reuse the generation SSE transport; interruption and partial-output rules are the same as for createAiGeneration.",
         "responses": {
           "200": {
             "$ref": "#/components/responses/AiGenerationStream"
@@ -1722,23 +1743,34 @@
             "$ref": "#/components/responses/AiServiceUnavailable"
           },
           "409": {
-            "description": "The conversation has an active generation or the request is ineligible under the agreed retry policy; no new attempt is accepted.",
+            "description": "GENERATION_ACTIVE when the conversation already has an active generation; RETRY_CONFLICT when the path attempt is not eligible for retry. No new attempt is created.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 },
-                "example": {
-                  "error": {
-                    "code": "RETRY_CONFLICT",
-                    "message": "The conversation has an active generation or the request is ineligible under the agreed retry policy; no new attempt is accepted."
+                "examples": {
+                  "active": {
+                    "value": {
+                      "error": {
+                        "code": "GENERATION_ACTIVE",
+                        "message": "Another generation is active in this conversation. No new attempt is accepted."
+                      }
+                    }
+                  },
+                  "ineligible": {
+                    "value": {
+                      "error": {
+                        "code": "RETRY_CONFLICT",
+                        "message": "Only the latest user message's most recent failed or interrupted attempt can be retried."
+                      }
+                    }
                   }
                 }
               }
             }
           }
-        },
-        "x-design-status": "proposed-pending-retry-policy"
+        }
       }
     },
     "/api/v1/ai/conversations/{conversationId}/material-snapshots/{snapshotId}": {
@@ -2075,7 +2107,7 @@
           "file": {
             "type": "string",
             "format": "binary",
-            "description": "PDF or DOCX file."
+            "description": "PDF file only."
           }
         }
       },
@@ -2088,7 +2120,8 @@
           "fileName",
           "mimeType",
           "sizeBytes",
-          "createdAt"
+          "createdAt",
+          "textStatus"
         ],
         "properties": {
           "id": {
@@ -2105,8 +2138,7 @@
           "mimeType": {
             "type": "string",
             "enum": [
-              "application/pdf",
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              "application/pdf"
             ]
           },
           "sizeBytes": {
@@ -2117,6 +2149,15 @@
             "type": "string",
             "format": "date-time",
             "readOnly": true
+          },
+          "textStatus": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "readOnly": true,
+            "description": "Proposed 2026-11-15, pending team confirmation (PRD §5.2); bump the API version when adopted. available: extracted text is saved and AI features can use it. unavailable: the PDF was accepted (readable, at most 2 pages and 2 MiB) but has no usable text, for example a scanned resume; it can be viewed, downloaded and linked, but AI features cannot read it, and the UI shows a warning. Rejected uploads never produce a Resume."
           }
         }
       },
@@ -2991,7 +3032,7 @@
             "$ref": "#/components/schemas/AiRevision"
           }
         },
-        "description": "Current successful, non-deleted linked resume. No storage key or download credential is exposed."
+        "description": "Current successful, non-deleted linked resume. No storage key or download credential is exposed. Proposed 2026-11-15: a linked resume with textStatus unavailable supplies no text; the AI context reports it as linked but unreadable."
       },
       "AiWorkspace": {
         "type": "object",
@@ -3766,7 +3807,7 @@
             }
           }
         },
-        "description": "Full persisted history ordered by numeric sequenceNo ascending; decimal strings must not be sorted lexicographically. Compression never removes these records. In-flight text deltas are not proof of persisted messages; partial-output policy remains open. Pagination is not prescribed and history must not be silently truncated."
+        "description": "Full persisted history ordered by numeric sequenceNo ascending; decimal strings must not be sorted lexicographically. Compression never removes these records. In-flight text deltas are not proof of persisted messages; partial output is never persisted (PRD FR-29). Pagination is not prescribed and history must not be silently truncated."
       },
       "AiSendMessage": {
         "type": "object",
@@ -3960,7 +4001,7 @@
             "type": "boolean"
           }
         },
-        "description": "Terminal failure notification, not a success marker. statePersisted=false means the durable terminal state is unavailable or uncertain; query generation status before retrying. Error codes include MATERIAL_REFRESH_FAILED, CONTEXT_CAPACITY_EXCEEDED, GENERATION_FAILED, GENERATION_INTERRUPTED, and MESSAGE_PERSISTENCE_FAILED. This event does not select a refresh fallback or partial-output policy."
+        "description": "Terminal failure notification, not a success marker. statePersisted=false means the durable terminal state is unavailable or uncertain; query generation status before retrying. Error codes include MATERIAL_REFRESH_FAILED, CONTEXT_CAPACITY_EXCEEDED, GENERATION_FAILED, GENERATION_INTERRUPTED, and MESSAGE_PERSISTENCE_FAILED. After GENERATION_INTERRUPTED or GENERATION_FAILED no partial answer is saved; offer retry for the latest user message. This event does not select a refresh fallback."
       },
       "AiStreamEvent": {
         "oneOf": [
@@ -3988,6 +4029,20 @@
             "text.delta": "#/components/schemas/AiTextDeltaEvent",
             "generation.completed": "#/components/schemas/AiGenerationCompletedEvent",
             "generation.error": "#/components/schemas/AiGenerationErrorEvent"
+          }
+        }
+      },
+      "ResumeDeleteResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "unlinkedApplicationCount"
+        ],
+        "properties": {
+          "unlinkedApplicationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of the user's applications whose link to this resume was removed by this deletion."
           }
         }
       }
@@ -4040,7 +4095,7 @@
         }
       },
       "UnsupportedMediaType": {
-        "description": "Uploaded file type is not supported. Only PDF and DOCX are allowed.",
+        "description": "Uploaded file type is not supported. Only PDF is allowed.",
         "content": {
           "application/json": {
             "schema": {
@@ -4128,26 +4183,25 @@
   "x-ai-design": {
     "status": "proposed-contract-not-implementation-evidence",
     "requirements": [
-      "PRD.md 1.4: FR-02, FR-10 through FR-20, FR-25, FR-27 through FR-30, FR-34, FR-35",
+      "PRD.md 1.6: FR-02, FR-10 through FR-20, FR-25, FR-27 through FR-30, FR-34, FR-35",
       "AI_Design.md sections 1 through 7 (2026-11-11, fingerprint revision)",
-      "Database_Design.md 1.4 sections 5.6 through 5.10 and 7.4"
+      "Database_Design.md 1.6 sections 5.6 through 5.10 and 7.4"
     ],
     "authorization": "Resolve user -> application -> workspace -> conversation -> generation/snapshot on the server for every operation. A valid session and current verified email are mandatory. Return 404 for missing, inaccessible, or mismatched resource chains without disclosing another owner. Model arguments and client-supplied history cannot widen this boundary.",
     "context": "Every model request uses the fixed structure in AI Design section 4.2: system rules, all current base materials with version labels from the generation's fixed snapshots, a change notice when materials differ from the baseline, this conversation's usable compressed history, recent messages (annotated when based on superseded versions), and the current input exactly once. Base materials never depend on the history window. Only superseded or removed materials are historical-only. Summaries never replace base materials or delete full history.",
     "materialUpdates": "Application/resume operations own current materials; AI routes are read-only with respect to those sources and require no version counters from them. Backend code, not a model tool, fingerprints each registered material (identity plus exact content, or its known absence) and compares the fingerprints with the baseline (latest completed generation). Reuse snapshots with a matching fingerprint, save new ones otherwise, and freeze one snapshot per registered kind before generating. An edit that is reverted before the next turn is not a change. Only completion advances the baseline. Missing materials permit limited assistance; infrastructure read failures are distinct. Edits during generation apply to a later snapshot.",
     "streaming": "The documented SSE events are an application transport contract. Use an explicit adapter for the selected Vercel AI SDK integration; these event names are not claimed to be its native UI-message wire protocol.",
     "openDecisions": [
-      "Retry deduplication: request-key scope, payload mismatch, retention, and eligibility; the retry operation is a proposed contract and must not be exposed before these decisions are resolved.",
-      "Partial assistant-output persistence and transport-disconnection handling; do not infer that EOF cancels or completes a generation.",
       "Explicit refresh-error fallback; Database Design proposes visible failure and retry rather than stale-material generation.",
       "Model/provider, website-tool step limits (if implemented), timeouts, summary thresholds/window, and oversized-base-material handling; do not silently discard current materials.",
-      "Pagination/limits, conversation rename/delete, and application deletion/chat retention remain governed by PRD section 11."
+      "Pagination/limits and conversation rename/delete remain governed by PRD section 11; application deletion is a confirmed hard delete (PRD FR-22)."
     ],
     "integrationDependencies": [
       "The AI application selector is a read projection of existing applications, not a separate project store. It uses the six PRD statuses and literal case-insensitive company/position search. The older non-AI ApplicationStatus contract still requires separate alignment; do not reuse its incompatible enum or silently map legacy values.",
       "Company website URL and company notes are added to ApplicationFields to support editing the approved AI material sources. Other non-AI endpoint discrepancies are outside this AI contract revision.",
       "Use only a successfully parsed, non-deleted linked PDF as a current resume. Never trust the older upload contract as authorization to use an unsupported or unparsed file for AI.",
       "No public endpoint edits material snapshots or the baseline, runs compression directly, overwrites history, or exposes system prompts, leases, storage keys, or model credentials. Website reading remains optional; no separate mock-interview state machine or report API is introduced."
-    ]
+    ],
+    "retryAndInterruption": "Confirmed 2026-11-14 (PRD FR-29). Retry keeps the original user message, creates a new attempt, rereads materials, and is allowed only for the latest user message whose most recent attempt failed or was interrupted. No request-key deduplication: concurrent sends get 409 GENERATION_ACTIVE and are not saved. A client disconnect aborts generation, marks the attempt interrupted, and saves no partial output."
   }
 }

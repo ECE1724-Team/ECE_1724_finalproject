@@ -27,7 +27,7 @@ We will use a separate frontend and backend architecture, with a React client co
 - **Frontend:** React and TypeScript for pages and interactions; Tailwind CSS and shadcn/ui for responsive layouts and reusable components.  
 - **Backend:** Node.js, Express.js, and TypeScript for authentication, validation, business rules, file processing, and AI orchestration.  
 - **Database:** PostgreSQL, accessed through \`pg\` using parameterized SQL, with \`node-pg-migrate\` for versioned database migrations.  
-- **File storage and processing (Advanced Feature):** Private S3-compatible object storage for resume PDFs, with PDF validation and text extraction for AI use. Basic upload/download satisfies the core storage requirement; file processing is the advanced feature.  
+- **File storage and processing (Advanced Feature):** Private Cloudflare R2 object storage through its S3-compatible API for resume PDFs, with PDF validation and text extraction for AI use. Basic upload/download satisfies the core storage requirement; file processing is the advanced feature.
 - **AI integration (Advanced Feature):** Vercel AI SDK for an external LLM connection, backend-assembled context with per-turn material versioning, multi-turn conversations with history compression, and streamed responses. Bounded tool calling is reserved for optional company-website reading.  
 - **Authentication and authorization (Advanced Feature):** Authentication and session management using Better Auth with PostgreSQL-backed sessions and Secure, HttpOnly cookies. Protected resources will be secured through user authentication and ownership checks to ensure users can only access their own data.  
 - **API documentation:** An OpenAPI specification describing requests, responses, authentication, and errors.
@@ -100,7 +100,7 @@ The team will hold brief twice-weekly progress checks, communicate blockers prom
 
 - **Product Requirements Document:** Maintain the PRD and keep requirements aligned with the agreed project scope.  
 - **AI Frontend and Backend (Advanced Feature):** Own the AI workspace frontend and backend, using the Vercel AI SDK for model integration.  
-- **Cloud Storage and File Processing (Advanced Feature):** Integrate S3-compatible storage and PDF processing. Validate uploaded PDFs and make extracted text available to the AI through the associated database records.
+- **Cloud Storage and File Processing (Advanced Feature):** Integrate Cloudflare R2 through its S3-compatible API and implement PDF processing. Validate uploaded PDFs and make extracted text available to the AI through the associated database records.
 
 ## 4\. Initial Team Reasoning and AI-Assisted Exploration
 
@@ -109,6 +109,8 @@ The team will hold brief twice-weekly progress checks, communicate blockers prom
 **Problem framing:** We reviewed the course examples and drew on our own job-search experiences to develop the idea for JobFlow AI. We wanted to help users keep track of applications and prepare for interviews using the materials associated with each role. Our initial proposal combined the required full-stack functionality with authentication and authorization, resume storage and processing, and AI assistance. Authentication would identify users, while authorization would protect their records. File handling would support PDF resumes, and AI would provide resume advice and interview practice.
 
 **Initial technical hypothesis:** We initially favored separate React and Express applications so frontend and backend work could proceed in parallel. Some members were also more comfortable with backend development. We preferred PostgreSQL because we expected multiple users to update applications and save conversations concurrently. Following the course recommendation, we considered Better Auth to reduce the work involved in implementing authentication ourselves. We also planned to store PDF files in private S3-compatible object storage, with the provider still to be selected.
+
+**Storage decision (2026-11-15):** Cloudflare R2 was selected for private PDF storage, accessed through the backend using its S3-compatible API.
 
 **Open questions:** We had not yet settled how much the AI assistant should do. Tool calling, conversation memory, and the work needed to implement them required further investigation.
 
