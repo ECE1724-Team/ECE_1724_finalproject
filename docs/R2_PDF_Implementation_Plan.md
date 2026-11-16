@@ -3,7 +3,7 @@
 Prepared for Jianye Zhou on November 15, 2026, from the current local checkout.
 
 **Implementation update (November 15, 2026):** Source code and manual test entry
-points for Phases 1–3 are now present. See the [backend handoff](../backend/README.md)
+points for Phases 1–3 are now present. See the [backend handoff](../backend/README_jianye_part.md)
 for module interfaces, configuration, runtime choice, commands and remaining
 integration work. At the requester's direction, builds, typechecks, tests and live
 R2 verification were not executed. The completion criteria below therefore remain
