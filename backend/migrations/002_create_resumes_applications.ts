@@ -104,9 +104,18 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         "UNIQUE (id, user_id)"
     );
 
-    pgm.createIndex("resumes", "user_id", {
-        name: "resumes_user_id_idx",
-    });
+    // Support the user's resume library listing.
+    pgm.createIndex(
+        "resumes",
+        [
+            "user_id",
+            { name: "created_at", sort: "DESC" },
+            "id",
+        ],
+        {
+            name: "resumes_user_created_id_idx",
+        }
+    );
 
     // =========================================================
     // 2. RESUME VALIDATION
@@ -340,9 +349,33 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
          ON DELETE RESTRICT`
     );
 
-    pgm.createIndex("applications", "user_id", {
-        name: "applications_user_id_idx",
-    });
+    // Default application list: newest first.
+    pgm.createIndex(
+        "applications",
+        [
+            "user_id",
+            { name: "created_at", sort: "DESC" },
+            { name: "id", sort: "DESC" },
+        ],
+        {
+            name: "applications_user_created_id_idx",
+        }
+    );
+
+    // Filter applications and calculate status counts.
+    pgm.createIndex(
+        "applications",
+        ["user_id", "status"],
+        {
+            name: "applications_user_status_idx",
+        }
+    );
+
+    // Sort company names case-insensitively.
+    pgm.sql(`
+  CREATE INDEX applications_user_company_idx
+  ON applications (user_id, lower(company_name), id);
+`);
 
     pgm.createIndex("applications", "resume_id", {
         name: "applications_resume_id_idx",

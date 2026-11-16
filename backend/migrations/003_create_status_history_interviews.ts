@@ -146,20 +146,31 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         )`
     );
 
-    // Retrieve interviews for an application
-    pgm.createIndex("interviews", "application_id", {
-        name: "interviews_application_id_idx",
-    });
+    // List interviews belonging to a specific application.
+    // List interviews belonging to an application.
+    pgm.createIndex(
+        "interviews",
+        ["application_id", "starts_at", "id"],
+        {
+            name: "interviews_application_starts_id_idx",
+        }
+    );
 
-    // Support upcoming interview queries
-    pgm.createIndex("interviews", "starts_at", {
-        name: "interviews_starts_at_idx",
-    });
+    // Find upcoming interviews.
+    pgm.createIndex(
+        "interviews",
+        ["starts_at", "application_id"],
+        {
+            name: "interviews_starts_application_idx",
+        }
+    )
+
 }
+
+
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
     throw new Error(
         "Migration 003 rollback is blocked until schema is finalized."
     );
 }
-

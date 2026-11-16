@@ -117,11 +117,16 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     // =========================================================
 
     // Retrieve conversations by workspace and creation time.
+    // List conversations by most recent activity.
     pgm.createIndex(
         "conversations",
-        ["workspace_id", "created_at"],
+        [
+            "workspace_id",
+            { name: "updated_at", sort: "DESC" },
+            "id",
+        ],
         {
-            name: "conversations_workspace_created_idx",
+            name: "conversations_workspace_updated_idx",
         }
     );
 }
