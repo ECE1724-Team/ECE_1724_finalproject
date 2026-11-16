@@ -120,9 +120,11 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
         interview_name: {
             type: "text",
+            notNull: true,
         },
         starts_at: {
             type: "timestamptz",
+            notNull: true,
         },
         created_at: {
             type: "timestamptz",
@@ -141,9 +143,9 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         "interviews",
         "interviews_name_check",
         `CHECK (
-            interview_name IS NULL
-            OR length(btrim(interview_name)) > 0
-        )`
+        interview_name = btrim(interview_name)
+        AND char_length(interview_name) BETWEEN 1 AND 100
+    )`
     );
 
     // List interviews belonging to a specific application.
