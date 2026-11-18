@@ -17,7 +17,7 @@ The reading paths and supplements carry forward the relevant integration guidanc
 
 **Identity contract updated 2026-11-13:** the authoritative user key is **`public.auth_user.id UUID`**. Business owner columns use matching UUID foreign keys; HTTP/TypeScript IDs are UUID strings. The configuration, migration files and trusted-user interface are linked in [Appendix D](#shared-identity), [Appendix E](#auth-schema) and [Appendix F](#auth-integration-handoff). This records the selected project contract and current source implementation, not shared-database deployment or completed team review.
 
-**Current API snapshot:** GitHub `main` at commit `f136368` has `endpoints.json` version **1.7.0** and this revision includes its documented business/AI policies. The original §9 preserves the earlier 1.2.0 review. Read [Appendix A](#current-integration-status) before treating a historical gap as still outstanding. Product requirements continue to follow the original source precedence.
+**Current API snapshot:** GitHub `main` has `endpoints.json` version **1.9.0** and this revision includes its documented business/AI policies. The original §9 preserves the earlier 1.2.0 review. Read [Appendix A](#current-integration-status) before treating a historical gap as still outstanding. Product requirements continue to follow the original source precedence.
 
 **AI context revision (v1.3, 2026-11-11):** Following the requester's confirmation recorded in PRD 1.3, base materials are loaded by backend code on every turn rather than through model function calling. Material retrievals are now backend-saved snapshots linked to the generation that first saved them, `conversation_material_state` is removed, and a conversation's comparison baseline is derived from its latest completed generation. Message tool parts are reserved for the optional website tool. Snapshots of a deleted resume's text are retained as read-only history. `endpoints.json` 1.4.0 aligns the AI contract with these changes; see Appendix A.
 
@@ -28,6 +28,8 @@ The reading paths and supplements carry forward the relevant integration guidanc
 **Retry and interruption revision (v1.6, 2026-11-14):** The retry contract in §5.7 is confirmed. Only the latest user message can be retried, and only when its most recent attempt failed or was interrupted. There is no request-key deduplication, so `request_key` is removed. A client disconnect aborts the generation and no partial output is saved (PRD FR-29).
 
 **Crash recovery revision (v1.8, 2026-11-16):** The project runs a single backend instance. On startup, the backend marks every `preparing` or `streaming` run as `interrupted` before accepting requests, which replaces lease-based recovery. `lease_expires_at` and the lease rules are moved to a deferred subsection of §5.7. They are kept for a possible upgrade to multiple backend instances and are not enabled now.
+
+**Migration status revision (v1.11, 2026-11-17):** Business migration groups 002–005 are merged into `main` (§10). Group 006 is not yet written. The auth source files referenced in Appendices D–E are not yet in the repository; their links are replaced by plain paths.
 
 **Text-unavailable and owner-FK revision (v1.10, 2026-11-17):** The `text_unavailable` resume state (PRD §5.2) is confirmed and no longer proposed. Business owner FKs to `public.auth_user(id)` use `ON DELETE RESTRICT`; there is no account-deletion feature. Internal same-conversation FKs, including `generation_materials` → `generation_runs`, are `NO ACTION`, and `generation_materials` cascades from `conversations` directly (§7.5). `endpoints.json` 1.9.0 marks the `textStatus` contract confirmed. Rejected uploads no longer create a row, so `parse_status` has only `succeeded` and `text_unavailable` and `parse_error_code` is removed (§7.2).
 
@@ -716,17 +718,17 @@ The reviewed `endpoints.json` is version 1.2.0. Its authentication contract alre
 
 ## 10. Migration and Setup Plan
 
-The business groups below remain planned. Prerequisite A now has concrete auth migration files; the group labels are logical ordering, not the filenames or version numbers of future business migrations.
+Groups 002–005 are implemented in `backend/migrations` and merged into `main` (2026-11-17); 006 is still planned. Group labels are logical ordering; the filenames are listed in the Readiness column.
 
 | Order | Migration scope | Readiness |
 |---|---|---|
 | Prerequisite A | `20261111000100_auth_core.cjs` → `20261111000200_auth_credentials.cjs`; Better Auth schema, current-credential state and request limits | Files exist; authoritative user key is `public.auth_user.id UUID`; apply before dependent business FKs, as detailed in Appendix F |
-| 002 | Resumes, applications, composite ownership FK, row-version checks and list indexes | Core agreed structure |
-| 003 | Status history and individual interviews | Interview columns are NOT NULL with the §5.5 name CHECK (confirmed 2026-11-16) |
-| 004 | Unique workspace and independent conversations | Core agreed structure |
-| 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | Create both message/run tables before adding their mutual FKs; no request-key column or index; resolve the refresh-failure fallback before exposing that path |
-| 006 | Cleanup outbox and private-file lifecycle support | Core cleanup requirement; deployment parameters TBD |
-| 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 and add the deletion-path migration test; no extra filters or indexes | Policy confirmed 2026-11-13 (§7.5); can be folded into 002–005 |
+| 002 | Resumes, applications, composite ownership FK, row-version checks and list indexes | **Implemented:** `20261116000100_create_resumes_applications.ts` |
+| 003 | Status history and individual interviews | **Implemented:** `20261116000200_create_status_history_interviews.ts` |
+| 004 | Unique workspace and independent conversations | **Implemented:** `20261116000300_create_ai_workspaces_conversations.ts` |
+| 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | **Implemented:** `20261116000400_create_ai_persistence.ts`. Resolve the refresh-failure fallback before exposing that path |
+| 006 | Cleanup outbox and private-file lifecycle support | **Not yet written.** Needed before resume deletion and upload compensation (§7.2, §7.3); deployment parameters TBD |
+| 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 and add the deletion-path migration test; no extra filters or indexes | FK actions are folded into 002–005 and were checked by hand on an empty database; the automated deletion-path test is not yet written |
 
 Implementation procedure:
 
@@ -738,7 +740,7 @@ Implementation procedure:
 6. Commit migrations and schema/API updates together when dependent changes land. Never rewrite an already-applied shared migration; add a new migration.
 7. Data-destroying rollback on populated databases requires a separate backup/recovery decision. A `down` function is not evidence that user data can be restored.
 
-No production database, deployed storage bucket, or actual migration execution was inspected for this document.
+Migrations 002–005 were applied, rolled back and re-applied on an empty local database during review (2026-11-17). No shared or production database has been migrated.
 
 <a id="acceptance"></a>
 
@@ -810,15 +812,17 @@ Resolve these within their affected implementation areas. They do not block writ
 
 ## 13. Review Status and Revision Notes
 
-This document is ready for team design review, subject to the explicit open items in §12. It is not evidence of a deployed schema, running backend, successful migrations or passed acceptance checks.
+This document is ready for team design review, subject to the explicit open items in §12. Business migrations 002–005 implement §5; it is not evidence of a deployed schema, running backend or passed acceptance checks.
 
 Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. At those earlier revisions, retry and refresh-fallback mechanisms were tracked as proposals; the later confirmations are recorded below. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007. Version 1.6 confirms the retry contract with latest-message eligibility, removes `request_key` and request deduplication, and specifies abort-on-disconnect with no partial-output persistence; `endpoints.json` 1.7.0 carries the matching contract. Version 1.7 integrates the current authentication implementation: `public.auth_user.id UUID`, UUID owner FKs, the trusted user context, concrete auth migrations and the confirmed email/Session configuration. The business/AI rules from versions 1.3–1.6 remain in force. Version 1.8 replaces lease-based crash recovery with startup recovery for the single-instance deployment and keeps the lease design as a deferred, not-enabled subsection of §5.7 for a possible multi-instance upgrade.
+
+Version 1.11 records that migration groups 002–005 are merged and 006 is still pending, and marks the auth source files referenced in Appendices D–E as not yet in the repository.
 
 Version 1.10 confirms the `text_unavailable` resume state, records `ON DELETE RESTRICT` for business owner FKs on user-account deletion, aligns `generation_materials` with the §7.5 FK actions (direct cascade from `conversations`, `NO ACTION` to `generation_runs`), and stores only accepted uploads: rejected uploads create no row, `parse_status` is `succeeded` or `text_unavailable`, and `parse_error_code` is removed.
 
 Version 1.9 records the confirmed interview field rules: `interview_name` and `starts_at` are NOT NULL, the name is trimmed and limited to 100 characters, and no other interview columns or states are added.
 
-This revision changes documentation only. Business SQL examples and migration groups describe intended work; authentication sections reference existing source and migration files without reporting deployment or acceptance results.
+Business SQL examples in §8 describe intended work. Migration groups 002–005 exist as files; the authentication sections reference the two merged auth migrations and auth source files that are not yet in the repository.
 
 <a id="current-integration-status"></a>
 
@@ -924,6 +928,8 @@ Agree database service inputs/outputs and who opens/commits each transaction. Th
 
 ## Appendix D. Shared User Identity — Confirmed Contract
 
+**Repository status (2026-11-17):** only the two auth migrations are in this repository. The auth source files named in Appendices D–E (`backend/src/modules/auth/auth.ts`, `pg-adapter.ts`, `types.ts`, `backend/src/http/authorization.ts`, `backend/tests/helpers/auth-fixture.ts`) and `docs/Auth_Implementation.md` have not been merged, and `backend/src/app.ts` is still empty. Paths below give their expected locations; business routes cannot use `res.locals.auth` until that code lands.
+
 **Status: CONFIRMED project integration contract, synchronized 2026-11-13.** The current configuration and migrations fix the table and type below. This status records the selected contract; it does not assert team approval, a merged branch or migration execution in the shared environment.
 
 | Item | Contract / status |
@@ -936,7 +942,7 @@ Agree database service inputs/outputs and who opens/commits each transaction. Th
 | Trusted source | Backend authorization validates the Session and current email verification before providing identity to business modules |
 | Client input | Submitted user IDs, emails, verification flags, and model-supplied resource IDs are not authorization evidence |
 
-The implementation uses the same PostgreSQL database as business data, the `public` schema, and `auth_`-prefixed authentication tables. [Authentication configuration](../backend/src/modules/auth/auth.ts) maps the user model to `auth_user` and sets `advanced.database.generateId: "uuid"`; the [core migration](../backend/migrations/20261111000100_auth_core.cjs) defines `id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid()`. The physical UUID type follows those explicit definitions, not the API's string representation. Any future identity change must coordinate the auth schema, application code and dependent business FKs through new migrations.
+The implementation uses the same PostgreSQL database as business data, the `public` schema, and `auth_`-prefixed authentication tables. The authentication configuration (`backend/src/modules/auth/auth.ts`) maps the user model to `auth_user` and sets `advanced.database.generateId: "uuid"`; the [core migration](../backend/migrations/20261111000100_auth_core.cjs) defines `id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid()`. The physical UUID type follows those explicit definitions, not the API's string representation. Any future identity change must coordinate the auth schema, application code and dependent business FKs through new migrations.
 
 | Integration item | Current contract / responsibility |
 |---|---|
@@ -947,9 +953,9 @@ The implementation uses the same PostgreSQL database as business data, the `publ
 | HTTP / TypeScript IDs | UUID strings; application code treats them as opaque strings |
 | Authorization | Valid Session, currently verified email, and ownership of the requested resource |
 
-See [the current authentication schema](#auth-schema) and [implementation guide](Auth_Implementation.md) for fields, library mappings, and transaction requirements. UUID applies to row IDs and matching user FKs; Session tokens, provider identifiers and email credentials keep their existing text semantics.
+See [the current authentication schema](#auth-schema) and the implementation guide (`docs/Auth_Implementation.md`, not yet in the repository) for fields, library mappings, and transaction requirements. UUID applies to row IDs and matching user FKs; Session tokens, provider identifiers and email credentials keep their existing text semantics.
 
-The implemented [trusted context interface](../backend/src/modules/auth/types.ts) is:
+The planned trusted context interface (`backend/src/modules/auth/types.ts`) is:
 
 ```ts
 interface VerifiedAuthContext {
@@ -959,19 +965,19 @@ interface VerifiedAuthContext {
 }
 ```
 
-The implemented [authorization middleware](../backend/src/http/authorization.ts) exposes this context through `res.locals.auth` after `requireVerifiedUser(authentication)` succeeds. It constructs the context only after an authoritative Session read and current email-verification checks. `sessionId` identifies a Session record; it is not the Session token. Business reads/writes bind the trusted `userId`, for example in `WHERE id = $1 AND user_id = $2`, and still check resource ownership. Passwords and raw email credentials do not enter business tables or logs.
+The planned authorization middleware (`backend/src/http/authorization.ts`) exposes this context through `res.locals.auth` after `requireVerifiedUser(authentication)` succeeds. It constructs the context only after an authoritative Session read and current email-verification checks. `sessionId` identifies a Session record; it is not the Session token. Business reads/writes bind the trusted `userId`, for example in `WHERE id = $1 AND user_id = $2`, and still check resource ownership. Passwords and raw email credentials do not enter business tables or logs.
 
 For conversations and other indirect resources, derive ownership through conversation → workspace → application → user. Use email/name only as user attributes; changing either does not create a new owner identity. Frontend route guards and database FKs complement the backend checks without replacing them.
 
-The [application entry](../backend/src/app.ts) already applies `requireVerifiedUser` to `/api/v1`. `requireOwnedResource(database, kind, paramName)` supports application, resume, workspace and conversation ownership checks and must be mounted by the corresponding business routes. The production entry currently supplies no business router; the identity contract does not imply that business CRUD routes are implemented.
+The [application entry](../backend/src/app.ts) must apply `requireVerifiedUser` to `/api/v1`; it is currently empty. `requireOwnedResource(database, kind, paramName)` supports application, resume, workspace and conversation ownership checks and must be mounted by the corresponding business routes. The production entry currently supplies no business router; the identity contract does not imply that business CRUD routes are implemented.
 
-The physical table/key/type, trusted identity interface and auth migration files are now available. Rongxin coordinates dependent business migration order; Justin and Jianye consume the same API identity and server context. Follow the [backend setup guide](../backend/README.md) and [test fixtures](../backend/tests/helpers/auth-fixture.ts) when preparing isolated verified/unverified accounts. Auth-owned child FKs currently use `ON DELETE CASCADE`. Business owner FKs use `ON DELETE RESTRICT`, so a user with resumes or applications cannot be deleted at the database level; this adds no account-deletion feature. The confirmed application-to-child hard-delete cascades in §7.5 are a separate policy. Shared-environment execution and acceptance evidence remain separate integration work.
+The physical table/key/type and auth migration files are available; the trusted identity interface is specified above but its code is not yet merged. Rongxin coordinates dependent business migration order; Justin and Jianye consume the same API identity and server context. Follow the [backend setup guide](../backend/README.md) and test fixtures (`backend/tests/helpers/auth-fixture.ts`, not yet in the repository) when preparing isolated verified/unverified accounts. Auth-owned child FKs currently use `ON DELETE CASCADE`. Business owner FKs use `ON DELETE RESTRICT`, so a user with resumes or applications cannot be deleted at the database level; this adds no account-deletion feature. The confirmed application-to-child hard-delete cascades in §7.5 are a separate policy. Shared-environment execution and acceptance evidence remain separate integration work.
 
 <a id="auth-schema"></a>
 
 ## Appendix E. Authentication Database — Current Implementation
 
-**Status: IMPLEMENTED in source; shared identity contract CONFIRMED.** The auth owner maintains the two migration files linked in Appendix F. They use the same PostgreSQL database as business data, with `auth_` table prefixes in `public`, matching Better Auth and `@better-auth/core` 1.7.20, the project `pg` adapter and current configuration. The summaries below describe those files; they are not deployment or test evidence. The migration SQL is the complete DDL reference.
+**Status: migrations IMPLEMENTED; auth source code not yet in the repository (see Appendix D); shared identity contract CONFIRMED.** The auth owner maintains the two migration files linked in Appendix F. They use the same PostgreSQL database as business data, with `auth_` table prefixes in `public`, matching Better Auth and `@better-auth/core` 1.7.20, the project `pg` adapter and current configuration. The summaries below describe those files; they are not deployment or test evidence. The migration SQL is the complete DDL reference.
 
 ### E.1 Better Auth Core Tables
 
@@ -1001,7 +1007,7 @@ The current migrations preserve Better Auth camelCase columns, including `userId
 
 Do not add a competing password column to business tables. The generic verification table has no `user_id` or `purpose` columns; email verification uses signed links rather than ordinary rows there. The extra current-credential table below provides the project's user/purpose mapping. Future auth schema/plugin changes require coordinated migrations.
 
-The project-specific database contract is defined by the [core migration](../backend/migrations/20261111000100_auth_core.cjs), [configured adapter](../backend/src/modules/auth/pg-adapter.ts), [auth configuration](../backend/src/modules/auth/auth.ts) and [locked dependencies](../backend/package.json). Library defaults alone do not redefine this schema.
+The project-specific database contract is defined by the [core migration](../backend/migrations/20261111000100_auth_core.cjs), configured adapter (`backend/src/modules/auth/pg-adapter.ts`), auth configuration (`backend/src/modules/auth/auth.ts`) and [locked dependencies](../backend/package.json). Library defaults alone do not redefine this schema.
 
 ### E.2 Project Extension: `auth_credential_state`
 
@@ -1040,7 +1046,7 @@ All signup/automatic/manual verification sends, verification callbacks, reset re
 
 Use one consistent lock order across the participating auth writers, for example user → purpose state → native credential/Session operations. Serialize resend and use through the same state so that an old link cannot pass a check and mutate state after a replacement has taken effect.
 
-The project [Database transaction context](../backend/src/db/transaction.ts), [auth handler](../backend/src/modules/auth/auth.ts) and [pg adapter](../backend/src/modules/auth/pg-adapter.ts) share the actual PoolClient for custom checks and Better Auth writes. Opening `BEGIN` through a separate client and calling an auth API backed by another connection would not be atomic. Nested/query failures mark the transaction rollback-only even if a library catches the exception. Rollback evidence remains part of the acceptance checks.
+The project [Database transaction context](../backend/src/db/transaction.ts), auth handler (`backend/src/modules/auth/auth.ts`) and pg adapter (`backend/src/modules/auth/pg-adapter.ts`) share the actual PoolClient for custom checks and Better Auth writes. Opening `BEGIN` through a separate client and calling an auth API backed by another connection would not be atomic. Nested/query failures mark the transaction rollback-only even if a library catches the exception. Rollback evidence remains part of the acceptance checks.
 
 Preserve the existing cookie, error and redirect contracts. If wrapping a handler that signals a successful redirect through an exception, distinguish that successful control flow from a database failure when committing or rolling back.
 
