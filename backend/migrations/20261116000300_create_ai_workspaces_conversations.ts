@@ -1,35 +1,10 @@
-
 import type { MigrationBuilder } from "node-pg-migrate";
 
 /**
- * Migration 004: AI Workspaces and Conversations
- *
- * DRAFT ONLY — do not execute yet.
- *
- * Confirmed:
- * - Each application has at most one AI workspace.
- * - Each workspace can contain multiple conversations.
- * - Application hard deletion cascades to AI data.
- *
- * Pending:
- * - Final migration naming and execution order.
- * - Auth and business migration integration testing.
- * - Generation lifecycle and concurrency handling.
+ * AI workspaces and conversations. See Database_Design.md §5.6.
  */
 
 export async function up(pgm: MigrationBuilder): Promise<void> {
-    if (process.env.ENABLE_DRAFT_MIGRATION_004 !== "confirmed") {
-        throw new Error(
-            "Migration 004 is blocked until dependencies are finalized."
-        );
-    }
-
-    // =========================================================
-    // 1. AI WORKSPACES
-    // =========================================================
-
-    // Each application can have at most one AI workspace.
-    // Deleting an application deletes its workspace.
     pgm.createTable("ai_workspaces", {
         id: {
             type: "uuid",
@@ -49,19 +24,12 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
-    // Prevent multiple workspaces for the same application.
     pgm.addConstraint(
         "ai_workspaces",
         "ai_workspaces_application_unique",
         "UNIQUE (application_id)"
     );
 
-    // =========================================================
-    // 2. CONVERSATIONS
-    // =========================================================
-
-    // Each workspace may contain multiple conversations.
-    // Deleting a workspace deletes its conversations.
     pgm.createTable("conversations", {
         id: {
             type: "uuid",
@@ -94,30 +62,18 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
-    // =========================================================
-    // 3. CONVERSATION VALIDATION
-    // =========================================================
-
-    // Sequence numbers begin at 1.
     pgm.addConstraint(
         "conversations",
         "conversations_next_sequence_no_check",
         "CHECK (next_sequence_no >= 1)"
     );
 
-    // Optional titles must not contain only whitespace.
     pgm.addConstraint(
         "conversations",
         "conversations_title_check",
         "CHECK (title IS NULL OR length(btrim(title)) > 0)"
     );
 
-    // =========================================================
-    // 4. INDEXES
-    // =========================================================
-
-    // Retrieve conversations by workspace and creation time.
-    // List conversations by most recent activity.
     pgm.createIndex(
         "conversations",
         [
@@ -132,7 +88,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-    // Drop conversations before their parent workspaces.
     pgm.dropTable("conversations");
     pgm.dropTable("ai_workspaces");
 }
