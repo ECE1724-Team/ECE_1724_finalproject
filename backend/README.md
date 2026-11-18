@@ -68,7 +68,7 @@ await storage.putNew(key, bytes, { signal });
 
 - **Rejected** (`PdfError`): over 2 MiB, not a PDF, damaged, password-protected, more than 2 pages.
 - **Accepted, `textStatus: "available"`**: at least 100 non-whitespace characters and text on every page. `extraction.text` is what the AI uses.
-- **Accepted, `textStatus: "unavailable"`**: e.g. a scanned or image-only resume. Stored and linkable, but no text is saved and the UI shows an AI warning. This rule is still a proposal pending team confirmation (PRD §5.2, §11 item 6).
+- **Accepted, `textStatus: "unavailable"`**: e.g. a scanned or image-only resume. Stored and linkable, but no text is saved and the UI shows an AI warning. Confirmed 2026-11-17 (PRD §5.2); the database stores it as `parse_status = 'text_unavailable'`.
 
 Storage operations: `putNew` refuses to overwrite an existing key; `read` returns the
 whole file as `bytes` (or `null` if missing); `head` returns metadata (or `null`);

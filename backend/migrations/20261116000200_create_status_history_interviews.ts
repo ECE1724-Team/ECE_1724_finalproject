@@ -1,26 +1,10 @@
-
 import type { MigrationBuilder } from "node-pg-migrate";
 
 /**
- * Migration 003: Application Status History and Interviews
- *
- * DRAFT ONLY.
- *
- * Prerequisites:
- * 1. Migration 002 must be finalized and applied first.
- * 2. Confirm interview field validation with the backend team.
- *
- * Do not run this migration yet.
+ * Application status history and interviews. See Database_Design.md §5.4, §5.5.
  */
 
 export async function up(pgm: MigrationBuilder): Promise<void> {
-    if (process.env.ENABLE_DRAFT_MIGRATION_003 !== "confirmed") {
-        throw new Error(
-            "Migration 003 is blocked until its dependencies are finalized."
-        );
-    }
-
-    // 1. Application status history
     pgm.createTable("application_status_history", {
         id: {
             type: "uuid",
@@ -52,7 +36,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
-    // Status values must be valid
     pgm.addConstraint(
         "application_status_history",
         "status_history_old_status_check",
@@ -75,28 +58,24 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         )`
     );
 
-    // A status transition must actually change the status
     pgm.addConstraint(
         "application_status_history",
         "status_history_transition_check",
         "CHECK (old_status <> new_status)"
     );
 
-    // Sequence numbers must be positive
     pgm.addConstraint(
         "application_status_history",
         "status_history_sequence_check",
         "CHECK (sequence_no >= 1)"
     );
 
-    // Each application has a unique sequence of changes
     pgm.addConstraint(
         "application_status_history",
         "status_history_application_sequence_unique",
         "UNIQUE (application_id, sequence_no)"
     );
 
-    // Retrieve history in chronological sequence
     pgm.createIndex(
         "application_status_history",
         ["application_id", "changed_at"],
@@ -105,7 +84,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         }
     );
 
-    // 2. Interviews
     pgm.createTable("interviews", {
         id: {
             type: "uuid",
@@ -138,7 +116,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
-    // An interview name cannot contain only spaces
     pgm.addConstraint(
         "interviews",
         "interviews_name_check",
@@ -148,8 +125,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     )`
     );
 
-    // List interviews belonging to a specific application.
-    // List interviews belonging to an application.
     pgm.createIndex(
         "interviews",
         ["application_id", "starts_at", "id"],
@@ -158,20 +133,16 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         }
     );
 
-    // Find upcoming interviews.
     pgm.createIndex(
         "interviews",
         ["starts_at", "application_id"],
         {
             name: "interviews_starts_application_idx",
         }
-    )
-
+    );
 }
 
-
 export async function down(pgm: MigrationBuilder): Promise<void> {
-    // Drop tables created by Migration 003.
     pgm.dropTable("interviews");
     pgm.dropTable("application_status_history");
 }

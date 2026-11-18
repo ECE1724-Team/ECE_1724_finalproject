@@ -1,33 +1,10 @@
-
 import type { MigrationBuilder } from "node-pg-migrate";
 
 /**
- * Migration 002: Resumes and Applications
- *
- * DRAFT ONLY — do not execute yet.
- *
- * Confirmed:
- * - Auth identity: public.auth_user.id UUID
- * - Resumes and applications belong to a user
- * - Resume deletion unlinks applications first
- * - Application deletion does not delete library resumes
- *
- * Pending:
- * - Final approval of text_unavailable DB status
- * - Auth migration availability and execution order
+ * Resumes and applications. See Database_Design.md §5.2, §5.3.
  */
 
 export async function up(pgm: MigrationBuilder): Promise<void> {
-    if (process.env.ENABLE_DRAFT_MIGRATION_002 !== "confirmed") {
-        throw new Error(
-            "Migration 002 is blocked until dependencies are finalized."
-        );
-    }
-
-    // =========================================================
-    // 1. RESUMES
-    // =========================================================
-
     pgm.createTable("resumes", {
         id: {
             type: "uuid",
@@ -71,10 +48,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         parse_status: {
             type: "text",
             notNull: true,
-            default: "pending",
-        },
-        parse_error_code: {
-            type: "text",
         },
         content_version: {
             type: "bigint",
@@ -96,14 +69,13 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
-    // Same-owner resume references.
+    // Target of the applications (resume_id, user_id) FK.
     pgm.addConstraint(
         "resumes",
         "resumes_id_user_id_unique",
         "UNIQUE (id, user_id)"
     );
 
-    // Support the user's resume library listing.
     pgm.createIndex(
         "resumes",
         [
@@ -116,44 +88,29 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         }
     );
 
-    // =========================================================
-    // 2. RESUME VALIDATION
-    // =========================================================
-
     pgm.addConstraint(
         "resumes",
         "resumes_mime_type_check",
         "CHECK (mime_type = 'application/pdf')"
     );
 
-    // Maximum accepted PDF size: 2 MiB.
     pgm.addConstraint(
         "resumes",
         "resumes_size_bytes_check",
         "CHECK (size_bytes BETWEEN 1 AND 2097152)"
     );
 
-    // Accepted PDFs must contain 1 or 2 pages.
-    // Pending and failed rows may not yet have a page count.
     pgm.addConstraint(
         "resumes",
         "resumes_page_count_check",
         "CHECK (page_count IS NULL OR page_count BETWEEN 1 AND 2)"
     );
 
-    // text_unavailable is proposed, pending team approval.
+    // Rejected uploads create no row, so there is no pending or failed state.
     pgm.addConstraint(
         "resumes",
         "resumes_parse_status_check",
-        `CHECK (
-            parse_status IN (
-                'pending',
-                'processing',
-                'succeeded',
-                'text_unavailable',
-                'failed'
-            )
-        )`
+        "CHECK (parse_status IN ('succeeded', 'text_unavailable'))"
     );
 
     pgm.addConstraint(
@@ -183,18 +140,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         )`
     );
 
-    // =========================================================
-    // 3. SUCCESSFUL PDF EXTRACTION
-    // =========================================================
-
-    // Live succeeded rows require:
-    // - a private storage object
-    // - a valid page count
-    // - extracted text
-    // - at least 100 non-whitespace characters
-    //
-    // Per-page text validation is performed by pdf-policy.ts.
-    // Deleted rows may have extracted text cleared.
+    // Deleted rows are exempt so their text can be cleared (§7.3).
+    // The per-page text rule is enforced in pdf-policy.ts.
 
     pgm.addConstraint(
         "resumes",
@@ -214,25 +161,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         )`
     );
 
-    // =========================================================
-    // 4. PDF WITH UNAVAILABLE TEXT
-    // =========================================================
-
-    // Proposed behavior:
-    //
-    // A PDF may be valid and stored successfully even when
-    // its extracted text cannot be used by AI.
-    //
-    // Live text_unavailable rows require:
-    // - a stored private object
-    // - 1 or 2 pages
-    // - no extracted text
-    // - no parse error code
-    //
-    // non_whitespace_chars may retain the measured count.
-    //
-    // This state is not equivalent to a failed upload.
-
     pgm.addConstraint(
         "resumes",
         "resumes_text_unavailable_check",
@@ -245,21 +173,15 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
                 AND page_count IS NOT NULL
                 AND page_count BETWEEN 1 AND 2
                 AND extracted_text IS NULL
-                AND parse_error_code IS NULL
             )
         )`
     );
 
-    // Each stored object key must be unique.
     pgm.createIndex("resumes", "object_key", {
         name: "resumes_object_key_unique_idx",
         unique: true,
         where: "object_key IS NOT NULL",
     });
-
-    // =========================================================
-    // 5. APPLICATIONS
-    // =========================================================
 
     pgm.createTable("applications", {
         id: {
@@ -329,16 +251,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         },
     });
 
-    // =========================================================
-    // 6. APPLICATION -> RESUME OWNERSHIP
-    // =========================================================
-
-    // A user can link only their own resume.
-    //
-    // Backend must first set resume_id = NULL on all
-    // referencing applications before deleting the resume.
-    //
-    // Deleting an application never deletes its resume.
+    // The backend unlinks applications before deleting a resume (§7.3).
 
     pgm.addConstraint(
         "applications",
@@ -348,7 +261,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
          ON DELETE RESTRICT`
     );
 
-    // Default application list: newest first.
     pgm.createIndex(
         "applications",
         [
@@ -361,7 +273,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         }
     );
 
-    // Filter applications and calculate status counts.
     pgm.createIndex(
         "applications",
         ["user_id", "status"],
@@ -370,7 +281,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         }
     );
 
-    // Sort company names case-insensitively.
     pgm.sql(`
   CREATE INDEX applications_user_company_idx
   ON applications (user_id, lower(company_name), id);
@@ -379,10 +289,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     pgm.createIndex("applications", "resume_id", {
         name: "applications_resume_id_idx",
     });
-
-    // =========================================================
-    // 7. APPLICATION VALIDATION
-    // =========================================================
 
     pgm.addConstraint(
         "applications",
@@ -419,8 +325,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-    // Drop applications before resumes because applications
-    // references resumes through resume_id.
     pgm.dropTable("applications");
     pgm.dropTable("resumes");
 }

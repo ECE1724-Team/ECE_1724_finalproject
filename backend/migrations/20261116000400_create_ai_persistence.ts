@@ -1,43 +1,14 @@
-
 import type { MigrationBuilder } from "node-pg-migrate";
 
 /**
- * Migration 005: AI Persistence
+ * AI persistence. See Database_Design.md §5.7–5.10.
  *
- * DRAFT ONLY — do not execute yet.
- *
- * Based on Database_Design.md sections 5.7–5.10.
- *
- * Requires:
- * - Migration 004: conversations
- *
- * Creates:
- * - generation_runs
- * - messages
- * - material_snapshots
- * - generation_materials
- * - conversation_summaries
- *
- * Does not implement:
- * - AI generation runtime logic
- * - Startup interruption recovery
- * - Material registry validation
- * - Multi-instance lease recovery
+ * Composite (id, conversation_id) FKs keep every reference inside one
+ * conversation. Those internal FKs are NO ACTION, so they are checked after
+ * a conversation delete has cascaded through all of these tables (§7.5).
  */
 
 export async function up(pgm: MigrationBuilder): Promise<void> {
-    if (process.env.ENABLE_DRAFT_MIGRATION_005 !== "confirmed") {
-        throw new Error(
-            "Migration 005 is blocked until dependencies are finalized."
-        );
-    }
-
-
-
-    // =========================================================
-    // 1. GENERATION RUNS
-    // =========================================================
-
     pgm.createTable("generation_runs", {
         id: {
             type: "uuid",
@@ -125,7 +96,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         "UNIQUE (id, conversation_id)"
     );
 
-    // Only one active generation per conversation.
     pgm.createIndex("generation_runs", "conversation_id", {
         name: "generation_runs_one_active_idx",
         unique: true,
@@ -151,17 +121,12 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         }
     );
 
-    // Baseline must belong to the same conversation.
     pgm.sql(`
         ALTER TABLE generation_runs
         ADD CONSTRAINT generation_runs_baseline_fk
         FOREIGN KEY (baseline_generation_id, conversation_id)
         REFERENCES generation_runs (id, conversation_id);
     `);
-
-    // =========================================================
-    // 2. MESSAGES
-    // =========================================================
 
     pgm.createTable("messages", {
         id: {
@@ -234,17 +199,13 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         REFERENCES generation_runs (id, conversation_id);
     `);
 
-    // Add the reverse FK after messages exists.
+    // generation_runs and messages reference each other; add this FK once both exist.
     pgm.sql(`
         ALTER TABLE generation_runs
         ADD CONSTRAINT generation_runs_input_message_fk
         FOREIGN KEY (input_message_id, conversation_id)
         REFERENCES messages (id, conversation_id);
     `);
-
-    // =========================================================
-    // 3. MATERIAL SNAPSHOTS
-    // =========================================================
 
     pgm.createTable("material_snapshots", {
         id: {
@@ -334,12 +295,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         REFERENCES generation_runs (id, conversation_id);
     `);
 
-    // source_resume_id deliberately has no FK.
-    // Historical snapshots survive resume deletion.
-
-    // =========================================================
-    // 4. GENERATION MATERIALS
-    // =========================================================
+    // source_resume_id has no FK: snapshots outlive resume deletion.
 
     pgm.createTable("generation_materials", {
         generation_id: {
@@ -349,6 +305,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         conversation_id: {
             type: "uuid",
             notNull: true,
+            references: "conversations(id)",
+            onDelete: "CASCADE",
         },
         kind: {
             type: "text",
@@ -376,8 +334,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         ALTER TABLE generation_materials
         ADD CONSTRAINT generation_materials_generation_fk
         FOREIGN KEY (generation_id, conversation_id)
-        REFERENCES generation_runs (id, conversation_id)
-        ON DELETE CASCADE;
+        REFERENCES generation_runs (id, conversation_id);
     `);
 
     pgm.sql(`
@@ -386,10 +343,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
         FOREIGN KEY (snapshot_id, conversation_id, kind)
         REFERENCES material_snapshots (id, conversation_id, kind);
     `);
-
-    // =========================================================
-    // 5. CONVERSATION SUMMARIES
-    // =========================================================
 
     pgm.createTable("conversation_summaries", {
         id: {
@@ -448,19 +401,16 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-    // Drop dependent tables first.
     pgm.dropTable("conversation_summaries");
     pgm.dropTable("generation_materials");
     pgm.dropTable("material_snapshots");
 
-    // Break the circular FK dependency between
-    // generation_runs and messages.
+    // Break the generation_runs <-> messages cycle before dropping the tables.
     pgm.dropConstraint(
         "generation_runs",
         "generation_runs_input_message_fk"
     );
 
-    // Drop the remaining tables in dependency order.
     pgm.dropTable("messages");
     pgm.dropTable("generation_runs");
 }
