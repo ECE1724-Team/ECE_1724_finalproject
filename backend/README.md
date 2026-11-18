@@ -75,6 +75,37 @@ transaction commit and rollback from a separate connection.
 6. `20261116000400_create_ai_persistence.ts`
 7. `20261118000700_create_storage_cleanup_jobs.ts` (migration 006)
 
+## Application and interview repositories
+
+Import `createPostgresApplicationRepository`, `createPostgresApplicationStatusHistoryRepository`,
+and `createPostgresInterviewRepository` from `./modules/applications/postgres-repository.js`
+in backend entry points. Their signatures are in
+[`repository.ts`](src/modules/applications/repository.ts). Pass the trusted user's ID.
+The caller supplies UUIDs when creating applications and interviews.
+
+- `applications.insert(db, input)` returns `OK` with the row or `RESUME_INELIGIBLE`.
+- `applications.get(db, userId, id)` returns an owned row or `null`.
+- `applications.update(db, userId, id, expectedRowVersion, changes)` returns `OK` with
+  the row, `NOT_FOUND`, `RESUME_INELIGIBLE`, or `VERSION_CONFLICT`. For example, an
+  update from version `"3"` that changes `status` returns version `"4"`. Reusing `"3"`
+  returns `VERSION_CONFLICT`. Saving identical values returns the current row unchanged.
+  Omit patch fields to retain them and pass `null` to clear nullable fields. In these
+  internal calls, `appliedDate` is `YYYY-MM-DD` and `rowVersion` is a decimal string.
+- `history.list(db, userId, applicationId)` returns actual transitions ordered by
+  ascending `sequenceNo`, also a decimal string. Creation starts with an empty history.
+- `interviews` supports insert, list, get, update, and delete. Single-round operations
+  use both the application and interview IDs. List order is `startsAt`, then `id`.
+  For an atomic application and interview save, pass the same transaction client to both.
+- `applications.delete(pool, userId, id)` returns `DELETED`, `NOT_FOUND`, or
+  `GENERATION_ACTIVE`, which can map to HTTP 204, 404, or 409 respectively.
+
+Resume-link changes take resume locks in ID order before locking the application.
+Application deletion locks the application, then its workspace, then its conversations
+in ID order. Generation acceptance must lock its conversation before inserting the
+input and run. Conversation creation uses the workspace FK, and workspace creation
+uses the application FK. `npm run test:db` exercises these locks with real PostgreSQL
+and checks the complete application cascade against a saved conversation graph.
+
 ## Resume storage and PDF parsing (R2 / PDF)
 
 Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_PLAN.md)).

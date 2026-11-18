@@ -744,7 +744,7 @@ Groups 002–006 are implemented in `backend/migrations`. The group numbers indi
 | 004 | Unique workspace and independent conversations | **Implemented:** `20261116000300_create_ai_workspaces_conversations.ts` |
 | 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | **Implemented:** `20261116000400_create_ai_persistence.ts`. Resolve the refresh-failure fallback before exposing that path |
 | 006 | Cleanup outbox and private-file lifecycle support | **Implemented:** `20261118000700_create_storage_cleanup_jobs.ts`. See §5.11 for the queue contract and the [backend README](../backend/README.md#postgresql-setup-and-tests) for migration verification. |
-| 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 and add the deletion-path migration test; no extra filters or indexes | FK actions are folded into 002–005 and were checked by hand on an empty database; the automated deletion-path test is not yet written |
+| 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 | The application repository and [PostgreSQL deletion tests](../backend/tests/integration/application-deletion.db.test.ts) exercise the existing FK actions and the application → workspace → conversation lock order. |
 
 Implementation procedure:
 
