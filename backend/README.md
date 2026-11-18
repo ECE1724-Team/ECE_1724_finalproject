@@ -24,8 +24,9 @@ cp .env.example .env   # only if you don't have a .env yet
 
 ## Resume storage and PDF parsing (R2 / PDF)
 
-Owner: Jianye Zhou. Design and remaining work: [implementation plan](../docs/R2_PDF_Implementation_Plan.md);
-file rules: [PRD §5.2](../docs/PRD.md).
+Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_PLAN.md)).
+File rules: [PRD §5.2](../docs/PRD.md). Upload and delete transactions:
+[Database Design §7.2–7.3](../docs/Database_Design.md).
 
 **Status:** the R2 adapter, PDF extraction and resume acceptance rules are done and
 unit-tested. Not done yet: HTTP routes, auth checks, database records, receiving
@@ -86,6 +87,28 @@ A storage `timeout` does not prove the write failed, so don't delete or overwrit
 
 Limits are constants in code: R2 timeout 30 s (`r2.ts`), PDF parse timeout 15 s,
 2 parses at a time and 256 MB worker heap (`extractor.ts`).
+
+### Rules for the resume API routes
+
+Whoever writes the resume routes, please keep these:
+
+- Check the session and verified email **before** reading the upload body, then stop
+  reading at 2 MiB. Never take the user ID or a storage key from the request.
+- Upload is synchronous: return `201` only after the file is in R2 and the database row
+  is saved. If the row insert fails, delete the R2 object (or queue cleanup).
+- If you can't tell whether the database commit succeeded, re-read the row before
+  deleting anything; deleting the object blindly can destroy a saved resume.
+- File responses: `Content-Type: application/pdf`, `Cache-Control: private, no-store`,
+  and a sanitized filename in `Content-Disposition`. Abort the R2 read when the client
+  disconnects.
+- Preview: the frontend fetches the normal file endpoint with its session and shows it
+  through a Blob URL (revoked when the viewer closes), so no extra preview route is needed.
+- Linking a resume to an application is done through the application update, which is a
+  **full replacement**: sending only `resumeId` would clear the other fields. The
+  resume must belong to the same user, not be deleted, and be `succeeded` or
+  `text_unavailable`.
+- Deleted files are removed from R2 only by the cleanup worker after the delete
+  transaction commits. Never use a bucket lifecycle rule to expire resume objects.
 
 ### Known gaps
 
