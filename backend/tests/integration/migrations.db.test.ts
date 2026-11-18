@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer, type AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import type { Pool } from "pg";
 import { withTransaction } from "../../src/db/transaction.js";
 import { insertTestOwners, withTestDatabase } from "../helpers/database.js";
+
+const exec = promisify(execFile);
 
 const migrationNames = [
   "20261111000100_auth_core",
@@ -127,6 +136,54 @@ test("the migrations share one history and reproduce the schema after up, up, do
     assert.deepEqual(await readCatalog(pool), catalog);
   });
 });
+
+test("npm run migrate uses only the validated DATABASE_URL to select its database", () => withTestDatabase(async ({ pool, url }) => {
+  const cwd = await mkdtemp(join(tmpdir(), "jobflow-migrate-"));
+  let connections = 0;
+  const fallback = createServer((socket) => {
+    connections++;
+    socket.destroy();
+  });
+
+  try {
+    // Exercise the package script in a directory with its own .env.
+    for (const entry of ["package.json", "node_modules", "scripts", "migrations"]) {
+      await symlink(resolve(entry), join(cwd, entry));
+    }
+    fallback.listen(0, "127.0.0.1");
+    await once(fallback, "listening");
+    const { port } = fallback.address() as AddressInfo;
+    const env = { ...process.env };
+    delete env.DATABASE_URL;
+    const fallbackEnv = { ...env, PGHOST: "127.0.0.1", PGPORT: String(port), PGUSER: "fallback", PGDATABASE: "fallback",
+      JOBFLOW_TEST_UNUSED_DATABASE_URL: "" };
+    const run = (env: NodeJS.ProcessEnv, ...args: string[]) =>
+      exec("npm", ["run", "migrate", "--", ...args], { cwd, env, timeout: 30_000 });
+    const envPath = join(cwd, ".env");
+    const rejectedUrls = [
+      ["PGAPPNAME=jobflow_migration_test", /DATABASE_URL is not configured/],
+      ['DATABASE_URL="  "', /DATABASE_URL is not configured/],
+      ["DATABASE_URL=https://example.test/db", /DATABASE_URL must be a PostgreSQL connection URL/],
+      ["DATABASE_URL=postgresql://127.0.0.1", /DATABASE_URL must name the PostgreSQL database/],
+    ] as const;
+    for (const [contents, message] of rejectedUrls) {
+      await writeFile(envPath, `${contents}\n`);
+      await assert.rejects(run(fallbackEnv), { code: 1, stderr: message });
+    }
+    await writeFile(envPath, `DATABASE_URL="${url}"\n`);
+    await assert.rejects(run(fallbackEnv, "--database-url-var", "JOBFLOW_TEST_UNUSED_DATABASE_URL"),
+      { code: 1, stderr: /Unknown option/ });
+    assert.equal(connections, 0);
+    assert.deepEqual(tableNames(await readCatalog(pool)), []);
+
+    await run(env);
+    assert.deepEqual((await migrationHistory(pool)).map(({ name }) => name), migrationNames);
+    assert.equal(connections, 0);
+  } finally {
+    if (fallback.listening) await promisify(fallback.close).call(fallback);
+    await rm(cwd, { recursive: true, force: true });
+  }
+}));
 
 test("PostgreSQL persists a committed write and removes a failed callback's first write", async () => {
   await withTestDatabase(async ({ pool, migrate }) => {

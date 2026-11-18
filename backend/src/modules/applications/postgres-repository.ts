@@ -54,7 +54,7 @@ async function lockResumeSelection(client: PoolClient, userId: string, oldId: st
 }
 
 export function createPostgresApplicationRepository(): ApplicationRepository {
-  return {
+  const repository: ApplicationRepository = {
     insert(db, application) {
       return inTransaction(db, async (client) => {
         const resumeId = application.resumeId?.toLowerCase() ?? null;
@@ -177,6 +177,15 @@ export function createPostgresApplicationRepository(): ApplicationRepository {
       });
     },
 
+    updateWithInterviews(pool, userId, id, expectedRowVersion, changes, saveInterviews) {
+      return withTransaction(pool, async (client) => {
+        // Interview inserts lock the parent application. Let update take the resume locks first.
+        const result = await repository.update(client, userId, id, expectedRowVersion, changes);
+        if (result.outcome === "OK") await saveInterviews(client);
+        return result;
+      });
+    },
+
     async delete(pool, userId, id) {
       try {
         return await withTransaction(pool, async (client) => {
@@ -211,6 +220,7 @@ export function createPostgresApplicationRepository(): ApplicationRepository {
       }
     },
   };
+  return repository;
 }
 
 export function createPostgresApplicationStatusHistoryRepository(): ApplicationStatusHistoryRepository {

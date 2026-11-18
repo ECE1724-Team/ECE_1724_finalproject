@@ -9,6 +9,7 @@ const migrationCli = require.resolve("node-pg-migrate/bin/node-pg-migrate");
 
 interface TestDatabase {
   pool: Pool;
+  url: string;
   migrate: (command?: { down: number }) => Promise<void>;
 }
 
@@ -36,6 +37,7 @@ export async function withTestDatabase(run: (database: TestDatabase) => Promise<
       try {
         await run({
           pool,
+          url: targetUrl,
           async migrate(command) {
             const args = command ? ["down", String(command.down)] : ["up"];
             await exec(process.execPath, [migrationCli, ...args, "--no-verbose"], {

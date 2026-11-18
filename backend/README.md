@@ -34,11 +34,12 @@ createdb jobflow_dev
 DATABASE_URL=postgresql://localhost:5432/jobflow_dev npm run migrate
 ```
 
-The script runs `node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js up --no-verbose`.
-An exported `DATABASE_URL` takes precedence over `.env`. The locked `node-pg-migrate`
-CLI loads the CommonJS and TypeScript files directly from `migrations/` and records
-them together in `public.pgmigrations`. Running `npm run migrate` again applies only
-pending files. `npm run build` compiles `src/`.
+The script loads `.env` and passes the validated PostgreSQL `DATABASE_URL` directly
+to `node-pg-migrate`. The URL must name the target database. An exported
+`DATABASE_URL` takes precedence over `.env`. The runner loads the CommonJS and TypeScript
+files from `migrations/` and records them together in `public.pgmigrations`. Running
+`npm run migrate` again applies only pending files. Use `npm run migrate -- --dry-run`
+to list the migrations that would run. `npm run build` compiles `src/`.
 
 Set `TEST_DATABASE_URL` in `.env` or export it when running `npm run test:db`. Use a local
 PostgreSQL test database and a role with `CREATEDB`. For example, if your local role
@@ -102,7 +103,9 @@ The caller supplies UUIDs when creating applications and interviews.
   ascending `sequenceNo`, also a decimal string. Creation starts with an empty history.
 - `interviews` supports insert, list, get, update, and delete. Single-round operations
   use both the application and interview IDs. List order is `startsAt`, then `id`.
-  For an atomic application and interview save, pass the same transaction client to both.
+  Use `applications.updateWithInterviews` to update an application and save its
+  interviews atomically. It updates the application and its resume link first.
+  Use the supplied transaction client for each interview write and throw if a write fails.
 - `applications.delete(pool, userId, id)` returns `DELETED`, `NOT_FOUND`, or
   `GENERATION_ACTIVE`, which can map to HTTP 204, 404, or 409 respectively.
 

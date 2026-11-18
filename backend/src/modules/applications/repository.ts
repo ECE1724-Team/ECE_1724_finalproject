@@ -62,6 +62,9 @@ export interface ApplicationRepository {
   /** Pass the current rowVersion when available. A concurrent resume relink can also conflict. */
   update(db: Db, userId: string, id: string, expectedRowVersion: string | undefined,
     changes: ApplicationUpdate): Promise<ApplicationUpdateResult>;
+  /** Use for a combined save. Interview writes run on the same client after a successful update. Throw to roll back. */
+  updateWithInterviews(pool: Pool, userId: string, id: string, expectedRowVersion: string | undefined,
+    changes: ApplicationUpdate, saveInterviews: (client: PoolClient) => Promise<void>): Promise<ApplicationUpdateResult>;
   delete(pool: Pool, userId: string, id: string): Promise<ApplicationDeleteResult>;
 }
 

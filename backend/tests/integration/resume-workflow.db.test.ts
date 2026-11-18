@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Pool } from "pg";
+import { withTransaction } from "../../src/db/transaction.js";
 import { StorageError } from "../../src/integrations/object-storage/types.js";
+import { ServiceUnavailableError } from "../../src/modules/resumes/errors.js";
 import { createPostgresResumeModule } from "../../src/modules/resumes/postgres-module.js";
 import { FakeStorage, collectLogs, extraction, fakeExtractor, pdfBytes } from "../fakes/resumes.js";
 import { insertTestOwners, withTestDatabase } from "../helpers/database.js";
+import { waitForBlockedQuery, withLockHolder } from "../helpers/lock-race.js";
 
 test("the PostgreSQL resume module uploads, unlinks, and retries private object cleanup after restart", () =>
   withTestDatabase(async ({ pool, migrate }) => {
@@ -75,5 +79,39 @@ test("the PostgreSQL resume module uploads, unlinks, and retries private object 
         [`delete ${shared.objectKey}`, `delete ${shared.objectKey}`]);
     } finally {
       reader.release();
+    }
+  }));
+
+test("a resume whose INSERT commits after a client timeout can still be downloaded", () =>
+  withTestDatabase(async ({ pool, url, migrate }) => {
+    await migrate();
+    const { first: { id: userId } } = await insertTestOwners(pool);
+    const uploadPool = new Pool({ connectionString: url, query_timeout: 500 });
+    const storage = new FakeStorage();
+    const logs = collectLogs();
+    const pdf = fakeExtractor(extraction());
+    const { service } = createPostgresResumeModule({ pool: uploadPool, storage, pdf, log: logs.log });
+    const bytes = pdfBytes();
+
+    try {
+      await withLockHolder(pool, async (holder, pid, start) => {
+        // Block INSERT while leaving the recovery SELECT free to see an empty table.
+        await holder.query("LOCK TABLE public.resumes IN SHARE MODE");
+        const upload = start(assert.rejects(service.upload({ userId, name: "Late resume", fileName: "cv.pdf", bytes }),
+          ServiceUnavailableError));
+        await waitForBlockedQuery(pool, pid, "INSERT INTO public.resumes");
+        await upload;
+        assert.deepEqual(await service.list(userId), []);
+      });
+
+      // Wait for the original INSERT to release its table lock at commit.
+      await withTransaction(pool, (client) => client.query("LOCK TABLE public.resumes IN SHARE MODE"));
+      const [saved] = await service.list(userId);
+      assert.ok(saved);
+      assert.deepEqual(await service.download(userId, saved.id), { resume: saved, bytes: new Uint8Array(bytes) });
+      assert.deepEqual(storage.calls, [`put ${saved.objectKey}`, `read ${saved.objectKey}`]);
+      assert.deepEqual((await pool.query("SELECT id FROM public.storage_cleanup_jobs")).rows, []);
+    } finally {
+      await uploadPool.end();
     }
   }));

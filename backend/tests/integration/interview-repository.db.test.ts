@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { withTransaction } from "../../src/db/transaction.js";
 import { createPostgresApplicationRepository, createPostgresInterviewRepository } from "../../src/modules/applications/postgres-repository.js";
 import type { NewInterview } from "../../src/modules/applications/repository.js";
-import { newApplication, savedApplication } from "../helpers/applications.js";
+import { insertResume, newApplication, savedApplication } from "../helpers/applications.js";
 import { insertTestOwners, withTestDatabase } from "../helpers/database.js";
 
 const applications = createPostgresApplicationRepository();
@@ -73,4 +73,23 @@ test("an application save and an interview insert can share a caller transaction
   }), (error) => error === abort);
   assert.equal(await applications.get(pool, first.id, input.id), null);
   assert.deepEqual((await pool.query("SELECT id FROM public.interviews")).rows, []);
+}));
+
+test("a failed interview write rolls back the application update and resume link", () => withTestDatabase(async ({ pool, migrate }) => {
+  await migrate();
+  const { first: { id: userId } } = await insertTestOwners(pool);
+  const resume = await insertResume(pool, userId);
+  const { id, rowVersion } = savedApplication(await applications.insert(pool, newApplication(userId)));
+  const original = await applications.get(pool, userId, id);
+  const interview = { id: randomUUID(), userId, applicationId: id, interviewName: "Screen", startsAt: new Date() };
+
+  await assert.rejects(applications.updateWithInterviews(pool, userId, id, rowVersion,
+    { resumeId: resume.id, status: "interview" }, async (client) => {
+      assert.ok(await interviews.insert(client, interview));
+      await interviews.insert(client, { ...interview, id: randomUUID(), interviewName: " " });
+    }), { code: "23514" });
+
+  assert.deepEqual(await applications.get(pool, userId, id), original);
+  assert.deepEqual(await interviews.list(pool, userId, id), []);
+  assert.deepEqual((await pool.query("SELECT id FROM public.application_status_history WHERE application_id = $1", [id])).rows, []);
 }));

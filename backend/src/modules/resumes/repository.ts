@@ -48,7 +48,7 @@ export interface ResumeRepository {
   listLive(db: Db, userId: string): Promise<ResumeRow[]>;
   /** null when the resume is missing, deleted, or owned by someone else. */
   getLive(db: Db, userId: string, id: string): Promise<ResumeRow | null>;
-  /** The live resume stored under this key, if any. Used after an unclear insert and by the cleanup worker. */
+  /** The live resume visible to this query. A pending insert may commit after a null result. */
   findLiveByObjectKey(db: Db, objectKey: string): Promise<ResumeRow | null>;
   /**
    * Opens and commits its own transaction (§7.3): lock the resume, then the linked

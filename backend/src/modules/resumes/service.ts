@@ -56,19 +56,17 @@ export function createResumeService(deps: ResumeServiceDeps) {
 
   // The PDF is in R2 but the insert failed. Never delete the object of a row that may exist.
   async function recoverFailedInsert(row: NewResumeRow, insertError: unknown): Promise<ResumeRow> {
-    if (!isDefiniteDbFailure(insertError)) {
-      // No answer from PostgreSQL: the insert may have committed.
-      let saved: ResumeRow | null;
-      try {
-        saved = await resumes.findLiveByObjectKey(pool, row.objectKey);
-      } catch {
-        log("Upload: insert outcome unknown, R2 object kept", { objectKey: row.objectKey });
-        throw new ServiceUnavailableError();
-      }
-      if (saved) return saved;
+    if (isDefiniteDbFailure(insertError)) {
+      await removeUnusedObject(row.objectKey);
+      throw insertError;
     }
-    await removeUnusedObject(row.objectKey);
-    throw insertError;
+
+    // After a client timeout, the original INSERT can commit after this lookup.
+    const saved = await resumes.findLiveByObjectKey(pool, row.objectKey).catch(() => null);
+    if (saved) return saved;
+
+    log("Upload: insert outcome unknown, R2 object kept", { objectKey: row.objectKey });
+    throw new ServiceUnavailableError();
   }
 
   return {
