@@ -29,6 +29,8 @@ The reading paths and supplements carry forward the relevant integration guidanc
 
 **Crash recovery revision (v1.8, 2026-11-16):** The project runs a single backend instance. On startup, the backend marks every `preparing` or `streaming` run as `interrupted` before accepting requests, which replaces lease-based recovery. `lease_expires_at` and the lease rules are moved to a deferred subsection of §5.7. They are kept for a possible upgrade to multiple backend instances and are not enabled now.
 
+**Database service contract revision (v1.12, 2026-11-17):** Jianye and Rongxin agreed the repository function shape, startup pool creation, resume insert inputs, resume list and 404 behavior, and storage-cleanup ownership and reasons (Appendix C.4, §5.11). `endpoints.json` 1.10.0 adds `linkedApplicationCount` to `Resume` and removes resume-list pagination.
+
 **Migration status revision (v1.11, 2026-11-17):** Business migration groups 002–005 are merged into `main` (§10). Group 006 is not yet written. The auth source files referenced in Appendices D–E are not yet in the repository; their links are replaced by plain paths.
 
 **Text-unavailable and owner-FK revision (v1.10, 2026-11-17):** The `text_unavailable` resume state (PRD §5.2) is confirmed and no longer proposed. Business owner FKs to `public.auth_user(id)` use `ON DELETE RESTRICT`; there is no account-deletion feature. Internal same-conversation FKs, including `generation_materials` → `generation_runs`, are `NO ACTION`, and `generation_materials` cascades from `conversations` directly (§7.5). `endpoints.json` 1.9.0 marks the `textStatus` contract confirmed. Rejected uploads no longer create a row, so `parse_status` has only `succeeded` and `text_unavailable` and `parse_error_code` is removed (§7.2).
@@ -459,9 +461,9 @@ Current materials are assembled separately every turn and are never replaced by 
 
 ### 5.11 `storage_cleanup_jobs`
 
-Proposed minimal operational outbox: `id UUID PK`, `object_key TEXT NN`, `reason TEXT NN`, `status TEXT NN`, `attempt_count INTEGER NN DEFAULT 0`, `next_attempt_at TIMESTAMPTZ NN`, `last_error_code TEXT nullable`, `created_at`, `updated_at`. Add a unique deduplication key for the same object cleanup action.
+Operational outbox (migration group 006): `id UUID PK`, `object_key TEXT NN`, `reason TEXT NN`, `status TEXT NN`, `attempt_count INTEGER NN DEFAULT 0`, `next_attempt_at TIMESTAMPTZ NN`, `last_error_code TEXT nullable`, `created_at`, `updated_at`. Add a unique deduplication key for the same object cleanup action. `reason` is `resume_deleted` (§7.3) or `upload_rollback` (§7.2 step 6); it has no CHECK, so a later reason such as `orphan` needs no migration (agreed 2026-11-17).
 
-This is a retry mechanism for object cleanup, not a user recovery feature. The object key is opaque and is never returned as a download credential. Exact retry timing and terminal-failure alerting are deployment decisions.
+This is a retry mechanism for object cleanup, not a user recovery feature. The object key is opaque and is never returned as a download credential. Rongxin writes the table and the enqueue, claim, complete and fail SQL; claims use `FOR UPDATE SKIP LOCKED` so two workers never take the same job. Jianye writes the worker and chooses the retry timing. Reconciliation of R2 objects without a database row is deferred. Terminal-failure alerting is a deployment decision.
 
 ## 6. Ownership, Constraints, and Indexes
 
@@ -530,7 +532,7 @@ Use a consistent lock order for resume-link changes and deletion: resume rows fi
 3. On a hard failure (over 2 MiB, not a PDF, damaged, password-protected, more than 2 pages) or a processing failure (timeout, busy, cancelled, parser error), return the error. Nothing is written to object storage or the database.
 4. Otherwise generate a random private object key on the server and store the original PDF in object storage.
 5. In one short transaction, insert the resume row: `succeeded` with extracted text and page/character metadata when the file has at least 100 non-whitespace characters and text on every page; otherwise `text_unavailable` with page/character metadata and no extracted text, and the upload result carries a warning.
-6. If the insert fails, delete the stored object, or enqueue cleanup (§5.11) if immediate deletion fails. Uploading never changes application links. Explicitly selecting a successful file (or a `text_unavailable` file) changes only that application.
+6. If the insert fails, delete the stored object, or enqueue cleanup with reason `upload_rollback` (§5.11) if immediate deletion fails. If the insert outcome is unknown, look the row up by `object_key` first; never delete the object of a committed row. Uploading never changes application links. Explicitly selecting a successful file (or a `text_unavailable` file) changes only that application.
 
 Object storage and PostgreSQL do not share a transaction. Use compensating cleanup for objects uploaded before DB failure and a periodic reconciliation/temporary-key expiry process for crashes before an outbox row can be committed. Cleanup timing does not create a user-facing restoration promise.
 
@@ -540,10 +542,10 @@ Object storage and PostgreSQL do not share a transaction. Use compensating clean
 
 Within one DB transaction:
 
-1. Lock and authorize the resume; make repeated delete handling consistent with the agreed API contract.
+1. Lock and authorize the resume. A missing, foreign or already deleted resume is not found (HTTP 404).
 2. Mark it inaccessible (`deleted_at`) so no new link or download can revive it.
 3. Lock affected applications in stable order. Set each `resume_id = NULL`, increment `row_version`, and update timestamps. Return the number of links actually removed.
-4. Clear the deleted row's live extracted text and insert a cleanup job for the object key. The live-success CHECK is conditional on `deleted_at IS NULL`, so this update does not conflict with a retained `succeeded` parse status. Retain the opaque object identity until cleanup bookkeeping no longer requires it.
+4. Clear the deleted row's live extracted text and insert a cleanup job for the object key with reason `resume_deleted`. The live-success CHECK is conditional on `deleted_at IS NULL`, so this update does not conflict with a retained `succeeded` parse status. Retain the opaque object identity until cleanup bookkeeping no longer requires it.
 5. Commit; the worker removes private bytes with retry.
 
 This tombstone supports immediate access removal and reliable cleanup; long-term retention of the library row's metadata is not defined. Historical messages and material snapshots, including snapshots of the deleted resume's text, remain unchanged and readable as history per FR-16/FR-34 and the 2026-11-11 retention decision. A generation already initialized may finish using its fixed historical snapshot. Subsequent turns observe the unlinked state, use an unavailable-material snapshot, and receive a change notice that the resume is no longer available. Deletion does not delete applications or other resumes.
@@ -690,7 +692,7 @@ No rows means the conversation has no baseline yet. The baseline query runs only
 
 ### 8.5 Library Link Counts
 
-Count links from current applications only, scoped to the same owner. Use a LEFT JOIN so unused resumes have zero links; exclude tombstoned files. Resume deletion reports affected link rows from its transaction rather than trusting a cached count. No `linked_application_count` column is maintained.
+Count links from current applications only, scoped to the same owner. Use a LEFT JOIN so unused resumes have zero links; exclude tombstoned files. Resume deletion reports affected link rows from its transaction rather than trusting a cached count. No `linked_application_count` column is maintained. The resume list returns this count as `linkedApplicationCount` and is not paginated (agreed 2026-11-17).
 
 <a id="api-alignment"></a>
 
@@ -727,7 +729,7 @@ Groups 002–005 are implemented in `backend/migrations` and merged into `main` 
 | 003 | Status history and individual interviews | **Implemented:** `20261116000200_create_status_history_interviews.ts` |
 | 004 | Unique workspace and independent conversations | **Implemented:** `20261116000300_create_ai_workspaces_conversations.ts` |
 | 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | **Implemented:** `20261116000400_create_ai_persistence.ts`. Resolve the refresh-failure fallback before exposing that path |
-| 006 | Cleanup outbox and private-file lifecycle support | **Not yet written.** Needed before resume deletion and upload compensation (§7.2, §7.3); deployment parameters TBD |
+| 006 | Cleanup outbox and private-file lifecycle support | **Not yet written.** Needed before resume deletion and upload compensation (§7.2, §7.3). Columns, reasons and ownership are agreed in §5.11 and Appendix C.4 |
 | 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 and add the deletion-path migration test; no extra filters or indexes | FK actions are folded into 002–005 and were checked by hand on an empty database; the automated deletion-path test is not yet written |
 
 Implementation procedure:
@@ -816,6 +818,8 @@ This document is ready for team design review, subject to the explicit open item
 
 Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. At those earlier revisions, retry and refresh-fallback mechanisms were tracked as proposals; the later confirmations are recorded below. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007. Version 1.6 confirms the retry contract with latest-message eligibility, removes `request_key` and request deduplication, and specifies abort-on-disconnect with no partial-output persistence; `endpoints.json` 1.7.0 carries the matching contract. Version 1.7 integrates the current authentication implementation: `public.auth_user.id UUID`, UUID owner FKs, the trusted user context, concrete auth migrations and the confirmed email/Session configuration. The business/AI rules from versions 1.3–1.6 remain in force. Version 1.8 replaces lease-based crash recovery with startup recovery for the single-instance deployment and keeps the lease design as a deferred, not-enabled subsection of §5.7 for a possible multi-instance upgrade.
 
+Version 1.12 records the agreed database service contract (Appendix C.4): repository interfaces and transaction ownership, startup pool creation, backend-generated resume IDs, an unpaginated resume list with `linkedApplicationCount`, 404 for deleted resumes, and storage-cleanup reasons and ownership (§5.11).
+
 Version 1.11 records that migration groups 002–005 are merged and 006 is still pending, and marks the auth source files referenced in Appendices D–E as not yet in the repository.
 
 Version 1.10 confirms the `text_unavailable` resume state, records `ON DELETE RESTRICT` for business owner FKs on user-account deletion, aligns `generation_materials` with the §7.5 FK actions (direct cascade from `conversations`, `NO ACTION` to `generation_runs`), and stores only accepted uploads: rejected uploads create no row, `parse_status` is `succeeded` or `text_unavailable`, and `parse_error_code` is removed.
@@ -841,7 +845,7 @@ This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `
 | Non-AI application list | Still documents `page`, `limit` and the older seven-value status enum | Align six statuses, keyword/sort options, complete counts and Dashboard read models |
 | Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation and individual interview identity/editing. Interview validation is confirmed (§5.5); 1.8.0 aligns the `Interview` schema with it |
 | Offer and timeline | Full historical-offer/status-history API models are still incomplete | Agree read/write fields and response models before final UI integration |
-| Resume library | Existing upload accepts PDF/DOCX; standard metadata lacks the parsing/link-count contract. Since 1.6.0, deletion returns 200 with `unlinkedApplicationCount` | Align PDF-only validation, parsing completion/status/errors and private viewing |
+| Resume library | PDF-only upload with `textStatus`; each resume has `linkedApplicationCount`; the list is not paginated; deletion returns 200 with `unlinkedApplicationCount`; deleted resumes return 404 (1.10.0) | Implement the routes; agree HTTP status codes for PDF and storage errors with Justin |
 | Concurrency and recovery | `row_version` has no agreed public non-AI contract; AI durable-attempt and stream-error contracts are described | Agree conflict handling if adopted; reconcile AI durable state after transport loss without assuming replay/resumption |
 | Open product/configuration choices | §12 and current PRD §11 apply; application deletion and AI retry/interruption rules are confirmed | Resolve remaining interview/context/provider settings and the refresh-failure fallback without reopening confirmed deletion/retry policies |
 
@@ -864,7 +868,7 @@ Justin owns non-AI pages and maintains OpenAPI with backend contributors. Jianye
 | Company website/background | `companyWebsiteUrl`, `companyNotes` | `company_website_url`, `company_notes`; distinct from posting URL and personal notes |
 | Historical offers and timeline | Complete public models still need alignment | `offer_received`, `application_status_history` |
 | Interviews | `interviews[]` with required `type` and `scheduledAt` only (1.8.0); no stable item ID | Independent interview rows: `type` → `interview_name`, `scheduledAt` → `starts_at`; coordinate IDs and individual edits |
-| Resume controls | Multipart `name`/`file`; library metadata includes file identity/name/type/size/time | Parsing-state, failure and library link-count metadata still need agreement; DELETE returns 200 with `unlinkedApplicationCount` |
+| Resume controls | Multipart `name`/`file`; each resume has id, name, file name, type, size, time, `textStatus` and `linkedApplicationCount`; the list is not paginated | DELETE returns 200 with `unlinkedApplicationCount`; a deleted resume returns 404, and a retried DELETE may treat 404 as already deleted |
 
 The non-AI application list's current query model is not the complete Dashboard/search contract. Counts describe the complete owned set, not one page of results; use the original §8 explanations for counting, filtering and calendar boundaries. AI selection has its own documented `q`/six-status route.
 
@@ -872,13 +876,13 @@ The non-AI application list's current query model is not the complete Dashboard/
 
 - **Authentication:** follow [§5.1](#authentication-boundary). Show the post-registration waiting/resend state; load Session after first verification even if verification JSON has `user:null`. Password-reset success requires sign-in again.
 - **Application edits:** keep unsaved edits local. Save successfully before entering AI from details; refresh relevant page/list/count data after accepted edits. Current PUT clears omitted optional fields, including the company material fields; agree final update semantics rather than assuming PATCH.
-- **Resume upload and selection:** uploading does not relink applications. Only a successfully parsed file is selectable, and failed replacement preserves the previous valid link. Agree whether parsing completes within upload or how later completion is obtained.
-- **Resume deletion:** refresh the library and affected application links and retain applications. The current API returns HTTP 200 with `unlinkedApplicationCount`; use that result for the affected-link message.
+- **Resume upload and selection:** uploading does not relink applications. A `succeeded` or `text_unavailable` file is selectable, and a rejected replacement preserves the previous valid link. Parsing finishes within the upload request, so the upload response is the final result.
+- **Resume deletion:** refresh the library and affected application links and retain applications. The current API returns HTTP 200 with `unlinkedApplicationCount`; use that result for the affected-link message. A 404 on a retried DELETE means the resume is already gone.
 - **AI entry:** pass the owned application/workspace context to Jianye's feature. Entry creates/reuses a workspace, without an implicit conversation or model call.
 
 ### B.3 Agreements Needed Before Final Integration
 
-Coordinate the remaining non-AI enum/date/validation/read-model gaps, interview identity and save behavior, parsing completion/errors, and any adopted `row_version` submission/conflict contract. The existing AI routes should be implemented and reviewed against the current 1.7.0 contract rather than redesigned from database column names. Use the fixed UUID identity contract in Appendix D and the confirmed Session/email settings in E.4; the actual SMTP provider and deployment configuration still need to be supplied.
+Coordinate the remaining non-AI enum/date/validation/read-model gaps, interview identity and save behavior, HTTP status codes for PDF and storage errors, and any adopted `row_version` submission/conflict contract. The existing AI routes should be implemented and reviewed against the current 1.7.0 contract rather than redesigned from database column names. Use the fixed UUID identity contract in Appendix D and the confirmed Session/email settings in E.4; the actual SMTP provider and deployment configuration still need to be supplied.
 
 Layouts and mock-backed forms can proceed while dependent contracts are resolved. SQL, indexes, locks and AI storage details remain reference material; final client types and requests follow the aligned OpenAPI contract.
 
@@ -894,7 +898,7 @@ Jianye owns storage/PDF processing and both AI frontend and backend. Rongxin sup
 | Workflow | Integration behavior / original reference |
 |---|---|
 | Upload and link | [§7.2](#file-upload): validate an accepted-size PDF, parse outside long DB transactions, then save text/version/validation evidence when the private object is available. A rejected upload leaves nothing behind; only an object stored before a failed insert needs cleanup. Files failing only the text checks are kept as `text_unavailable`. An explicit usable-file selection changes one application link; upload alone changes none. |
-| Delete a resume | [§7.3](#resume-delete): authorize and lock the file, tombstone it, unlink all affected applications with `row_version` advances, clear current text and enqueue cleanup atomically; remove private bytes afterward. Retain historical messages and material snapshots, including the deleted resume's text, as read-only history, and prevent late parsing from reviving the item. |
+| Delete a resume | [§7.3](#resume-delete): authorize and lock the file, tombstone it, unlink all affected applications with `row_version` advances, clear current text and enqueue cleanup atomically; remove private bytes afterward. Retain historical messages and material snapshots, including the deleted resume's text, as read-only history. |
 | Enter workspace / create conversation | §5.6: create/reuse the owned application's unique workspace. Only an explicit New conversation action creates an empty bound thread. Navigation performs no model call or conversation material synchronization. |
 | Accept input | [§7.4 step 1](#turn-initialization): save user input and a `preparing` attempt in one short transaction. `input_message_id` references the user message; the user message has NULL `generation_id`. Preparation has not yet fixed materials. |
 | Prepare materials | §7.4 steps 2–4: take a consistent snapshot, fingerprint every registered material, compare with the baseline, reuse snapshots with the same fingerprint or save new ones in backend code, and atomically save new snapshots, one association per kind and `baseline_generation_id`. No model tool is involved. A pre-preparation failure may have no associations while retaining accepted input/attempt. |
@@ -921,7 +925,19 @@ Base materials never appear as tool messages; the core chat request defines no t
 
 The current OpenAPI already describes workspace/conversation/history/generation/provenance routes and stream events. Reconcile durable attempt state after disconnects; transport EOF is not durable completion, and automatic POST replay or stream resumption is not guaranteed. The retry route follows the confirmed §5.7 contract; `endpoints.json` 1.7.0 documents its eligibility rule and 409 codes.
 
-Agree database service inputs/outputs and who opens/commits each transaction. The retry, duplicate-request, and interruption contract in §5.7 is confirmed. The fail-and-retry refresh fallback remains a proposal; context thresholds/windows and oversized-material handling remain open. Compression captures a complete history prefix, runs outside a DB transaction and validates before saving; failed compression does not advance coverage or replace current base materials.
+Database service inputs/outputs and transaction ownership are agreed in C.4. The retry, duplicate-request, and interruption contract in §5.7 is confirmed. The fail-and-retry refresh fallback remains a proposal; context thresholds/windows and oversized-material handling remain open. Compression captures a complete history prefix, runs outside a DB transaction and validates before saving; failed compression does not advance coverage or replace current base materials.
+
+### C.4 Agreed Database Service Contract (2026-11-17)
+
+Agreed between Jianye (storage, PDF and AI) and Rongxin (business SQL). These rules shape the repository code; table definitions stay in §5.
+
+| Topic | Agreement |
+|---|---|
+| Function shape | Rongxin exposes repository functions behind TypeScript interfaces (for example `ResumeRepository`) so callers can test with fakes. A single-statement read or write takes a database client parameter, so the caller can include it in a transaction. A workflow that must commit atomically is one repository function that opens and commits its own transaction: resume deletion (§7.3) and the AI turn transactions in §7.4 (accept input, commit preparation, save completion, record failure). Callers make object-storage and model calls between these calls, never inside them. |
+| Connection pool | The pool is created explicitly at startup (`createPool()`) and passed to the modules that need it. No module reads `DATABASE_URL` or opens connections when it is imported. |
+| Resume insert | The upload workflow generates the resume `id` (`randomUUID()`) and the object key (`createObjectKey()`) before storing the PDF, then passes the owner, id, name, original filename, size, object key and the `validateResumePdf` result. A `succeeded` row stores the extracted text, page count and non-whitespace count; a `text_unavailable` row stores the page count and non-whitespace count with no text. If the insert outcome is unknown, look the row up by `object_key` before deleting the object. |
+| Resume reads and deletion | The list returns all of the owner's live resumes, newest first, not paginated, each with `linkedApplicationCount` (§8.5). A missing, foreign or already deleted resume is not found for get, download and delete (HTTP 404); a client may treat 404 on a retried DELETE as already deleted. Deletion returns `unlinkedApplicationCount`. |
+| Storage cleanup | Rongxin writes migration 006 and the SQL to enqueue, claim (`FOR UPDATE SKIP LOCKED`), complete and fail jobs. Jianye writes the worker that claims a job, deletes the R2 object and records the result, and chooses the retry schedule. Reasons are `resume_deleted` and `upload_rollback`; the column has no CHECK, so a later reason needs no migration. Reconciliation of R2 objects without a database row is deferred. |
 
 
 <a id="shared-identity"></a>

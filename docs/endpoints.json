@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Job Application Tracker API",
-    "version": "1.9.0",
+    "version": "1.10.0",
     "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests. AI Copilot contracts follow PRD 1.4, AI_Design.md, and Database_Design.md 1.4. AI operations require the same authoritative session, verified-email, and ownership checks. These contracts describe planned behavior, not deployed endpoints; explicitly marked retry and failure-policy proposals remain subject to the listed decisions."
   },
   "servers": [
@@ -1083,17 +1083,9 @@
         ],
         "summary": "List resumes",
         "operationId": "listResumes",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Page"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
         "responses": {
           "200": {
-            "description": "A paginated list of the current user's resume metadata.",
+            "description": "All of the current user's resume metadata.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1108,7 +1100,8 @@
           "403": {
             "$ref": "#/components/responses/EmailNotVerified"
           }
-        }
+        },
+        "description": "Return all of the current user's live resumes, newest first. Not paginated (agreed 2026-11-17). Each item includes linkedApplicationCount. Deleted resumes are never listed."
       },
       "post": {
         "tags": [
@@ -1201,14 +1194,15 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           }
-        }
+        },
+        "description": "Get resume metadata by ID. A missing, foreign or already deleted resume returns 404."
       },
       "delete": {
         "tags": [
           "Resumes"
         ],
         "summary": "Delete a resume",
-        "description": "Delete the owned resume and its stored file. Applications referencing it are preserved and their resumeId is set to null. The client confirms with the user first, showing how many applications currently use the resume. Text snapshots that AI conversations saved from it remain as read-only history and never make the file current, downloadable, or linkable again.",
+        "description": "Delete the owned resume and its stored file. Applications referencing it are preserved and their resumeId is set to null. The client confirms with the user first, showing how many applications currently use the resume. Text snapshots that AI conversations saved from it remain as read-only history and never make the file current, downloadable, or linkable again. A missing, foreign or already deleted resume returns 404. A client that retries DELETE after losing the first response may treat 404 as already deleted.",
         "operationId": "deleteResume",
         "responses": {
           "200": {
@@ -1277,7 +1271,8 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           }
-        }
+        },
+        "description": "Download a resume file. A missing, foreign or already deleted resume returns 404."
       }
     },
     "/api/v1/ai/applications": {
@@ -2118,7 +2113,8 @@
           "mimeType",
           "sizeBytes",
           "createdAt",
-          "textStatus"
+          "textStatus",
+          "linkedApplicationCount"
         ],
         "properties": {
           "id": {
@@ -2155,6 +2151,12 @@
             ],
             "readOnly": true,
             "description": "Confirmed 2026-11-17 (PRD §5.2). available: extracted text is saved and AI features can use it. unavailable: the PDF was accepted (readable, at most 2 pages and 2 MiB) but has no usable text, for example a scanned resume; it can be viewed, downloaded and linked, but AI features cannot read it, and the UI shows a warning. Rejected uploads never produce a Resume."
+          },
+          "linkedApplicationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "readOnly": true,
+            "description": "Number of the user's applications currently linked to this resume. Shown in the library list and in the confirmation before deletion. A newly uploaded resume has 0."
           }
         }
       },
@@ -2201,8 +2203,7 @@
       "ResumeList": {
         "type": "object",
         "required": [
-          "data",
-          "pagination"
+          "data"
         ],
         "properties": {
           "data": {
@@ -2210,11 +2211,9 @@
             "items": {
               "$ref": "#/components/schemas/Resume"
             }
-          },
-          "pagination": {
-            "$ref": "#/components/schemas/Pagination"
           }
-        }
+        },
+        "description": "All of the user's live resumes, newest first; not paginated."
       },
       "Error": {
         "type": "object",

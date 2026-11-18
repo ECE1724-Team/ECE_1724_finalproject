@@ -56,6 +56,18 @@ AI behavior in [AI Design](AI_Design.md), routes in [endpoints.json](endpoints.j
   for accepted files; nothing is stored for rejected ones.
 - Added `tests/tsconfig.json` so VS Code type-checks tests.
 
+### 2026-11-17: Agreements with Rongxin (Database Design Appendix C.4)
+- Repository functions sit behind TypeScript interfaces I can fake. Single statements take a
+  client; atomic workflows (resume delete, AI turn steps) are one function with their own transaction.
+- Pool is created at startup with `createPool()` and passed in, like `createR2Storage(readR2Config())`.
+- Upload generates the resume id (`randomUUID()`) and object key before writing R2; unknown insert
+  outcome → look up by `object_key` before deleting the object.
+- Resume list: all live resumes, newest first, not paginated, with `linkedApplicationCount`
+  (endpoints 1.10.0). Deleted, missing or foreign resume → 404 everywhere.
+- Cleanup: Rongxin writes migration 006 and the enqueue/claim/complete/fail SQL; I write the worker
+  and pick the retry schedule. Reasons `resume_deleted`, `upload_rollback` (no CHECK). Orphan
+  reconciliation deferred.
+
 ## Don't undo these
 Worker-thread isolation and the `busy` limit; `If-None-Match` on writes; never accepting a
 storage key or user ID from the browser; no text in `unavailable` results; R2 objects of
@@ -75,20 +87,20 @@ deleted resumes are removed only by the cleanup worker after the DB commit.
 
 ### 2. Phase 4: resume workflow module (`src/modules/resumes/`)
 - Upload: follow Database Design §7.2 (receive ≤ 2 MiB → validate → R2 → insert row; on
-  insert failure delete the object or queue cleanup). Test with fakes for the repository and storage.
+  insert failure delete the object or queue cleanup with reason `upload_rollback`). Test with fakes for the repository and storage.
 - Delete: Database Design §7.3 (one transaction: tombstone, unlink applications, clear
   text, queue cleanup); then the cleanup worker deletes from R2 with retries.
-- Reconciliation pass for R2 objects with no DB row (crash between R2 write and insert).
+- Reconciliation pass for R2 objects with no DB row (crash between R2 write and insert): deferred, do last.
 - Don't add a hardcoded test user or an in-memory repository as a fallback.
 
 ### 3. Agree with teammates (small interface examples are enough)
 - **Zishi:** how the verified `userId` reaches handlers; auth checked before reading the
   upload body; CSRF/origin protection for file routes; resume linking goes through the
   application update.
-- **Rongxin:** repository method signatures; deletion prep as one atomic call; cleanup
-  job table and who runs the worker.
+- **Rongxin:** agreed 2026-11-17, see Database Design Appendix C.4. I own the cleanup worker.
 - **Justin:** HTTP status for each error code; upload warning and "AI can't read" badge;
-  PDF preview via Blob URL.
+  PDF preview via Blob URL. Tell him: resume list gains `linkedApplicationCount` and loses
+  pagination (endpoints 1.10.0); a 404 on a retried DELETE means the resume is already gone.
 
 ### 4. AI Copilot (later)
 - AI reads saved text from the resume row via the application's current `resumeId`; it
