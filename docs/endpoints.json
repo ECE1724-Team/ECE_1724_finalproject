@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Job Application Tracker API",
-    "version": "1.10.0",
+    "version": "1.11.0",
     "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests. AI Copilot contracts follow PRD 1.4, AI_Design.md, and Database_Design.md 1.4. AI operations require the same authoritative session, verified-email, and ownership checks. These contracts describe planned behavior, not deployed endpoints; explicitly marked retry and failure-policy proposals remain subject to the listed decisions."
   },
   "servers": [
@@ -1099,6 +1099,12 @@
           },
           "403": {
             "$ref": "#/components/responses/EmailNotVerified"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "description": "Return all of the current user's live resumes, newest first. Not paginated (agreed 2026-11-17). Each item includes linkedApplicationCount. Deleted resumes are never listed."
@@ -1108,7 +1114,7 @@
           "Resumes"
         ],
         "summary": "Upload a resume",
-        "description": "Accepts only a PDF resume as multipart/form-data. Confirmed 2026-11-17 (PRD §5.2): a readable PDF within the limits whose text cannot be extracted is still created with textStatus unavailable, and the client shows the AI warning; oversized, non-PDF, damaged, password-required and overlength files are rejected.",
+        "description": "Accepts only a PDF resume as multipart/form-data. Confirmed 2026-11-17 (PRD §5.2): a readable PDF within the limits whose text cannot be extracted is still created with textStatus unavailable, and the client shows the AI warning; oversized, non-PDF, damaged, password-required and overlength files are rejected. Error codes: 400 BAD_REQUEST (missing name or file, or more than one file); 413 PDF_TOO_LARGE; 415 UNSUPPORTED_MEDIA_TYPE (not multipart/form-data); 422 VALIDATION_ERROR (name must be 1–200 characters after trimming), PDF_INVALID (not a PDF or damaged), PDF_TOO_MANY_PAGES, PDF_PASSWORD_PROTECTED; 503 PDF_BUSY, PDF_PROCESSING_FAILED, SERVICE_UNAVAILABLE. Unauthenticated requests are rejected before the body is read.",
         "operationId": "createResume",
         "requestBody": {
           "required": true,
@@ -1153,11 +1159,20 @@
           "403": {
             "$ref": "#/components/responses/EmailNotVerified"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -1193,6 +1208,12 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "description": "Get resume metadata by ID. A missing, foreign or already deleted resume returns 404."
@@ -1226,6 +1247,12 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -1270,9 +1297,15 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
-        "description": "Download a resume file. A missing, foreign or already deleted resume returns 404."
+        "description": "Download a resume file. A missing, foreign or already deleted resume returns 404. Sent with Content-Type application/pdf, Cache-Control private, no-store and X-Content-Type-Options nosniff. The frontend previews a resume by fetching this endpoint and showing the bytes through a Blob URL."
       }
     },
     "/api/v1/ai/applications": {
@@ -4090,7 +4123,7 @@
         }
       },
       "UnsupportedMediaType": {
-        "description": "Uploaded file type is not supported. Only PDF is allowed.",
+        "description": "The upload request is not multipart/form-data. A file that is not a real PDF returns 422 PDF_INVALID instead.",
         "content": {
           "application/json": {
             "schema": {
@@ -4168,6 +4201,62 @@
               "completedWithMissingMaterials": {
                 "summary": "Successful limited assistance with only company and position available; completion follows durable answer persistence.",
                 "value": "event: generation.accepted\ndata: {\"type\": \"generation.accepted\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"inputMessage\": {\"id\": \"30000000-0000-4000-8000-000000000001\", \"conversationId\": \"10000000-0000-4000-8000-000000000001\", \"generationId\": null, \"sequenceNo\": \"1\", \"role\": \"user\", \"parts\": [{\"type\": \"text\", \"text\": \"Help me prepare for this role.\"}], \"createdAt\": \"2026-11-10T15:00:00Z\"}}\n\nevent: materials.synced\ndata: {\"type\": \"materials.synced\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"snapshotAt\": \"2026-11-10T15:00:00Z\", \"baselineGenerationId\": null, \"materials\": {\"resume\": {\"kind\": \"resume\", \"fingerprint\": \"v1:ceaa0e20089321006416a8d0bb9bdf4a111f6a445a3ead10714c84f0572487e7\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"RESUME_NOT_LINKED\", \"snapshotId\": \"40000000-0000-4000-8000-000000000001\"}, \"jd\": {\"kind\": \"jd\", \"fingerprint\": \"v1:f7027cda387df9ddd6332353b22981b05bc0aebc088b64cc3a7de6d781f459a7\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"FIELD_MISSING\", \"snapshotId\": \"40000000-0000-4000-8000-000000000002\"}, \"company\": {\"kind\": \"company\", \"fingerprint\": \"v1:78f70c807c44b034fd10e9e8013b4a78b871dfd83d0e33ab01dcc51c1a4a39b3\", \"availability\": \"available\", \"sourceResumeId\": null, \"reasonCode\": null, \"snapshotId\": \"40000000-0000-4000-8000-000000000003\"}, \"position\": {\"kind\": \"position\", \"fingerprint\": \"v1:772a19790b07f826dd39cde1036401b4c7d8ff880a222642286c373de2b77cdb\", \"availability\": \"available\", \"sourceResumeId\": null, \"reasonCode\": null, \"snapshotId\": \"40000000-0000-4000-8000-000000000004\"}, \"company_website_url\": {\"kind\": \"company_website_url\", \"fingerprint\": \"v1:310e2cfd53f49f3ba75e18da5264bf35bcfaa7c9b0d0a080a653a949e7911f5f\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"FIELD_MISSING\", \"snapshotId\": \"40000000-0000-4000-8000-000000000005\"}, \"company_notes\": {\"kind\": \"company_notes\", \"fingerprint\": \"v1:2558903521314b44dd0a50bb3c9d81c10648c6ee3c6c7c03881950f21e72e07f\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"FIELD_MISSING\", \"snapshotId\": \"40000000-0000-4000-8000-000000000006\"}}, \"changedKinds\": [\"resume\", \"jd\", \"company\", \"position\", \"company_website_url\", \"company_notes\"]}\n\nevent: text.delta\ndata: {\"type\": \"text.delta\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"delta\": \"I can help with the company and position. A resume and JD are not linked, so the advice will be general.\"}\n\nevent: generation.completed\ndata: {\"type\": \"generation.completed\", \"generation\": {\"id\": \"20000000-0000-4000-8000-000000000001\", \"conversationId\": \"10000000-0000-4000-8000-000000000001\", \"inputMessageId\": \"30000000-0000-4000-8000-000000000001\", \"status\": \"completed\", \"materials\": {\"resume\": {\"kind\": \"resume\", \"fingerprint\": \"v1:ceaa0e20089321006416a8d0bb9bdf4a111f6a445a3ead10714c84f0572487e7\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"RESUME_NOT_LINKED\", \"snapshotId\": \"40000000-0000-4000-8000-000000000001\"}, \"jd\": {\"kind\": \"jd\", \"fingerprint\": \"v1:f7027cda387df9ddd6332353b22981b05bc0aebc088b64cc3a7de6d781f459a7\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"FIELD_MISSING\", \"snapshotId\": \"40000000-0000-4000-8000-000000000002\"}, \"company\": {\"kind\": \"company\", \"fingerprint\": \"v1:78f70c807c44b034fd10e9e8013b4a78b871dfd83d0e33ab01dcc51c1a4a39b3\", \"availability\": \"available\", \"sourceResumeId\": null, \"reasonCode\": null, \"snapshotId\": \"40000000-0000-4000-8000-000000000003\"}, \"position\": {\"kind\": \"position\", \"fingerprint\": \"v1:772a19790b07f826dd39cde1036401b4c7d8ff880a222642286c373de2b77cdb\", \"availability\": \"available\", \"sourceResumeId\": null, \"reasonCode\": null, \"snapshotId\": \"40000000-0000-4000-8000-000000000004\"}, \"company_website_url\": {\"kind\": \"company_website_url\", \"fingerprint\": \"v1:310e2cfd53f49f3ba75e18da5264bf35bcfaa7c9b0d0a080a653a949e7911f5f\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"FIELD_MISSING\", \"snapshotId\": \"40000000-0000-4000-8000-000000000005\"}, \"company_notes\": {\"kind\": \"company_notes\", \"fingerprint\": \"v1:2558903521314b44dd0a50bb3c9d81c10648c6ee3c6c7c03881950f21e72e07f\", \"availability\": \"unavailable\", \"sourceResumeId\": null, \"reasonCode\": \"FIELD_MISSING\", \"snapshotId\": \"40000000-0000-4000-8000-000000000006\"}}, \"snapshotAt\": \"2026-11-10T15:00:00Z\", \"assistantMessageId\": \"30000000-0000-4000-8000-000000000003\", \"error\": null, \"startedAt\": \"2026-11-10T15:00:00Z\", \"completedAt\": \"2026-11-10T15:00:10Z\"}, \"message\": {\"id\": \"30000000-0000-4000-8000-000000000003\", \"conversationId\": \"10000000-0000-4000-8000-000000000001\", \"generationId\": \"20000000-0000-4000-8000-000000000001\", \"sequenceNo\": \"3\", \"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"text\": \"I can help with the company and position. A resume and JD are not linked, so the advice will be general.\"}], \"createdAt\": \"2026-11-10T15:00:10Z\"}}\n\n"
+              }
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The file is larger than 2 MiB (2,097,152 bytes). Code PDF_TOO_LARGE.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "PDF_TOO_LARGE",
+                "message": "The PDF must be no larger than 2097152 bytes (2 MiB)."
+              }
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Temporary server-side problem; the request can be retried. Codes: PDF_BUSY (all PDF parsers are in use; sent with Retry-After), PDF_PROCESSING_FAILED (parsing failed or timed out), SERVICE_UNAVAILABLE (file storage or the database is unreachable). Nothing was saved unless a later GET shows the resume.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "PDF_BUSY",
+                "message": "PDF processing is busy. Please try again shortly."
+              }
+            }
+          }
+        },
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait; sent with PDF_BUSY.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Unexpected server error (code INTERNAL_ERROR). The message never contains internal details.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "Something went wrong. Please try again."
               }
             }
           }
