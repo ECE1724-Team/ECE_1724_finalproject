@@ -80,5 +80,5 @@ export interface StorageCleanupRepository {
    * Puts every processing job back to pending. Returns how many. The worker calls it before
    * each pass, which is safe only because there is one backend instance and passes never overlap.
    */
-  resetInterrupted(db: Db): Promise<number>;
+  requeueProcessing(db: Db): Promise<number>;
 }

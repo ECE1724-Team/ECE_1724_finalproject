@@ -68,7 +68,7 @@ export function startCleanupWorker(deps: CleanupWorkerDeps, { intervalMs = INTER
 
   const pass = async () => {
     try {
-      await deps.cleanup.resetInterrupted(deps.pool);
+      await deps.cleanup.requeueProcessing(deps.pool);
       await runCleanupOnce(deps);
     } catch (error) {
       log("Cleanup pass failed; retrying on the next tick", { error: errorDetails(error) });

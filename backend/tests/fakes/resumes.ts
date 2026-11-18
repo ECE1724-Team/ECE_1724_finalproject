@@ -121,7 +121,7 @@ export class FakeCleanupRepository implements StorageCleanupRepository {
     });
   }
 
-  async resetInterrupted(): Promise<number> {
+  async requeueProcessing(): Promise<number> {
     const stuck = this.jobs.filter((job) => job.status === "processing");
     for (const job of stuck) job.status = "pending";
     return stuck.length;

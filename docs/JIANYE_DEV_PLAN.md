@@ -104,7 +104,7 @@ Everything that didn't need teammates' code. 40 unit tests pass (25 new).
 42 unit tests pass; each new check fails on the code before these fixes.
 - A PostgreSQL answer is now `instanceof DatabaseError` (pg), not a five-character `code`:
   `EPIPE` matched the old pattern, so a socket error skipped the row lookup and returned 500.
-- The cleanup worker calls `resetInterrupted` before **every** pass, not only at start. Before,
+- The cleanup worker calls `resetInterrupted` (renamed `requeueProcessing`) before **every** pass, not only at start. Before,
   a database blip during a pass left the whole claimed batch `processing` until the next restart.
   Safe because there is one instance and passes never overlap.
 - Logging: every 5xx except `PDF_BUSY` is logged (before, only 500), and the worker logs
@@ -124,6 +124,10 @@ looking a row up before deleting the object of an unclear insert; the worker's l
 - Text order follows the PDF's internal order; check a few real Word/LaTeX two-column exports by hand.
 - HTTP error codes are implemented and in `endpoints.json` 1.11.0, but not yet reviewed by Justin.
 - No real-database or real-auth test yet; the resume module is tested with fakes only.
+- **Assumes one backend instance.** The cleanup worker calls `requeueProcessing` before every
+  pass, and AI runs use startup recovery (Database Design v1.8). With two or more instances,
+  switch to the lease design kept in Database Design §5.7. For cleanup alone the worst case is
+  a job processed twice, which is harmless (deletes are idempotent and skip live resumes).
 
 ## Next steps
 
@@ -139,7 +143,7 @@ The module work (2a in the original plan) is done; see the Progress log entry
 | What | Waiting for | Until then |
 |---|---|---|
 | SQL for `ResumeRepository` and `StorageCleanupRepository` (`src/modules/resumes/repository.ts`) | Rongxin | Fakes in `tests/fakes/resumes.ts` |
-| Migration 006 `storage_cleanup_jobs`, including `resetInterrupted` (all `processing` → `pending`; the worker calls it before each pass) | Rongxin | Worker and `upload_rollback` tested with fakes |
+| Migration 006 `storage_cleanup_jobs`, including `requeueProcessing` (all `processing` → `pending`; the worker calls it before each pass) | Rongxin | Worker and `upload_rollback` tested with fakes |
 | `createPool()` instead of the import-time pool in `db/pool.ts` | Rongxin | My modules only take a pool parameter |
 | `npm run migrate` and a local Postgres, then an opt-in real-DB test (like `test:r2`) | Rongxin | Unit tests only |
 | `requireVerifiedUser` / `VerifiedAuthContext` code | Zishi | Fake auth in route tests |
