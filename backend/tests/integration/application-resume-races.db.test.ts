@@ -48,7 +48,7 @@ for (const save of ["create", "replace"] as const) {
         });
         assert.deepEqual(await deletion, { unlinkedApplicationCount: 1 });
         assert.deepEqual(await writeResult, { outcome: "RESUME_INELIGIBLE" });
-        assert.deepEqual(await applications.get(pool, userId, input.id), original);
+        assert.deepEqual(await applications.get(pool, userId, input.id), original && { ...original, resumeName: old.name });
       }
 
       assert.equal(await resumes.getLive(pool, userId, candidate.id), null);

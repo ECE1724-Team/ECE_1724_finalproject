@@ -22,7 +22,7 @@ test("application creation defaults and status edits preserve date, offer and or
     appliedDate: null, jobDescription: null, resumeId: null, jobUrl: null, companyWebsiteUrl: null,
     companyNotes: null, personalNotes: null, offerReceived: false, rowVersion: "1",
   });
-  assert.deepEqual(await applications.get(pool, first.id, input.id), created);
+  assert.deepEqual(await applications.get(pool, first.id, input.id), { ...created, resumeName: null });
   assert.equal(await applications.get(pool, second.id, input.id), null);
   assert.deepEqual(await history.list(pool, first.id, input.id), []);
   assert.equal(savedApplication(await applications.insert(pool, newApplication(first.id, {
@@ -103,7 +103,7 @@ test("concurrent application saves use lossless versions and a failed history wr
 
   await pool.query("ALTER TABLE public.application_status_history ADD CHECK (new_status <> 'offer')");
   await assert.rejects(applications.update(pool, first.id, id, committed.rowVersion, { status: "offer" }), { code: "23514" });
-  assert.deepEqual(await applications.get(pool, first.id, id), committed);
+  assert.deepEqual(await applications.get(pool, first.id, id), { ...committed, resumeName: null });
   assert.deepEqual(await history.list(pool, first.id, id), events);
 }));
 
@@ -121,13 +121,13 @@ test("resume selections accept both parse states, permit unlinking, and preserve
   const replaced = savedApplication(await applications.update(pool, first.id, target.id, "1", { resumeId: scanned.id }));
   assert.equal(replaced.resumeId, scanned.id);
   assert.equal(replaced.rowVersion, "2");
-  assert.deepEqual(await applications.get(pool, first.id, sibling.id), sibling);
+  assert.deepEqual(await applications.get(pool, first.id, sibling.id), { ...sibling, resumeName: old.name });
 
   for (const resumeId of [foreign.id, deleted.id]) {
     assert.deepEqual(await applications.insert(pool, newApplication(first.id, { resumeId })), { outcome: "RESUME_INELIGIBLE" });
     assert.deepEqual(await applications.update(pool, first.id, target.id, "2", { resumeId, status: "offer" }),
       { outcome: "RESUME_INELIGIBLE" });
-    assert.deepEqual(await applications.get(pool, first.id, target.id), replaced);
+    assert.deepEqual(await applications.get(pool, first.id, target.id), { ...replaced, resumeName: scanned.name });
   }
   const unlinked = savedApplication(await applications.update(pool, first.id, target.id, "2", { resumeId: null }));
   assert.equal(unlinked.resumeId, null);

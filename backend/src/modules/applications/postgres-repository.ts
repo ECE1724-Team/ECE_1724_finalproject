@@ -1,15 +1,18 @@
 import type { PoolClient } from "pg";
 import { withTransaction } from "../../db/transaction.js";
 import type {
-  ApplicationRepository, ApplicationRow, ApplicationStatusHistoryRepository, ApplicationStatusHistoryRow,
-  ApplicationUpdate, Db, InterviewRepository, InterviewRow,
+  ApplicationCounts, ApplicationDetailRow, ApplicationListRow, ApplicationRepository, ApplicationRow, ApplicationStatus,
+  ApplicationStatusHistoryRepository, ApplicationStatusHistoryRow, ApplicationUpdate, Db, InterviewRepository, InterviewRow,
 } from "./repository.js";
 
-const APPLICATION_FIELDS = `id, user_id AS "userId", company_name AS "companyName",
+const APPLICATION_LIST_FIELDS = `id, company_name AS "companyName",
   position_title AS "positionTitle", status, to_char(applied_date, 'YYYY-MM-DD') AS "appliedDate",
-  job_description AS "jobDescription", resume_id AS "resumeId", job_url AS "jobUrl",
+  resume_id AS "resumeId", row_version::text AS "rowVersion", created_at AS "createdAt"`;
+const APPLICATION_FIELDS = `${APPLICATION_LIST_FIELDS}, user_id AS "userId", job_description AS "jobDescription", job_url AS "jobUrl",
   company_website_url AS "companyWebsiteUrl", company_notes AS "companyNotes", personal_notes AS "personalNotes",
-  offer_received AS "offerReceived", row_version::text AS "rowVersion", created_at AS "createdAt", updated_at AS "updatedAt"`;
+  offer_received AS "offerReceived", updated_at AS "updatedAt"`;
+const LIVE_RESUME_NAME = `(SELECT r.name FROM public.resumes r
+  WHERE r.id = a.resume_id AND r.user_id = a.user_id AND r.deleted_at IS NULL) AS "resumeName"`;
 
 const EDITABLE_COLUMNS = {
   companyName: "company_name",
@@ -76,7 +79,46 @@ export function createPostgresApplicationRepository(): ApplicationRepository {
       });
     },
 
-    get: findApplication,
+    async get(db, userId, id) {
+      const { rows: [row] } = await db.query<ApplicationDetailRow>(`
+        SELECT ${APPLICATION_FIELDS}, ${LIVE_RESUME_NAME} FROM public.applications a
+        WHERE a.user_id = $1 AND a.id = $2
+      `, [userId, id]);
+      return row ?? null;
+    },
+
+    async list(db, userId, options = {}) {
+      const term = options.search?.trim();
+      const pattern = term ? `%${term.replace(/[!%_]/g, "!$&")}%` : null;
+      const order = options.sort === "company" ? "lower(a.company_name), a.id" : "a.created_at DESC, a.id DESC";
+      const { rows } = await db.query<ApplicationListRow>(`
+        SELECT ${APPLICATION_LIST_FIELDS}, ${LIVE_RESUME_NAME} FROM public.applications a
+        WHERE a.user_id = $1 AND ($2::text IS NULL OR a.status = $2)
+          AND ($3::text IS NULL OR a.company_name ILIKE $3 ESCAPE '!' OR a.position_title ILIKE $3 ESCAPE '!')
+        ORDER BY ${order}
+        LIMIT $4
+      `, [userId, options.status ?? null, pattern, options.limit ?? null]);
+      return rows;
+    },
+
+    async counts(db, userId) {
+      const { rows } = await db.query<{ status: ApplicationStatus; count: string; offers: string }>(`
+        SELECT status, count(*), count(*) FILTER (WHERE offer_received) AS offers
+        FROM public.applications WHERE user_id = $1 GROUP BY status
+      `, [userId]);
+      const counts: ApplicationCounts = {
+        statusCounts: { saved: 0, applied: 0, oa: 0, interview: 0, offer: 0, rejected: 0 },
+        totalApplications: 0,
+        offersEverReceived: 0,
+      };
+      for (const row of rows) {
+        const count = Number(row.count);
+        counts.statusCounts[row.status] = count;
+        counts.totalApplications += count;
+        counts.offersEverReceived += Number(row.offers);
+      }
+      return counts;
+    },
 
     update(db, userId, id, expectedRowVersion, changes) {
       return inTransaction(db, async (client) => {

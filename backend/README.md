@@ -84,7 +84,8 @@ in backend entry points. Their signatures are in
 The caller supplies UUIDs when creating applications and interviews.
 
 - `applications.insert(db, input)` returns `OK` with the row or `RESUME_INELIGIBLE`.
-- `applications.get(db, userId, id)` returns an owned row or `null`.
+- `applications.get(db, userId, id)` returns an owned row with its live `resumeName`, or
+  `null` when the application is inaccessible. A missing live resume gives `resumeName: null`.
 - `applications.update(db, userId, id, expectedRowVersion, changes)` returns `OK` with
   the row, `NOT_FOUND`, `RESUME_INELIGIBLE`, or `VERSION_CONFLICT`. For example, an
   update from version `"3"` that changes `status` returns version `"4"`. Reusing `"3"`
@@ -105,6 +106,41 @@ in ID order. Generation acceptance must lock its conversation before inserting t
 input and run. Conversation creation uses the workspace FK, and workspace creation
 uses the application FK. `npm run test:db` exercises these locks with real PostgreSQL
 and checks the complete application cascade against a saved conversation graph.
+
+### Application list and Dashboard reads
+
+`applications.list(db, userId, { search, status, sort, limit })` returns summary rows for
+the owner. Each row includes the date-only `appliedDate` and the linked live `resumeName`
+when available. Use `sort: "newest"` (the default) for descending creation time and ID,
+or `sort: "company"` for lowercased company name and ascending ID. Search matches a
+literal case-insensitive substring of the company or position and combines with status.
+All matches are returned by default. The AI position selector can project `id`,
+`companyName`, `positionTitle`, and `status` from the same list.
+
+`applications.counts(db, userId)` returns all six `statusCounts`, `totalApplications`
+for the **All** filter, and `offersEverReceived`. `readDashboard(pool, userId,
+{ windowStart, windowEnd, recentLimit })` from `./modules/dashboard/postgres-repository.js`
+adds `totalInterviewSessions`, `upcomingInterviews`, and `recentApplications` in one
+database snapshot. The caller supplies local midnight today and local midnight seven
+calendar dates later as `Date` instants. `windowStart` is included and `windowEnd` is
+excluded. `recentLimit` only caps the recent rows.
+
+The acceptance fixture gives both of owner A's applications the same `createdAt`.
+[Dashboard acceptance fixture](tests/integration/dashboard.db.test.ts)
+
+| ID | Company | Position | Status | Applied date | Resume |
+|---|---|---|---|---|---|
+| `a0000000-0000-4000-8000-000000000001` | North Labs | Backend Engineer | `saved` | `null` | `null` |
+| `a0000000-0000-4000-8000-000000000002` | NORTH LABS | Platform 100% _Tools! | `rejected` after `offer` | `2026-10-28` | Example resume |
+
+Newest-first gives ID `…002` followed by `…001`. Company order reverses those rows.
+Searching for `%` finds `…002`. Adding the `saved` filter gives an empty list. Counts are 2
+applications, 3 interview sessions and 1 historical offer. The Toronto window from
+October 29 to November 5, 2026 includes interview IDs
+`b0000000-0000-4000-8000-000000000001` (at midnight) and
+`b0000000-0000-4000-8000-000000000002` (that morning). The third starts at the end
+boundary. Deleting application `…002` changes the totals to 1 application, 0 interviews
+and 0 offers, with only `…001` in recent applications.
 
 ## Resume storage and PDF parsing (R2 / PDF)
 

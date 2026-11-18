@@ -24,6 +24,25 @@ export interface ApplicationRow {
   updatedAt: Date;
 }
 
+export type ApplicationDetailRow = ApplicationRow & { resumeName: string | null };
+export type ApplicationListRow = Pick<ApplicationRow,
+  "id" | "companyName" | "positionTitle" | "status" | "appliedDate" | "resumeId" | "rowVersion" | "createdAt"
+> & { resumeName: string | null };
+
+export interface ApplicationListOptions {
+  search?: string;
+  status?: ApplicationStatus;
+  sort?: "newest" | "company";
+  /** Optional display limit, such as for recent applications. */
+  limit?: number;
+}
+
+export interface ApplicationCounts {
+  statusCounts: Record<ApplicationStatus, number>;
+  totalApplications: number;
+  offersEverReceived: number;
+}
+
 type ApplicationFields = Omit<ApplicationRow, "id" | "userId" | "rowVersion" | "createdAt" | "updatedAt">;
 export type ApplicationUpdate = Partial<ApplicationFields>;
 export type NewApplication = Pick<ApplicationRow, "id" | "userId" | "companyName" | "positionTitle">
@@ -37,7 +56,9 @@ export type ApplicationDeleteResult = "DELETED" | "NOT_FOUND" | "GENERATION_ACTI
 export interface ApplicationRepository {
   /** Pass a pool to run atomically, or an existing transaction client to compose writes. */
   insert(db: Db, application: NewApplication): Promise<ApplicationInsertResult>;
-  get(db: Db, userId: string, id: string): Promise<ApplicationRow | null>;
+  get(db: Db, userId: string, id: string): Promise<ApplicationDetailRow | null>;
+  list(db: Db, userId: string, options?: ApplicationListOptions): Promise<ApplicationListRow[]>;
+  counts(db: Db, userId: string): Promise<ApplicationCounts>;
   /** Pass the current rowVersion when available. A concurrent resume relink can also conflict. */
   update(db: Db, userId: string, id: string, expectedRowVersion: string | undefined,
     changes: ApplicationUpdate): Promise<ApplicationUpdateResult>;
