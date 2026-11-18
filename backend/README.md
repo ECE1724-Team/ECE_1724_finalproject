@@ -154,10 +154,11 @@ Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_P
 File rules: [PRD §5.2](../docs/PRD.md). Upload and delete transactions:
 [Database Design §7.2–7.3](../docs/Database_Design.md).
 
-**Status:** `npm run test:db` exercises upload, unlinking, and worker cleanup through
-`createPostgresResumeModule()` with real PostgreSQL and fake object storage. Apply
-migration 006 with `npm run migrate` before starting the module. Server mounting and
-verified-user middleware are part of team integration.
+**Status:** `npm run test:db` exercises upload, owner isolation, download, unlinking,
+and worker cleanup through the mounted routes with real PostgreSQL and PDF parsing.
+The HTTP test supplies test middleware and fake object storage. Apply migration 006
+with `npm run migrate` before starting the module.
+[Resume HTTP integration test](tests/integration/resume-http.db.test.ts)
 
 ### R2 setup
 
@@ -182,22 +183,24 @@ random test object. Without that flag it is reported as skipped.
 | `src/modules/resumes/repository.ts` | `ResumeRepository` and `StorageCleanupRepository` interfaces |
 | `src/modules/resumes/postgres-repository.ts` | PostgreSQL implementations of both repositories |
 | `src/modules/resumes/postgres-module.ts` | `createPostgresResumeModule()` wires the service and worker to the same repositories |
+| `src/modules/resumes/postgres-routes.ts` | `mountPostgresResumeRoutes()` mounts the PostgreSQL-backed routes and returns the worker starter |
 | `src/modules/resumes/pdf-policy.ts` | `validateResumePdf()`: the PRD file rules |
 | `src/integrations/object-storage/r2.ts` | `createR2Storage()`, `createObjectKey()` |
 | `src/integrations/pdf/extractor.ts` | `createPdfExtractor()`: parses PDFs in a worker thread with a timeout and a concurrency limit |
 | `src/config/env.ts` | `readR2Config()`: reads and checks the R2 variables |
 
-### Mounting (once `app.ts` exists)
+### Mounting from server startup
 
 ```ts
-import { createPostgresResumeModule } from "./modules/resumes/postgres-module.js";
+import { mountPostgresResumeRoutes } from "./modules/resumes/postgres-routes.js";
 
 const pool = createPool();
 const storage = createR2Storage(readR2Config());
 const pdf = createPdfExtractor();                 // ONE per process: it holds the parse limit
-const { service, startWorker } = createPostgresResumeModule({ pool, storage, pdf });
-app.use("/api/v1/resumes", createResumeRouter({ service, authenticate: requireVerifiedUser }));
-const worker = startWorker();
+const startResumeWorker = mountPostgresResumeRoutes(app, {
+  pool, storage, pdf, authenticate: requireVerifiedUser(authentication),
+});
+const worker = startResumeWorker();
 // On shutdown: stop accepting requests, await worker.stop(), storage.close(), await pool.end().
 ```
 
@@ -244,7 +247,7 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 
 ### Known gaps
 
-- The HTTP route tests use fake authentication. The PostgreSQL workflow test calls the service directly.
+- The live session check requires the team's verified-user middleware and server startup.
 - Assumes one backend instance: the cleanup worker puts every `processing` job back to
   `pending` before each pass (Database Design §5.11). Running several instances needs the
   lease design in Database Design §5.7.

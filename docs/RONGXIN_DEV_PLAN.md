@@ -141,3 +141,20 @@ npm run test:db
 | Jianye’s AI implementation | Jianye verifies the end-to-end chat, retry and isolation flows. Repeat the Phase 3 active-generation deletion check through the live API. |
 
 **Team acceptance.** A teammate follows the database setup from a clean checkout and runs the documented checks. Record the independent DB results when available and the end-to-end results when the corresponding features are integrated.
+
+### Local verification, 2026-11-18
+
+A fresh source copy installed both packages from their lockfiles on Node 26.13.1.
+All seven migrations applied to an empty PostgreSQL 18.6 database and the second
+`npm run migrate` found no pending files. Backend typecheck, build, 47 unit tests,
+and 28 PostgreSQL integration tests passed. Frontend lint and build passed.
+
+`mountPostgresResumeRoutes()` connects Express to the Phase 2 module and returns the
+worker starter. The HTTP test used two fixture owners, PostgreSQL, the real PDF
+extractor, and test middleware and object storage. It checked private access, upload,
+download, application unlinking, and worker cleanup after deletion.
+[Mounting instructions](../backend/README.md#mounting-from-server-startup) · [HTTP integration test](../backend/tests/integration/resume-http.db.test.ts)
+
+The live R2 check was skipped pending an isolated development bucket. Two-account
+session acceptance, application API and UI comparison, and live AI chat, retry,
+isolation, and guarded deletion remain team integration checks.
