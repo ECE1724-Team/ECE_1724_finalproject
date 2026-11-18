@@ -74,3 +74,26 @@ test("start resets interrupted jobs and runs a pass; a failing pass is logged; s
   assert.ok(logs.entries.length >= 2, "first pass and at least one timer pass are logged");
   assert.ok(logs.entries.every((entry) => /Cleanup pass failed/.test(entry.message)));
 });
+
+test("a pass that stops midway leaves no job stuck: the next pass puts the batch back", async () => {
+  const { deps, cleanup, resumes, storage, logs } = setup();
+  for (const key of ["resumes/a.pdf", "resumes/b.pdf"]) {
+    storage.objects.set(key, new Uint8Array([1]));
+    await cleanup.enqueue(null, key, "resume_deleted");
+  }
+  // Database blip: the live-resume check fails, and recording the failure fails too.
+  resumes.lookupError = new Error("Connection terminated unexpectedly");
+  cleanup.failError = resumes.lookupError;
+
+  const worker = startCleanupWorker(deps, { intervalMs: 5 });
+  await new Promise((resolve) => setImmediate(resolve)); // the first pass uses only in-memory fakes
+  assert.deepEqual(cleanup.jobs.map((job) => job.status), ["processing", "processing"]);
+  assert.ok(logs.entries.some((entry) => entry.message === "Cleanup job failed unexpectedly" && entry.details?.jobId === "job-1"));
+
+  resumes.lookupError = undefined;
+  cleanup.failError = undefined;
+  await sleep(20);
+  await worker.stop();
+  assert.deepEqual(cleanup.jobs.map((job) => job.status), ["done", "done"]);
+  assert.equal(storage.objects.size, 0);
+});

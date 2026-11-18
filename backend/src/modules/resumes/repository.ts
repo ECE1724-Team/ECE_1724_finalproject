@@ -76,6 +76,9 @@ export interface StorageCleanupRepository {
   complete(db: Db, jobId: string): Promise<void>;
   /** Records the error, increments attempt_count, sets status back to pending until nextAttemptAt. */
   fail(db: Db, jobId: string, errorCode: string, nextAttemptAt: Date): Promise<void>;
-  /** Run once at startup: jobs left processing by a crash go back to pending. Returns how many. */
+  /**
+   * Puts every processing job back to pending. Returns how many. The worker calls it before
+   * each pass, which is safe only because there is one backend instance and passes never overlap.
+   */
   resetInterrupted(db: Db): Promise<number>;
 }

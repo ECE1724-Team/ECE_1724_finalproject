@@ -16,7 +16,7 @@ AI behavior in [AI Design](AI_Design.md), routes in [endpoints.json](endpoints.j
 | Phase 4: resume service, API routes, cleanup worker | Module work done and unit-tested with fakes; SQL, auth and wiring wait on teammates (Next steps §2) |
 | AI Copilot | Not started |
 
-`npm run typecheck`, `npm test` (40 tests) and `npm run build` pass.
+`npm run typecheck`, `npm test` (42 tests) and `npm run build` pass.
 
 ## Progress log
 
@@ -100,6 +100,17 @@ Everything that didn't need teammates' code. 40 unit tests pass (25 new).
   `backend/README.md`: files, mounting, HTTP errors, rules.
 - `npm audit` reports 3 moderate issues from `node-pg-migrate`'s `glob`; they were there before multer.
 
+### 2026-11-17: Phase 4 review fixes
+42 unit tests pass; each new check fails on the code before these fixes.
+- A PostgreSQL answer is now `instanceof DatabaseError` (pg), not a five-character `code`:
+  `EPIPE` matched the old pattern, so a socket error skipped the row lookup and returned 500.
+- The cleanup worker calls `resetInterrupted` before **every** pass, not only at start. Before,
+  a database blip during a pass left the whole claimed batch `processing` until the next restart.
+  Safe because there is one instance and passes never overlap.
+- Logging: every 5xx except `PDF_BUSY` is logged (before, only 500), and the worker logs
+  non-storage job errors (`unexpected_error`) with their stack.
+- A `name` over multer's 1 KiB `fieldSize` is 422 `VALIDATION_ERROR` like any too-long name (was 400).
+
 ## Don't undo these
 Worker-thread isolation and the `busy` limit; `If-None-Match` on writes; never accepting a
 storage key or user ID from the browser; no text in `unavailable` results; R2 objects of
@@ -128,7 +139,7 @@ The module work (2a in the original plan) is done; see the Progress log entry
 | What | Waiting for | Until then |
 |---|---|---|
 | SQL for `ResumeRepository` and `StorageCleanupRepository` (`src/modules/resumes/repository.ts`) | Rongxin | Fakes in `tests/fakes/resumes.ts` |
-| Migration 006 `storage_cleanup_jobs`, including `resetInterrupted` | Rongxin | Worker and `upload_rollback` tested with fakes |
+| Migration 006 `storage_cleanup_jobs`, including `resetInterrupted` (all `processing` → `pending`; the worker calls it before each pass) | Rongxin | Worker and `upload_rollback` tested with fakes |
 | `createPool()` instead of the import-time pool in `db/pool.ts` | Rongxin | My modules only take a pool parameter |
 | `npm run migrate` and a local Postgres, then an opt-in real-DB test (like `test:r2`) | Rongxin | Unit tests only |
 | `requireVerifiedUser` / `VerifiedAuthContext` code | Zishi | Fake auth in route tests |

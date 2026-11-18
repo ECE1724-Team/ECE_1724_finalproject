@@ -31,7 +31,8 @@ const MAX_FILE_NAME_CHARS = 255;
 
 const parseUpload = multer({
   storage: multer.memoryStorage(),
-  // One small text field (name) and one file; anything else is a bad request.
+  // One small text field (name) and one file; anything else is a bad request. 1 KiB holds a
+  // 200-character name in any script (at most 4 bytes per character).
   limits: { fileSize: MAX_RESUME_BYTES, files: 1, fields: 1, fieldSize: 1024, parts: 2 },
   defParamCharset: "utf8", // keep non-ASCII file names (multer's default is latin1)
 }).single("file");
@@ -85,7 +86,11 @@ export function createResumeRouter({ service, authenticate, log = defaultLog }: 
     if (res.headersSent) return next(error);
     const answer = toHttpError(error);
     if (!answer) return; // cancelled: the client has gone, there is no one to answer
-    if (answer.status === 500) log("Resume request failed", { error: error instanceof Error ? error.stack : String(error) });
+    // Every server-side failure except PDF_BUSY (expected under load), so a 503 caused by bad R2
+    // credentials or an unreachable database shows up in the log. Errors never carry file bytes or text.
+    if (answer.status >= 500 && answer.code !== "PDF_BUSY") {
+      log("Resume request failed", { status: answer.status, code: answer.code, error: error instanceof Error ? error.stack : String(error) });
+    }
     if (answer.code === "PDF_BUSY") res.set("Retry-After", "5");
     res.status(answer.status).json({ error: { code: answer.code, message: answer.message } });
   };
@@ -99,20 +104,23 @@ const receiveUpload: RequestHandler = (req, res, next) => {
   }
   parseUpload(req, res, (error?: unknown) => {
     if (!error) return next();
-    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") return next(new PdfError("too_large"));
-    next(new HttpError(400, "BAD_REQUEST", "Send exactly one PDF in the file field and a name field."));
+    if (error instanceof multer.MulterError) {
+      if (error.code === "LIMIT_FILE_SIZE") return next(new PdfError("too_large"));
+      // A name over fieldSize is just a name that is too long.
+      if (error.code === "LIMIT_FIELD_VALUE" && error.field === "name") return next(invalidName());
+    }
+    next(badUpload());
   });
 };
 
+const badUpload = () => new HttpError(400, "BAD_REQUEST", "Send exactly one PDF in the file field and a name field.");
+const invalidName = () => new HttpError(422, "VALIDATION_ERROR", `The resume name must be 1–${MAX_NAME_CHARS} characters.`);
+
 function uploadInput(req: Request) {
   const rawName: unknown = req.body?.name;
-  if (!req.file || typeof rawName !== "string") {
-    throw new HttpError(400, "BAD_REQUEST", "Send exactly one PDF in the file field and a name field.");
-  }
+  if (!req.file || typeof rawName !== "string") throw badUpload();
   const name = rawName.trim();
-  if (!name || [...name].length > MAX_NAME_CHARS) {
-    throw new HttpError(422, "VALIDATION_ERROR", `The resume name must be 1–${MAX_NAME_CHARS} characters.`);
-  }
+  if (!name || [...name].length > MAX_NAME_CHARS) throw invalidName();
   return { name, fileName: cleanFileName(req.file.originalname), bytes: req.file.buffer };
 }
 

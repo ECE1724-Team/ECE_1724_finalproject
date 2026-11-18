@@ -8,7 +8,7 @@ import { PdfError, type PdfExtraction } from "../../src/integrations/pdf/types.j
 import { cleanFileName, createResumeRouter, toHttpError } from "../../src/modules/resumes/routes.js";
 import { createResumeService } from "../../src/modules/resumes/service.js";
 import {
-  FakeCleanupRepository, FakeResumeRepository, FakeStorage, collectLogs, extraction, fakeExtractor, pdfBytes,
+  FakeCleanupRepository, FakeResumeRepository, FakeStorage, collectLogs, extraction, fakeExtractor, pdfBytes, pgError,
 } from "../fakes/resumes.js";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -118,7 +118,8 @@ test("upload input errors: 415, 400, 422 and 413", async () => {
   ] });
   assert.deepEqual([twoFiles.status, await errorCode(twoFiles)], [400, "BAD_REQUEST"]);
 
-  for (const name of ["   ", "x".repeat(201)]) {
+  // 1025 bytes is over multer's fieldSize; it must still be the same 422, not a 400.
+  for (const name of ["   ", "x".repeat(201), "x".repeat(1025)]) {
     const invalid = await upload({ name });
     assert.deepEqual([invalid.status, await errorCode(invalid)], [422, "VALIDATION_ERROR"]);
   }
@@ -150,17 +151,23 @@ test("storage and database failures map to 503, bugs to 500 without leaking deta
   reset().storage.putError = new StorageError("access_denied");
   const storageDown = await upload({ name: "x" });
   assert.deepEqual([storageDown.status, await errorCode(storageDown)], [503, "SERVICE_UNAVAILABLE"]);
+  assert.match(String(current.logs.entries.at(-1)?.details?.error), /access_denied/, "a 503 is logged too");
 
   reset().resumes.insertError = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
   const dbDown = await upload({ name: "x" });
   assert.deepEqual([dbDown.status, await errorCode(dbDown)], [503, "SERVICE_UNAVAILABLE"]);
+
+  const brokenPipe = reset();
+  brokenPipe.resumes.insertError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  brokenPipe.resumes.lookupError = brokenPipe.resumes.insertError;
+  assert.equal((await upload({ name: "x" })).status, 503);
 
   const unknown = reset();
   unknown.resumes.insertError = new Error("Connection terminated unexpectedly");
   unknown.resumes.lookupError = new Error("Connection terminated unexpectedly");
   assert.equal((await upload({ name: "x" })).status, 503);
 
-  reset().resumes.insertError = Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+  reset().resumes.insertError = pgError("23505", "duplicate key value violates unique constraint");
   const bug = await upload({ name: "x" });
   const body = await bug.json() as { error: { code: string; message: string } };
   assert.equal(bug.status, 500);

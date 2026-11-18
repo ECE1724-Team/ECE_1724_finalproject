@@ -47,15 +47,20 @@ async function processJob(deps: CleanupWorkerDeps, job: CleanupJob): Promise<voi
     await storage.delete(job.objectKey); // succeeds if the object is already gone
     await cleanup.complete(pool, job.id);
   } catch (error) {
-    const code = error instanceof StorageError ? error.code : "unexpected_error";
-    // If this also fails, the job stays "processing" until resetInterrupted runs at the next start.
-    await cleanup.fail(pool, job.id, code, nextAttemptAt(job.attemptCount, (deps.now ?? (() => new Date()))()));
+    const isStorageError = error instanceof StorageError;
+    // StorageError codes are enough in last_error_code; anything else needs its details in the log.
+    if (!isStorageError) log("Cleanup job failed unexpectedly", { jobId: job.id, error: errorDetails(error) });
+    // If this throws too, the pass stops and the next pass puts the claimed jobs back (see startCleanupWorker).
+    await cleanup.fail(pool, job.id, isStorageError ? error.code : "unexpected_error",
+      nextAttemptAt(job.attemptCount, deps.now?.() ?? new Date()));
   }
 }
 
 /**
- * Resets jobs interrupted by a crash, runs one pass now, then one every 30 s (never two
- * at once). stop() cancels the timer and waits for a running pass.
+ * Runs one pass now, then one every 30 s, never two at once. Each pass first puts jobs left
+ * "processing" back to pending: with a single backend instance and no overlapping passes,
+ * such jobs come from a crash or from an earlier pass that stopped midway (e.g. the database
+ * dropped out). stop() cancels the timer and waits for a running pass.
  */
 export function startCleanupWorker(deps: CleanupWorkerDeps, { intervalMs = INTERVAL_MS } = {}) {
   const log = deps.log ?? defaultLog;
@@ -63,25 +68,19 @@ export function startCleanupWorker(deps: CleanupWorkerDeps, { intervalMs = INTER
 
   const pass = async () => {
     try {
+      await deps.cleanup.resetInterrupted(deps.pool);
       await runCleanupOnce(deps);
     } catch (error) {
-      log("Cleanup pass failed; retrying on the next tick", { error: errorMessage(error) });
+      log("Cleanup pass failed; retrying on the next tick", { error: errorDetails(error) });
     }
   };
-  const run = (work: () => Promise<void>) => {
+  const run = () => {
     if (active) return;
-    active = work().finally(() => { active = undefined; });
+    active = pass().finally(() => { active = undefined; });
   };
 
-  run(async () => {
-    try {
-      await deps.cleanup.resetInterrupted(deps.pool);
-    } catch (error) {
-      log("Cleanup: could not reset interrupted jobs", { error: errorMessage(error) });
-    }
-    await pass();
-  });
-  const timer = setInterval(() => run(pass), intervalMs);
+  run();
+  const timer = setInterval(run, intervalMs);
   timer.unref(); // the HTTP server keeps the process alive, not this timer
 
   return {
@@ -93,4 +92,4 @@ export function startCleanupWorker(deps: CleanupWorkerDeps, { intervalMs = INTER
 }
 
 const defaultLog = (message: string, details?: Record<string, unknown>) => console.error(message, details ?? "");
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const errorDetails = (error: unknown) => (error instanceof Error ? error.stack : String(error));

@@ -7,7 +7,7 @@ import { ServiceUnavailableError } from "../../src/modules/resumes/errors.js";
 import { MAX_RESUME_BYTES } from "../../src/modules/resumes/pdf-policy.js";
 import { createResumeService } from "../../src/modules/resumes/service.js";
 import {
-  FakeCleanupRepository, FakeResumeRepository, FakeStorage, collectLogs, extraction, fakeExtractor, pdfBytes,
+  FakeCleanupRepository, FakeResumeRepository, FakeStorage, collectLogs, extraction, fakeExtractor, pdfBytes, pgError,
 } from "../fakes/resumes.js";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -26,7 +26,6 @@ function setup(result = extraction() as ReturnType<typeof extraction> | PdfError
   return { service, resumes, cleanup, storage, pdf, logs, upload };
 }
 
-const sqlError = (code: string) => Object.assign(new Error("insert failed"), { code });
 const connectionLost = () => new Error("Connection terminated unexpectedly");
 
 test("upload with usable text stores the file and a succeeded row with its text", async () => {
@@ -73,13 +72,13 @@ test("a failed R2 write leaves no row", async () => {
 
 test("insert rejected by PostgreSQL: the object is deleted, or queued, or logged", async () => {
   const deleted = setup();
-  deleted.resumes.insertError = sqlError("23505");
+  deleted.resumes.insertError = pgError("23505");
   await assert.rejects(deleted.upload(), { code: "23505" });
   assert.equal(deleted.storage.objects.size, 0);
   assert.equal(deleted.cleanup.jobs.length, 0);
 
   const queued = setup();
-  queued.resumes.insertError = sqlError("23514");
+  queued.resumes.insertError = pgError("23514");
   queued.storage.deleteError = new StorageError("service_error");
   await assert.rejects(queued.upload(), { code: "23514" });
   assert.equal(queued.cleanup.jobs.length, 1);
@@ -87,9 +86,9 @@ test("insert rejected by PostgreSQL: the object is deleted, or queued, or logged
   assert.equal(queued.storage.objects.size, 1);
 
   const logged = setup();
-  logged.resumes.insertError = sqlError("23514");
+  logged.resumes.insertError = pgError("23514");
   logged.storage.deleteError = new StorageError("service_error");
-  logged.cleanup.enqueueError = sqlError("57P01");
+  logged.cleanup.enqueueError = pgError("57P01");
   await assert.rejects(logged.upload(), { code: "23514" });
   const [key] = logged.storage.objects.keys();
   assert.deepEqual(logged.logs.entries.map((entry) => entry.details?.objectKey), [key]);
@@ -103,6 +102,15 @@ test("insert outcome unknown: a committed row is kept and returned", async () =>
   assert.equal(resumes.rows.has(row.id), true);
   assert.equal(storage.objects.has(row.objectKey), true);
   assert.equal(storage.calls.some((call) => call.startsWith("delete")), false);
+});
+
+test("a socket error is not a PostgreSQL answer, even with a five-letter code like EPIPE", async () => {
+  const { upload, resumes, storage } = setup();
+  resumes.insertError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  resumes.insertCommitsBeforeError = true;
+  const row = await upload();
+  assert.equal(resumes.rows.has(row.id), true, "found by the lookup instead of being rolled back");
+  assert.equal(storage.objects.has(row.objectKey), true);
 });
 
 test("insert outcome unknown and no row: the object is deleted", async () => {

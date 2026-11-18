@@ -1,4 +1,5 @@
 // In-memory fakes for resume tests. Never used at runtime.
+import { DatabaseError } from "pg";
 import { StorageError, type ObjectMetadata, type ObjectStorage, type StoredObject } from "../../src/integrations/object-storage/types.js";
 import { PdfError, type PdfExtraction, type PdfExtractor } from "../../src/integrations/pdf/types.js";
 import type {
@@ -89,6 +90,7 @@ export class FakeCleanupRepository implements StorageCleanupRepository {
   readonly jobs: FakeJob[] = [];
   enqueueError: unknown;
   claimError: unknown;
+  failError: unknown;
   now = () => new Date();
 
   async enqueue(_db: unknown, objectKey: string, reason: CleanupReason): Promise<void> {
@@ -113,6 +115,7 @@ export class FakeCleanupRepository implements StorageCleanupRepository {
   }
 
   async fail(_db: unknown, jobId: string, errorCode: string, nextAttemptAt: Date): Promise<void> {
+    if (this.failError !== undefined) throw this.failError;
     Object.assign(this.job(jobId), {
       status: "pending", lastErrorCode: errorCode, nextAttemptAt, attemptCount: this.job(jobId).attemptCount + 1,
     });
@@ -199,6 +202,11 @@ export const pdfBytes = (size = 64) => {
   bytes.write("%PDF-1.7\n");
   return bytes;
 };
+
+/** An error as pg reports it when PostgreSQL itself answered with this SQLSTATE. */
+export function pgError(code: string, message = "statement failed"): DatabaseError {
+  return Object.assign(new DatabaseError(message, 0, "error"), { code });
+}
 
 /** A collecting logger. */
 export function collectLogs() {

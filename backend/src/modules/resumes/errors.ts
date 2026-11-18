@@ -1,3 +1,5 @@
+import { DatabaseError } from "pg";
+
 /** The service cannot finish safely right now (e.g. the database is unreachable). Maps to HTTP 503. */
 export class ServiceUnavailableError extends Error {
   constructor(message = "The service is temporarily unavailable. Please try again.") {
@@ -6,10 +8,10 @@ export class ServiceUnavailableError extends Error {
   }
 }
 
-// pg sets `code` to a five-character SQLSTATE when PostgreSQL itself reported the error.
+// pg throws DatabaseError only for an error message sent by PostgreSQL; its `code` is the SQLSTATE.
+// Socket errors also carry a `code` (EPIPE, ECONNRESET...), so the class is the reliable test.
 function sqlState(error: unknown): string | undefined {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && /^[0-9A-Z]{5}$/.test(code) ? code : undefined;
+  return error instanceof DatabaseError ? error.code : undefined;
 }
 
 /**
