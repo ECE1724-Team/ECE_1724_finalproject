@@ -6,9 +6,13 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Runs the compiled tests (npm run test:db compiles them first), including the PostgreSQL ones.
+// The live R2 check is left to `npm run test:r2`, so an R2_INTEGRATION_TEST=1 in .env never
+// makes this suite touch a real bucket.
 const compiledTests = path.join(root, "dist", "tests", "tests");
+const EXCLUDED = new Set(["r2.test.js"]);
 const tests = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
-  entry.isDirectory() ? tests(path.join(directory, entry.name)) : entry.name.endsWith(".test.js") ? [path.join(directory, entry.name)] : []);
+  entry.isDirectory() ? tests(path.join(directory, entry.name))
+    : entry.name.endsWith(".test.js") && !EXCLUDED.has(entry.name) ? [path.join(directory, entry.name)] : []);
 let directory;
 let pgCtl;
 let started = false;

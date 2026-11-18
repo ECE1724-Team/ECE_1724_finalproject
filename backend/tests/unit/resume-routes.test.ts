@@ -163,9 +163,9 @@ test("storage and database failures map to 503, bugs to 500 without leaking deta
   assert.equal((await upload({ name: "x" })).status, 503);
 
   const unknown = reset();
-  unknown.resumes.insertError = new Error("Connection terminated unexpectedly");
-  unknown.resumes.lookupError = new Error("Connection terminated unexpectedly");
-  assert.equal((await upload({ name: "x" })).status, 503);
+  unknown.resumes.insertError = new Error("Query read timeout");
+  const timedOut = await upload({ name: "x" });
+  assert.deepEqual([timedOut.status, await errorCode(timedOut)], [503, "SERVICE_UNAVAILABLE"]);
 
   reset().resumes.insertError = pgError("23505", "duplicate key value violates unique constraint");
   const bug = await upload({ name: "x" });

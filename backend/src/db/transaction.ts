@@ -8,7 +8,7 @@ import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
  */
 export async function withTransaction<T>(pool: Pool, callback: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
-  let releaseError: Error | undefined;
+  let discard: true | undefined;
   try {
     await client.query("BEGIN");
     const result = await callback(client);
@@ -22,11 +22,12 @@ export async function withTransaction<T>(pool: Pool, callback: (client: PoolClie
       await client.query("ROLLBACK");
     } catch (rollbackError) {
       // Do not return a connection in an unknown state to the pool.
-      releaseError = rollbackError instanceof Error ? rollbackError : new Error("PostgreSQL rollback failed");
+      discard = true;
+      console.error("Transaction rollback failed:", rollbackError);
     }
     throw error;
   } finally {
-    client.release(releaseError);
+    client.release(discard);
   }
 }
 

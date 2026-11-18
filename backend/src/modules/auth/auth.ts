@@ -6,7 +6,6 @@ import type { BetterAuthOptions } from "@better-auth/core";
 import { APIError, createAuthMiddleware, createEmailVerificationToken, isAPIError } from "better-auth/api";
 import { decodeJwt, jwtVerify, errors as joseErrors } from "jose";
 import type { AuthConfig } from "../../config/env.js";
-import { watchIdleErrors } from "../../db/pool.js";
 import { Database } from "../../db/transaction.js";
 import type { EmailSender } from "../../integrations/email/types.js";
 import type { AuthenticatedSession, SessionReader } from "./types.js";
@@ -56,7 +55,9 @@ export function createAuthentication(options: AuthenticationOptions): Authentica
   // Rate counters must survive failed auth transactions. A dedicated small pool
   // avoids pool starvation while account transactions hold their own clients.
   const ratePool = new pg.Pool({ ...database.pool.options, max: 2 });
-  watchIdleErrors(ratePool);
+  // This pool is not made by createPool(), so it needs its own listener: an idle client that
+  // loses its connection (e.g. a PostgreSQL restart) would otherwise crash the process.
+  ratePool.on("error", (error) => { console.error("Rate-limit pool error:", error); });
   let nativeAuth: ReturnType<typeof betterAuth>;
 
   const readSession = async (headers: Headers): Promise<AuthenticatedSession | null> =>

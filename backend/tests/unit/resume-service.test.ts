@@ -104,6 +104,15 @@ test("insert outcome unknown: a committed row is kept and returned", async () =>
   assert.equal(storage.calls.some((call) => call.startsWith("delete")), false);
 });
 
+test("a localized PostgreSQL shutdown error preserves a committed resume and its PDF", async () => {
+  const { service, upload, resumes, storage } = setup();
+  resumes.insertError = Object.assign(pgError("57P01"), { severity: "ВАЖНО" });
+  resumes.insertCommitsBeforeError = true;
+  const row = await upload();
+  assert.deepEqual((await service.download(USER, row.id))?.bytes, new Uint8Array(pdfBytes()));
+  assert.equal(storage.calls.some((call) => call.startsWith("delete ")), false);
+});
+
 test("a socket error is not a PostgreSQL answer, even with a five-letter code like EPIPE", async () => {
   const { upload, resumes, storage } = setup();
   resumes.insertError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
@@ -113,11 +122,15 @@ test("a socket error is not a PostgreSQL answer, even with a five-letter code li
   assert.equal(storage.objects.has(row.objectKey), true);
 });
 
-test("insert outcome unknown and no row: the object is deleted", async () => {
-  const { upload, resumes, storage } = setup();
-  resumes.insertError = connectionLost();
-  await assert.rejects(upload(), /Connection terminated/);
-  assert.equal(storage.objects.size, 0);
+test("an empty recovery lookup preserves the object when insert completion is unknown", async () => {
+  const fatal = Object.assign(pgError("57P01"), { severity: "FATAL" });
+  for (const error of [connectionLost(), new Error("Query read timeout"), pgError("08007"), pgError("40003"), fatal]) {
+    const { upload, resumes, storage, cleanup } = setup();
+    resumes.insertError = error;
+    await assert.rejects(upload(), ServiceUnavailableError);
+    assert.equal(storage.objects.size, 1);
+    assert.deepEqual(cleanup.jobs, []);
+  }
 });
 
 test("insert outcome unknown and the lookup fails too: keep the object, report unavailable", async () => {

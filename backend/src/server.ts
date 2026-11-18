@@ -7,7 +7,7 @@ import { createAuthentication } from "./modules/auth/auth.js";
 
 async function main() {
   const environment = loadEnvironment();
-  const pool = createPool(environment.databaseUrl);
+  const pool = createPool({ DATABASE_URL: environment.databaseUrl });
   const database = new Database(pool);
   try {
     const result = await pool.query<{ ready: boolean }>(`SELECT
