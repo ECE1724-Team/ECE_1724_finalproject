@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
+import type { Db } from "../../db/pool.js";
 
-export type Db = Pool | PoolClient;
+export type { Db };
 export type ApplicationStatus = "saved" | "applied" | "oa" | "interview" | "offer" | "rejected";
 
 export interface ApplicationRow {

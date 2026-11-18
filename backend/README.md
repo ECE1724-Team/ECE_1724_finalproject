@@ -58,7 +58,8 @@ independently of `DATABASE_URL`. Add PostgreSQL integration tests under
 fictional owners via `insertTestOwners(pool)` after migrations complete.
 
 For application code, `createPool(env)` reads `DATABASE_URL` when called and defaults
-to `process.env`. The caller passes the pool to `withTransaction(pool, callback)` and
+to `process.env`. It applies the same check as `npm run migrate`, so the URL must name
+its database. The caller passes the pool to `withTransaction(pool, callback)` and
 awaits `pool.end()` at shutdown. Use the callback's client for every statement in the
 transaction.
 

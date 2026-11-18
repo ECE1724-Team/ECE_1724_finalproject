@@ -1,6 +1,9 @@
 
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { readDatabaseUrl } from "./database-url.mjs";
+
+/** The pool, or a client inside a transaction. */
+export type Db = Pool | PoolClient;
 
 type Environment = Record<string, string | undefined>;
 

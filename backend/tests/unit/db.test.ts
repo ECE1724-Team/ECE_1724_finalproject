@@ -18,6 +18,7 @@ test("createPool validates configuration when called", () => {
   assert.throws(() => createPool({ DATABASE_URL: "  " }), /DATABASE_URL is not configured/);
   assert.throws(() => createPool({ DATABASE_URL: "https://example.test/db" }), /PostgreSQL connection URL/);
   assert.throws(() => createPool({ DATABASE_URL: "postgresql://localhost:invalid/db" }), /PostgreSQL connection URL/);
+  assert.throws(() => createPool({ DATABASE_URL: "postgresql://localhost" }), /must name the PostgreSQL database/);
 });
 
 test("a successful transaction commits and releases the client once", async (t) => {
