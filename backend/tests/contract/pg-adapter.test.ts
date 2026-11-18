@@ -179,7 +179,9 @@ describe("PostgreSQL authentication adapter", { skip: !administrativeUrl }, () =
 
   test("factory fallback joins still work when native joins were requested", async () => {
     const saved = await user();
-    await adapter.create({ model: "session", data: { userId: saved.id, token: randomUUID(), expiresAt: new Date(Date.now() + 60_000) } });
+    // Better Auth always supplies session timestamps; session.updatedAt has no database default.
+    const now = new Date();
+    await adapter.create({ model: "session", data: { userId: saved.id, token: randomUUID(), expiresAt: new Date(now.getTime() + 60_000), createdAt: now, updatedAt: now } });
     const found = await adapter.findOne<{ user: { id: string; email: string } }>({ model: "session", where: [{ field: "userId", value: saved.id }], join: { user: true } });
     assert.equal(found?.user.id, saved.id);
     assert.equal(found?.user.email, saved.email);

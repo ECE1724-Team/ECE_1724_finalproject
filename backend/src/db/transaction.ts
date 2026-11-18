@@ -1,6 +1,35 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 
+/**
+ * Runs `callback` in its own transaction on a client from `pool`: COMMIT when it resolves,
+ * ROLLBACK when it throws. For business repository workflows that must commit atomically
+ * (Database Design Appendix C.4). Authentication code uses `Database` below instead.
+ */
+export async function withTransaction<T>(pool: Pool, callback: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let releaseError: Error | undefined;
+  try {
+    await client.query("BEGIN");
+    const result = await callback(client);
+    const commit = await client.query("COMMIT");
+    // PostgreSQL answers COMMIT of an aborted transaction (a failed statement whose error the
+    // callback caught) with ROLLBACK. That is not a durable success.
+    if (commit.command !== "COMMIT") throw new Error("PostgreSQL rolled back an aborted transaction");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      // Do not return a connection in an unknown state to the pool.
+      releaseError = rollbackError instanceof Error ? rollbackError : new Error("PostgreSQL rollback failed");
+    }
+    throw error;
+  } finally {
+    client.release(releaseError);
+  }
+}
+
 interface TransactionContext {
   client: PoolClient;
   closed: boolean;

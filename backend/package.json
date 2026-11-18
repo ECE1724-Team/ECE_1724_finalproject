@@ -3,40 +3,44 @@
   "version": "1.0.0",
   "description": "",
   "main": "dist/server.js",
-  "engines": { "node": ">=24" },
   "scripts": {
-    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file-if-exists=.env dist/server.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "typecheck:tests": "tsc -p tsconfig.test.json",
-    "test": "node scripts/test-with-postgres.mjs",
-    "test:contract": "node --import tsx --test tests/contract/*.test.ts",
-    "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/*.test.ts",
+    "dev": "npm run build && npm start",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test dist/tests/tests/unit/*.test.js dist/tests/tests/contract/*.test.js",
+    "test:db": "tsc -p tsconfig.test.json && node scripts/test-with-postgres.mjs",
+    "test:r2": "tsc -p tsconfig.test.json && node --env-file-if-exists=.env --test dist/tests/tests/integration/r2.test.js",
     "migrate": "node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js up --migrations-dir migrations",
     "migrate:down": "node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js down --migrations-dir migrations"
+  },
+  "engines": {
+    "node": ">=26.0.0 <27"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module",
+  "type": "commonjs",
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1169.0",
     "@better-auth/core": "1.7.20",
     "better-auth": "1.7.20",
     "cors": "2.8.6",
     "express": "^5.3.0",
     "jose": "6.2.17",
+    "multer": "2.5.0",
     "nodemailer": "10.5.0",
+    "pdfjs-dist": "6.5.438",
     "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/cors": "2.8.19",
     "@types/express": "^5.0.6",
+    "@types/multer": "2.3.0",
     "@types/node": "^26.6.6",
     "@types/nodemailer": "8.0.2",
     "@types/pg": "^8.23.1",
     "node-pg-migrate": "^9.0.0",
-    "tsx": "4.23.15",
     "typescript": "^7.0.2"
   }
 }

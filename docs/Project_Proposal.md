@@ -27,8 +27,8 @@ We will use a separate frontend and backend architecture, with a React client co
 - **Frontend:** React and TypeScript for pages and interactions; Tailwind CSS and shadcn/ui for responsive layouts and reusable components.  
 - **Backend:** Node.js, Express.js, and TypeScript for authentication, validation, business rules, file processing, and AI orchestration.  
 - **Database:** PostgreSQL, accessed through \`pg\` using parameterized SQL, with \`node-pg-migrate\` for versioned database migrations.  
-- **File storage and processing (Advanced Feature):** Private S3-compatible object storage for resume PDFs, with PDF validation and text extraction for AI use. Basic upload/download satisfies the core storage requirement; file processing is the advanced feature.  
-- **AI integration (Advanced Feature):** Vercel AI SDK for an external LLM connection, bounded tool calling, multi-turn conversations, and streamed responses.  
+- **File storage and processing (Advanced Feature):** Private Cloudflare R2 object storage through its S3-compatible API for resume PDFs, with PDF validation and text extraction for AI use. Basic upload/download satisfies the core storage requirement; file processing is the advanced feature.
+- **AI integration (Advanced Feature):** Vercel AI SDK for an external LLM connection, backend-assembled context with per-turn material versioning, multi-turn conversations with history compression, and streamed responses. Bounded tool calling is reserved for optional company-website reading.  
 - **Authentication and authorization (Advanced Feature):** Authentication and session management using Better Auth with PostgreSQL-backed sessions and Secure, HttpOnly cookies. Protected resources will be secured through user authentication and ownership checks to ensure users can only access their own data.  
 - **API documentation:** An OpenAPI specification describing requests, responses, authentication, and errors.
 
@@ -36,7 +36,7 @@ We will use a separate frontend and backend architecture, with a React client co
 
 TypeScript across React and Express supports consistent data definitions. React supports reusable dashboard, application-list, and chat components; Tailwind CSS and shadcn/ui reduce styling and component-development effort. A single Express backend keeps application management, authorization, and file handling together. PostgreSQL fits our linked application, resume, and conversation records and supports transactional timeline updates. We use `pg` without an ORM because our team is more familiar with SQL and prefers writing queries directly, making development more straightforward and efficient for us.
 
-We chose the Vercel AI SDK because its TypeScript backend APIs and React hooks (`@ai-sdk/react`) simplify tool calling, streaming, and chat-state handling, reducing integration work compared with implementing provider calls and stream handling ourselves. RAG, coding interviews with code execution, automatic grading, and voice interviews are outside the current project scope, keeping the design manageable. The SDK's common provider interface supports later model changes, although provider capabilities and SDK upgrades still require compatibility checks.
+We chose the Vercel AI SDK because its TypeScript backend APIs and React hooks (`@ai-sdk/react`) simplify streaming, chat-state handling, and bounded tool calling where needed, reducing integration work compared with implementing provider calls and stream handling ourselves. Application materials are always needed and their version checks must be deterministic, so the backend loads them into each request directly rather than asking the model to fetch them through tools. RAG, coding interviews with code execution, automatic grading, and voice interviews are outside the current project scope, keeping the design manageable. The SDK's common provider interface supports later model changes, although provider capabilities and SDK upgrades still require compatibility checks.
 
 ## 3\. Project Plan and Team Responsibilities
 
@@ -53,7 +53,7 @@ We chose the Vercel AI SDK because its TypeScript backend APIs and React hooks (
 
 1. **Backend and database — Zishi Yang and Rongxin Bi:** Zishi implements authentication and application creation/query endpoints; Rongxin initializes the database and supporting SQL operations.  
 2. **Frontend — Justin Smith:** Build login, application creation, and application-list pages, using mock data until endpoints are available.  
-3. **AI prototype — Jianye Zhou:** Independently verify tool calling and streaming chat using sample application materials.
+3. **AI prototype — Jianye Zhou:** Independently verify backend context assembly and streaming chat using sample application materials.
 
 #### Phase 3: Complete the First End-to-End Workflow (Non-AI features planned for completion before November 25\)
 
@@ -64,7 +64,7 @@ We chose the Vercel AI SDK because its TypeScript backend APIs and React hooks (
 #### Phase 4: Integrate the AI Workspace
 
 1. **Connect real data — Jianye Zhou:** Implement the AI frontend and backend using authenticated application data, independent conversations, and persistent chat history. Rongxin supports database integration.  
-2. **Implement context management — Jianye Zhou:** Add initial material retrieval, selective refresh after updates, and isolation between applications and conversations.  
+2. **Implement context management — Jianye Zhou:** Add per-turn material loading with version checks, change notices after updates, history compression, and isolation between applications and conversations.  
 3. **Complete supporting features — Jianye Zhou:** Add editable prompt shortcuts and on-demand company website reading (optional, time permitting).  
 4. **Integration checkpoint — All members:** Verify saved conversations, updated-material handling, and isolation using distinct users and applications.
 
@@ -100,7 +100,7 @@ The team will hold brief twice-weekly progress checks, communicate blockers prom
 
 - **Product Requirements Document:** Maintain the PRD and keep requirements aligned with the agreed project scope.  
 - **AI Frontend and Backend (Advanced Feature):** Own the AI workspace frontend and backend, using the Vercel AI SDK for model integration.  
-- **Cloud Storage and File Processing (Advanced Feature):** Integrate S3-compatible storage and PDF processing. Validate uploaded PDFs and make extracted text available to the AI through the associated database records.
+- **Cloud Storage and File Processing (Advanced Feature):** Integrate Cloudflare R2 through its S3-compatible API and implement PDF processing. Validate uploaded PDFs and make extracted text available to the AI through the associated database records.
 
 ## 4\. Initial Team Reasoning and AI-Assisted Exploration
 
@@ -110,10 +110,12 @@ The team will hold brief twice-weekly progress checks, communicate blockers prom
 
 **Initial technical hypothesis:** We initially favored separate React and Express applications so frontend and backend work could proceed in parallel. Some members were also more comfortable with backend development. We preferred PostgreSQL because we expected multiple users to update applications and save conversations concurrently. Following the course recommendation, we considered Better Auth to reduce the work involved in implementing authentication ourselves. We also planned to store PDF files in private S3-compatible object storage, with the provider still to be selected.
 
+**Storage decision (2026-11-15):** Cloudflare R2 was selected for private PDF storage, accessed through the backend using its S3-compatible API.
+
 **Open questions:** We had not yet settled how much the AI assistant should do. Tool calling, conversation memory, and the work needed to implement them required further investigation.
 
 #### 4.2 Exploration and Evaluation
 
 Our group discussed several ideas before choosing JobFlow AI. We first considered a health monitoring system, but thought it would amount to a basic CRUD application. The collaborative data analysis example interested us, although we felt its scope would be difficult to manage within the available time. A job application tracking system drew on our own experiences and seemed more achievable while still giving us room to explore AI integration.
 
-After that discussion, we asked ChatGPT which technologies could support the AI Interview Copilot. Its suggestions included guardrails, state management, and RAG. Given the time available, we decided to focus on tool calling, context management, and short-term conversation memory. These would support the basic assistant we wanted to build without adding RAG to the project scope.  
+After that discussion, we asked ChatGPT which technologies could support the AI Interview Copilot. Its suggestions included guardrails, state management, and RAG. Given the time available, we decided to focus on tool calling, context management, and short-term conversation memory. These would support the basic assistant we wanted to build without adding RAG to the project scope. A later design review (November 2026) found that the core materials are needed on every turn and are small, so they are loaded by the backend rather than through model tool calls; tool calling remains planned for optional company-website reading.  

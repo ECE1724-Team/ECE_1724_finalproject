@@ -5,8 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Runs the compiled tests (npm run test:db compiles them first), including the PostgreSQL ones.
+const compiledTests = path.join(root, "dist", "tests", "tests");
 const tests = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
-  entry.isDirectory() ? tests(path.join(directory, entry.name)) : entry.name.endsWith(".test.ts") ? [path.join(directory, entry.name)] : []);
+  entry.isDirectory() ? tests(path.join(directory, entry.name)) : entry.name.endsWith(".test.js") ? [path.join(directory, entry.name)] : []);
 let directory;
 let pgCtl;
 let started = false;
@@ -32,7 +34,7 @@ try {
     admin.searchParams.set("port", "5432");
     url = admin.href;
   }
-  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", ...tests(path.join(root, "tests"))], {
+  const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", ...tests(compiledTests)], {
     cwd: root, stdio: "inherit", env: { ...process.env, TEST_DATABASE_URL: url, NODE_ENV: "test" },
   });
   process.exitCode = result.status ?? 1;

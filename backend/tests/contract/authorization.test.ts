@@ -3,7 +3,7 @@ import test from "node:test";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type { Pool } from "pg";
 import { Database } from "../../src/db/transaction.js";
-import { requireOwnedResource, requireVerifiedUser, type OwnedResourceKind } from "../../src/http/authorization.js";
+import { requireAuthContext, requireOwnedResource, requireVerifiedUser, type OwnedResourceKind } from "../../src/http/authorization.js";
 import type { AuthenticatedSession, SessionReader, VerifiedAuthContext } from "../../src/modules/auth/types.js";
 
 const OWNER = "11111111-1111-4111-8111-111111111111";
@@ -205,4 +205,15 @@ test("resource kinds and route parameter names are server configuration", () => 
   const db = dbWithQuery(() => []);
   assert.throws(() => requireOwnedResource(db, "applications; DROP TABLE auth_user" as OwnedResourceKind, "id"));
   assert.throws(() => requireOwnedResource(db, "application", "id; DROP TABLE auth_user"));
+});
+
+test("requireAuthContext accepts only a complete verified context and never reads a Session", async () => {
+  const accepted = await invoke(requireAuthContext, {}, { auth: identity() });
+  assert.equal(accepted.nextCalled, true);
+  for (const auth of [undefined, { userId: OWNER, sessionId: SESSION, emailVerified: false }, { userId: "", sessionId: SESSION, emailVerified: true }]) {
+    const result = await invoke(requireAuthContext, {}, auth === undefined ? {} : { auth });
+    assert.equal(result.nextCalled, false);
+    assert.equal(result.status, 401);
+    assert.deepEqual(result.body, { error: { code: "UNAUTHORIZED", message: "A verified session is required." } });
+  }
 });

@@ -51,7 +51,7 @@ export function requireVerifiedUser(reader: SessionReader): RequestHandler {
         return;
       }
       if (data.user.emailVerified !== true) {
-        reject(res, 403, "EMAIL_NOT_VERIFIED", "Email verification is required.");
+        reject(res, 403, "EMAIL_NOT_VERIFIED", "Verify your email before accessing this resource.");
         return;
       }
 
@@ -68,6 +68,24 @@ export function requireVerifiedUser(reader: SessionReader): RequestHandler {
     }
   };
 }
+
+function hasVerifiedContext(res: Response): boolean {
+  const context = res.locals.auth as VerifiedAuthContext | undefined;
+  return Boolean(context && context.emailVerified === true && context.userId && context.sessionId);
+}
+
+/**
+ * For routers mounted under /api/v1, where `createApp` has already run
+ * `requireVerifiedUser`: confirms the trusted context without reading the Session
+ * again. Pass it as a router's `authenticate` option. Anywhere else it answers 401.
+ */
+export const requireAuthContext: RequestHandler = (_req, res, next) => {
+  if (!hasVerifiedContext(res)) {
+    reject(res, 401, "UNAUTHORIZED", "A verified session is required.");
+    return;
+  }
+  next();
+};
 
 /**
  * Checks the resource against the server-established user identity. Missing,
@@ -87,11 +105,11 @@ export function requireOwnedResource(
   const query = OWNERSHIP_QUERIES[kind];
 
   return async (req, res, next) => {
-    const context = res.locals.auth as VerifiedAuthContext | undefined;
-    if (!context || context.emailVerified !== true || !context.userId || !context.sessionId) {
+    if (!hasVerifiedContext(res)) {
       reject(res, 401, "UNAUTHORIZED", "A verified session is required.");
       return;
     }
+    const context = res.locals.auth as VerifiedAuthContext;
 
     const resourceId = req.params[paramName];
     if (typeof resourceId !== "string" || !UUID.test(resourceId)) {

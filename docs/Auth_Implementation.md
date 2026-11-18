@@ -1,12 +1,12 @@
 # Authentication and Authorization Implementation
 
-This guide describes the backend implementation on `feat/authentication`. Requirements come from the existing PRD, API contract and database design. The original document bodies are retained; this guide records concrete implementation choices and the requester's later configuration confirmations dated 2026-11-11.
+This guide describes the authentication backend (merged with `main` on 2026-11-18). Requirements come from the existing PRD, API contract and database design. The original document bodies are retained; this guide records concrete implementation choices and the requester's later configuration confirmations dated 2026-11-11.
 
 ## Runtime and dependencies
 
-Use the project's existing Express, TypeScript, PostgreSQL/`pg`, `node-pg-migrate` and Better Auth stack. Better Auth and its core adapter API are pinned together at 1.7.20. Nodemailer provides provider-independent SMTP, `jose` verifies the library-compatible verification JWT, and `cors` handles exact-origin browser credentials. `tsx` and type definitions are development dependencies. No ORM, alternate password library, admin roles or AI-provider dependency is introduced.
+Use the project's existing Express, TypeScript, PostgreSQL/`pg`, `node-pg-migrate` and Better Auth stack. Better Auth and its core adapter API are pinned together at 1.7.20. Nodemailer provides provider-independent SMTP, `jose` verifies the library-compatible verification JWT, and `cors` handles exact-origin browser credentials. Type definitions are development dependencies. No ORM, alternate password library, admin roles or AI-provider dependency is introduced.
 
-The backend is ESM because Better Auth's Express integration requires it. Package/lock files record exact added dependency versions. Password hashing, verification, Session cookies and native reset consumption remain Better Auth responsibilities.
+The backend compiles to CommonJS, like the rest of `main`. Better Auth and `node-pg-migrate` are ESM-only packages; Node 26 (and 22.12+) loads them through `require()` of ES modules, and TypeScript's `NodeNext` resolution type-checks those imports. Package/lock files record exact added dependency versions. Password hashing, verification, Session cookies and native reset consumption remain Better Auth responsibilities.
 
 ## Shared identity and schema handoff
 
@@ -28,11 +28,13 @@ The auth migrations precede business FKs in the shared `node-pg-migrate` history
 
 The project exposes the documented `/api/auth` signup, signin, signout, get-session, verification send/callback, reset request/callback/submission, password change, profile update, Session list and single-Session revocation routes. Other library endpoints are not exposed implicitly. The optional Bearer plugin is not enabled; browser clients use cookies.
 
-Mount the project auth handler before `express.json()` so the library receives the original stream. Origin/CSRF checks stay enabled, and provided origins/callbacks must match the configured trust boundary. The Express integration overwrites the internal client-IP header from its configured proxy-aware address; callers cannot supply that identity themselves. CORS permits only exact configured origins with credentials.
+Mount the project auth handler before `express.json()` so the library receives the original stream. Origin/CSRF checks stay enabled, and provided origins/callbacks must match the configured trust boundary. Unsafe `/api/v1` requests (anything but GET/HEAD/OPTIONS) must carry a trusted `Origin`, or, without one, must not be marked `Sec-Fetch-Site: cross-site`. The Express integration overwrites the internal client-IP header from its configured proxy-aware address; callers cannot supply that identity themselves. CORS permits only exact configured origins with credentials.
 
 Registration returns `token: null` without a login Session. Correct passwords do not let unverified users sign in. First successful verification persists the verified state and establishes a Session; the frontend then reads get-session. JSON verification may still return `user: null`. Trusted callbacks retain the documented redirects; untrusted callbacks are rejected without redirecting to them.
 
 The reset-link GET checks only and redirects; it never consumes, renews, changes a password or revokes Sessions. The submission repeats latest/expiry/unused checks. A successful reset consumes its native record, changes the password and revokes every old Session in one transaction. It creates no new login Session.
+
+Business routes receive identity only through `createApp({ businessRouter })`, which runs the origin check and `requireVerifiedUser` for all of `/api/v1`. Routers that take their own `authenticate` handler (such as the resume router) use `requireAuthContext`, which confirms `res.locals.auth` without a second Session read. Business errors use `{ "error": { "code", "message" } }`: 401 `UNAUTHORIZED`, 403 `EMAIL_NOT_VERIFIED`, 403 `FORBIDDEN` for an untrusted origin, 404 `NOT_FOUND` for missing or foreign resources, 503 `SERVICE_UNAVAILABLE` when PostgreSQL is unreachable, and 500 `INTERNAL_ERROR` otherwise. Logs record only the error class and code, never driver messages that could quote connection details. CORS exposes `Retry-After`, `Location` and `Content-Disposition` so the cross-origin frontend can read the 429/503 wait time, created-resource location and download file name.
 
 For an authenticated request to revoke another user's Session, Better Auth returns a generic success without deleting that Session. List/revocation remain ownership-scoped; the generic response is not proof that the supplied token existed.
 
@@ -53,6 +55,8 @@ SMTP acceptance and database activation are separate systems. A process/storage 
 The project `Database` uses its own AsyncLocalStorage to share one PoolClient across the HTTP wrapper, native Better Auth operations and credential checks. Nested adapter transactions join it; a nested/query failure makes the transaction rollback-only even if the library catches the exception. A success response/cookie is forwarded only after the outer commit succeeds.
 
 Signin, verification and reset use the same user lock ordering. This prevents an old-password signin from creating a Session after a concurrent reset has revoked Sessions. Latest-credential checks remain inside that transaction; reset GET approval is never reused as POST authorization. Single-row native consumption is an atomic `DELETE ... RETURNING` operation.
+
+Better Auth reports every endpoint error, including expected 4xx answers such as a wrong password or an expired link, to `onAPIError`. Only non-API errors and 5xx answers are reported as `BETTER_AUTH_INTERNAL`, so the log is not flooded by ordinary user mistakes. Both PostgreSQL pools log idle-client errors instead of letting a database restart crash the process.
 
 Cookie caching is disabled. Session reads used by business authorization bypass cached data and do not refresh the Session. The regular get-session HTTP endpoint retains the library's refresh behavior and cookie handling. Revoked Session rows cannot be recreated by a stale cookie. Never cache the trusted user context across requests.
 

@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
 import type { AuthConfig } from "../../src/config/env.js";
@@ -88,6 +89,15 @@ export function resetToken(email: AuthEmail): string {
   return decodeURIComponent(token);
 }
 
+/** backend/migrations, found from either the source tree or the compiled dist/tests tree. */
+function migrationsDirectory(): string {
+  for (let directory = __dirname; ; directory = path.dirname(directory)) {
+    const candidate = path.join(directory, "migrations");
+    if (existsSync(path.join(candidate, "20261111000100_auth_core.cjs"))) return candidate;
+    if (path.dirname(directory) === directory) throw new Error("backend/migrations was not found");
+  }
+}
+
 /**
  * TEST_DATABASE_URL is an administration connection, never the test's target DB.
  * Each fixture creates and drops only its own random, hard-coded-prefix database.
@@ -147,7 +157,7 @@ export async function createAuthFixture(options: AuthFixtureOptions = {}): Promi
     created = true;
     await runner({
       databaseUrl: testUrl.href,
-      dir: fileURLToPath(new URL("../../migrations/", import.meta.url)),
+      dir: migrationsDirectory(),
       migrationsTable: "pgmigrations",
       direction: "up",
       count: Infinity,

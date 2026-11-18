@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { betterAuth } from "better-auth";
 import type { BetterAuthOptions } from "@better-auth/core";
-import { APIError, createAuthMiddleware, createEmailVerificationToken } from "better-auth/api";
+import { APIError, createAuthMiddleware, createEmailVerificationToken, isAPIError } from "better-auth/api";
 import { decodeJwt, jwtVerify, errors as joseErrors } from "jose";
 import type { AuthConfig } from "../../config/env.js";
+import { watchIdleErrors } from "../../db/pool.js";
 import { Database } from "../../db/transaction.js";
 import type { EmailSender } from "../../integrations/email/types.js";
 import type { AuthenticatedSession, SessionReader } from "./types.js";
@@ -55,6 +56,7 @@ export function createAuthentication(options: AuthenticationOptions): Authentica
   // Rate counters must survive failed auth transactions. A dedicated small pool
   // avoids pool starvation while account transactions hold their own clients.
   const ratePool = new pg.Pool({ ...database.pool.options, max: 2 });
+  watchIdleErrors(ratePool);
   let nativeAuth: ReturnType<typeof betterAuth>;
 
   const readSession = async (headers: Headers): Promise<AuthenticatedSession | null> =>
@@ -97,7 +99,13 @@ export function createAuthentication(options: AuthenticationOptions): Authentica
       disableCSRFCheck: false,
     },
     logger: { disabled: true },
-    onAPIError: { onError: () => { report("BETTER_AUTH_INTERNAL"); } },
+    // Better Auth calls this for every endpoint error, including expected 4xx answers such as
+    // a wrong password or an expired link. Only unexpected failures are worth reporting.
+    onAPIError: {
+      onError: (error) => {
+        if (!isAPIError(error) || error.statusCode >= 500) report("BETTER_AUTH_INTERNAL");
+      },
+    },
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
