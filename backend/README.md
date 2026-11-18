@@ -15,12 +15,63 @@ cp .env.example .env   # only if you don't have a .env yet
 | Command | What it does |
 |---|---|
 | `npm run typecheck` | Type-checks `src/` and `tests/`, writes nothing |
-| `npm test` | Compiles to `dist/tests/` and runs the offline unit tests (no credentials, database or network needed) |
+| `npm test` | Compiles to `dist/tests/` and runs the unit tests. The route tests use HTTP loopback |
 | `npm run build` | Compiles `src/` to `dist/` for running or deploying |
+| `npm run migrate` | Applies pending PostgreSQL migrations |
+| `npm run test:db` | Runs the PostgreSQL integration tests against disposable databases |
 | `npm run test:r2` | Optional real R2 check, see below |
 
 `dist/` is build output and is not committed. Deploy it together with `node_modules`
 (the PDF parser loads font data from `pdfjs-dist` at runtime).
+
+## PostgreSQL setup and tests
+
+Create an empty development database, set `DATABASE_URL` in `backend/.env` or export it,
+then run the migration command from `backend/` on Node 26.
+
+```sh
+createdb jobflow_dev
+DATABASE_URL=postgresql://localhost:5432/jobflow_dev npm run migrate
+```
+
+The script runs `node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js up --no-verbose`.
+An exported `DATABASE_URL` takes precedence over `.env`. The locked `node-pg-migrate`
+CLI loads the CommonJS and TypeScript files directly from `migrations/` and records
+them together in `public.pgmigrations`. Running `npm run migrate` again applies only
+pending files. `npm run build` compiles `src/`.
+
+Set `TEST_DATABASE_URL` in `.env` or export it when running `npm run test:db`. Use a local
+PostgreSQL test database and a role with `CREATEDB`. For example, if your local role
+already has that privilege, run the following from `backend/`.
+
+```sh
+createdb jobflow_test
+TEST_DATABASE_URL=postgresql://localhost:5432/jobflow_test npm run test:db
+```
+
+The suite uses that connection to create a fresh, uniquely named database for each
+fixture. It closes the pool and drops the database it created after the test. Migration
+and reset steps run serially. `TEST_DATABASE_URL` is required and can be configured
+independently of `DATABASE_URL`. Add PostgreSQL integration tests under
+`tests/integration/` with the `.db.test.ts` suffix. The fixture helper provides two
+fictional owners via `insertTestOwners(pool)` after migrations complete.
+
+For application code, `createPool(env)` reads `DATABASE_URL` when called and defaults
+to `process.env`. The caller passes the pool to `withTransaction(pool, callback)` and
+awaits `pool.end()` at shutdown. Use the callback's client for every statement in the
+transaction.
+
+Verified on 2026-11-18 with Node **26.13.1**, PostgreSQL **18.6**, and
+`node-pg-migrate` **9.0.0**. The suite applies these files in order, runs `up` again,
+rolls all six back, and reapplies them. It compares the migration history and schema
+catalog and verifies transaction commit and rollback from a separate connection.
+
+1. `20261111000100_auth_core.cjs`
+2. `20261111000200_auth_credentials.cjs`
+3. `20261116000100_create_resumes_applications.ts`
+4. `20261116000200_create_status_history_interviews.ts`
+5. `20261116000300_create_ai_workspaces_conversations.ts`
+6. `20261116000400_create_ai_persistence.ts`
 
 ## Resume storage and PDF parsing (R2 / PDF)
 
@@ -115,7 +166,7 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 
 ### Known gaps
 
-- No real-database or real-auth tests yet; everything above is tested with fakes.
+- The resume tests use fake repositories and fake authentication.
 - Assumes one backend instance: the cleanup worker puts every `processing` job back to
   `pending` before each pass (Database Design §5.11). Running several instances needs the
   lease design in Database Design §5.7.
