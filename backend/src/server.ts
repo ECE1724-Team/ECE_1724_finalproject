@@ -1,43 +1,54 @@
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
+import { ConfigurationError } from "./config/errors.js";
 import { createPool } from "./db/pool.js";
 import { Database } from "./db/transaction.js";
 import { createSmtpEmailSender } from "./integrations/email/smtp.js";
 import { createAuthentication } from "./modules/auth/auth.js";
+import { assertAuthSchema } from "./modules/auth/schema.js";
 
 async function main() {
   const environment = loadEnvironment();
-  const pool = createPool({ DATABASE_URL: environment.databaseUrl });
-  const database = new Database(pool);
+  const databaseEnv = { DATABASE_URL: environment.databaseUrl };
+  // Both pools are created here and passed in (Database Design C.4). The second one keeps the
+  // auth rate-limit counters outside the request transactions, so a rolled-back sign-in still
+  // counts and account transactions cannot starve the limiter of connections.
+  const pool = createPool(databaseEnv);
+  const rateLimitPool = createPool(databaseEnv);
+  const closePools = () => Promise.all([pool.end(), rateLimitPool.end()]);
   try {
-    const result = await pool.query<{ ready: boolean }>(`SELECT
-      to_regclass('public.auth_user') IS NOT NULL AND
-      to_regclass('public.auth_account') IS NOT NULL AND
-      to_regclass('public.auth_session') IS NOT NULL AND
-      to_regclass('public.auth_verification') IS NOT NULL AND
-      to_regclass('public.auth_credential_state') IS NOT NULL AND
-      to_regclass('public.auth_rate_limit') IS NOT NULL AND
-      to_regclass('public.auth_email_rate_limit') IS NOT NULL AS ready`);
-    if (!result.rows[0]?.ready) throw new Error("Authentication schema is missing; run npm run migrate first");
-  } catch (error) { await pool.end(); throw error; }
-  const authentication = createAuthentication({ database, config: environment.auth, emailSender: createSmtpEmailSender(environment.smtp) });
+    await assertAuthSchema(pool);
+  } catch (error) {
+    await closePools();
+    throw error;
+  }
+
+  const database = new Database(pool);
+  const authentication = createAuthentication({
+    database, rateLimitPool, config: environment.auth, emailSender: createSmtpEmailSender(environment.smtp),
+  });
   const app = createApp({ authentication, database, environment });
   const server = app.listen(environment.port, () => { console.log(`JobFlow API listening on port ${environment.port}`); });
+
   let closing = false;
   const shutdown = () => {
     if (closing) return;
     closing = true;
+    // Stop accepting requests, let queued auth emails finish, then close the pools.
     server.close(() => {
-      void authentication.close().then(() => pool.end()).catch(() => { console.error("Shutdown failed"); process.exitCode = 1; });
+      void authentication.close().then(closePools).catch(() => {
+        console.error("Shutdown failed");
+        process.exitCode = 1;
+      });
     });
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
 
-void main().catch(error => {
-  // Configuration errors identify keys, not values; connection errors may
-  // contain credentials, so do not print arbitrary error objects here.
-  console.error(error instanceof Error && /^(Authentication schema|[A-Z_]+ |Invalid [A-Z_]+|Production authentication|SameSite=None)/.test(error.message) ? error.message : "Backend startup failed; check database and configuration");
+void main().catch((error: unknown) => {
+  // Configuration errors name the setting, never its value. Anything else (for example a
+  // connection error) may quote credentials, so it is not printed.
+  console.error(error instanceof ConfigurationError ? error.message : "Backend startup failed; check database and configuration");
   process.exitCode = 1;
 });

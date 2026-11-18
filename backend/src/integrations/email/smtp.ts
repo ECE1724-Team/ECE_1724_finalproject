@@ -1,7 +1,18 @@
 import nodemailer, { type SendMailOptions } from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import type { AuthEmail, EmailSender, SmtpEmailConfig } from "./types.js";
 
 export type { SmtpEmailConfig } from "./types.js";
+
+/**
+ * Bounds on one SMTP send. Nodemailer's defaults (2 min to connect, 10 min of socket
+ * inactivity) could hold the auth email queue, and therefore shutdown, for minutes.
+ */
+export const SMTP_TIMEOUTS = Object.freeze({
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 30_000,
+});
 
 export interface SmtpMailTransport {
   sendMail(options: SendMailOptions): Promise<unknown>;
@@ -88,6 +99,24 @@ function validateMessage(message: AuthEmail): void {
   }
 }
 
+/** Nodemailer SMTP options for `config` (exported for tests; never logged: it holds the password). */
+export function smtpTransportOptions(config: SmtpEmailConfig): SMTPTransport.Options {
+  return {
+    host: config.host.trim(),
+    port: config.port,
+    secure: config.secure,
+    requireTLS: config.user !== undefined && !config.secure,
+    ...(config.user !== undefined && config.password !== undefined
+      ? { auth: { user: config.user, pass: config.password } }
+      : {}),
+    ...SMTP_TIMEOUTS,
+    logger: false,
+    debug: false,
+    disableFileAccess: true,
+    disableUrlAccess: true,
+  };
+}
+
 /**
  * A provider-neutral SMTP adapter. The optional transport is for isolated tests.
  * Sending mail does not itself activate, consume or replace an auth credential.
@@ -97,20 +126,7 @@ export function createSmtpEmailSender(
   transport?: SmtpMailTransport,
 ): EmailSender {
   validateConfig(config);
-
-  const smtpTransport = transport ?? nodemailer.createTransport({
-    host: config.host.trim(),
-    port: config.port,
-    secure: config.secure,
-    requireTLS: config.user !== undefined && !config.secure,
-    ...(config.user !== undefined && config.password !== undefined
-      ? { auth: { user: config.user, pass: config.password } }
-      : {}),
-    logger: false,
-    debug: false,
-    disableFileAccess: true,
-    disableUrlAccess: true,
-  });
+  const smtpTransport = transport ?? nodemailer.createTransport(smtpTransportOptions(config));
 
   return {
     async sendAuthEmail(message): Promise<void> {

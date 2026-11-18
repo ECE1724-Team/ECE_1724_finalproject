@@ -4,7 +4,9 @@ import { toNodeHandler } from "better-auth/node";
 import type { Environment } from "./config/env.js";
 import type { Database } from "./db/transaction.js";
 import { requireVerifiedUser } from "./http/authorization.js";
+import { isTrustedRequestOrigin } from "./http/origin.js";
 import type { Authentication } from "./modules/auth/auth.js";
+import { AUTH_BASE_PATH, CLIENT_IP_HEADER } from "./modules/auth/constants.js";
 // Shared PostgreSQL outage test; it lives with the resume module, which introduced it.
 import { UNAVAILABLE_MESSAGE, isDbUnavailable } from "./modules/resumes/errors.js";
 
@@ -37,18 +39,16 @@ export function createApp({ authentication, environment, businessRouter = Router
 
   // This internal header is overwritten, not accepted from the caller/proxy.
   const nodeAuth = toNodeHandler(authentication.handler);
-  app.all("/api/auth/{*authPath}", async (req, res, next) => {
-    req.headers["x-jobflow-client-ip"] = req.ip ?? req.socket.remoteAddress ?? "";
+  app.all(`${AUTH_BASE_PATH}/{*authPath}`, async (req, res, next) => {
+    req.headers[CLIENT_IP_HEADER] = req.ip ?? req.socket.remoteAddress ?? "";
     try { await nodeAuth(req, res); } catch (error) { next(error); }
   });
   // Better Auth must receive the original request stream before body parsing.
   app.use(express.json({ limit: "1mb" }));
-  // Cookie-authenticated writes must come from a trusted page (CSRF protection). Browsers
-  // send Origin on every cross-origin request and on same-origin POST/PUT/DELETE.
+  // Cookie-authenticated writes must come from a trusted page (CSRF protection).
   app.use("/api/v1", (req, res, next) => {
-    const origin = req.get("origin");
-    const unsafe = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-    if (unsafe && (origin ? !environment.auth.trustedOrigins.includes(origin) : req.get("sec-fetch-site") === "cross-site")) {
+    const request = { method: req.method, origin: req.get("origin"), fetchSite: req.get("sec-fetch-site") };
+    if (!isTrustedRequestOrigin(request, environment.auth.trustedOrigins, { strict: false })) {
       res.status(403).json({ error: { code: "FORBIDDEN", message: "Untrusted request origin" } });
       return;
     }

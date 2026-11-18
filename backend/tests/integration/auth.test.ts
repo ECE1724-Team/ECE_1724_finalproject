@@ -192,7 +192,7 @@ test("Authentication against isolated PostgreSQL databases", {
     );
     assert.equal(state.rows[0]!.sequence, "2");
     assert.equal(state.rows[0]!.active_sequence, "1");
-    assert.equal(fixture.errors.includes("AUTH_EMAIL_DELIVERY_OR_ACTIVATION_FAILED"), true);
+    assert.equal(fixture.errors.includes("AUTH_EMAIL_DELIVERY_FAILED"), true);
     const verified = await fixture.request(verificationUrl(account.verification, { callbackURL: null }));
     assert.equal(verified.status, 200);
     const reset = await requestReset(fixture, account.email);

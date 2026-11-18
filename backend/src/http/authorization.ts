@@ -1,9 +1,15 @@
 import type { RequestHandler, Response } from "express";
 import { fromNodeHeaders } from "better-auth/node";
 import type { Database } from "../db/transaction.js";
-import type { SessionReader, VerifiedAuthContext } from "../modules/auth/types.js";
+import { isUuid } from "../lib/uuid.js";
+import type { AuthenticatedSession, SessionReader, VerifiedAuthContext } from "../modules/auth/types.js";
 
 export type OwnedResourceKind = "application" | "resume" | "workspace" | "conversation";
+
+// Business error bodies (endpoints.json `Error`). The 401 text is the same wherever it is sent.
+const UNAUTHORIZED = { status: 401, code: "UNAUTHORIZED", message: "A valid session is required." } as const;
+const EMAIL_NOT_VERIFIED = { status: 403, code: "EMAIL_NOT_VERIFIED", message: "Verify your email before accessing this resource." } as const;
+const NOT_FOUND = { status: 404, code: "NOT_FOUND", message: "Resource not found." } as const;
 
 // These identifiers come from the reviewed business schema, never a request or
 // model argument. The business handlers still validate the resource lifecycle.
@@ -29,63 +35,62 @@ const OWNERSHIP_QUERIES: Readonly<Record<OwnedResourceKind, string>> = Object.fr
     LIMIT 1`,
 });
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function reject(res: Response, status: number, code: string, message: string): void {
+function reject(res: Response, { status, code, message }: { status: number; code: string; message: string }): void {
   res.status(status).json({ error: { code, message } });
 }
 
-/** Requires a current Session and verified mailbox before protected access. */
+/** A Session the reader returned is usable only if it is complete, consistent and unexpired. */
+function isLiveSession(data: AuthenticatedSession | null): data is AuthenticatedSession {
+  if (!data || !data.user.id || !data.session.id || data.session.userId !== data.user.id) return false;
+  const expiresAt = data.session.expiresAt;
+  return expiresAt instanceof Date && Number.isFinite(expiresAt.getTime()) && expiresAt.getTime() > Date.now();
+}
+
+function verifiedContext(res: Response): VerifiedAuthContext | undefined {
+  const context = res.locals.auth;
+  return context && context.emailVerified === true && context.userId && context.sessionId ? context : undefined;
+}
+
+/**
+ * Requires a current Session and a verified mailbox, then sets `res.locals.auth`. `createApp`
+ * runs it for all of `/api/v1`. Session-store failures go to the error handler (503/500):
+ * an unreachable database is not proof that the caller is anonymous.
+ */
 export function requireVerifiedUser(reader: SessionReader): RequestHandler {
   return async (req, res, next) => {
     // Only this middleware may establish the trusted context for this request.
     delete res.locals.auth;
     try {
       const data = await reader.getSession(fromNodeHeaders(req.headers));
-      if (!data || !data.user.id || !data.session.id
-        || data.session.userId !== data.user.id
-        || !(data.session.expiresAt instanceof Date)
-        || data.session.expiresAt.getTime() <= Date.now()
-        || !Number.isFinite(data.session.expiresAt.getTime())) {
-        reject(res, 401, "UNAUTHORIZED", "A valid session is required.");
-        return;
-      }
-      if (data.user.emailVerified !== true) {
-        reject(res, 403, "EMAIL_NOT_VERIFIED", "Verify your email before accessing this resource.");
-        return;
-      }
-
-      const context: VerifiedAuthContext = {
-        userId: data.user.id,
-        sessionId: data.session.id,
-        emailVerified: true,
-      };
-      res.locals.auth = context;
+      if (!isLiveSession(data)) { reject(res, UNAUTHORIZED); return; }
+      if (data.user.emailVerified !== true) { reject(res, EMAIL_NOT_VERIFIED); return; }
+      res.locals.auth = { userId: data.user.id, sessionId: data.session.id, emailVerified: true };
       next();
     } catch (error) {
-      // Database/service failures are not proof that a user is unauthenticated.
       next(error);
     }
   };
 }
 
-function hasVerifiedContext(res: Response): boolean {
-  const context = res.locals.auth as VerifiedAuthContext | undefined;
-  return Boolean(context && context.emailVerified === true && context.userId && context.sessionId);
-}
-
 /**
- * For routers mounted under /api/v1, where `createApp` has already run
- * `requireVerifiedUser`: confirms the trusted context without reading the Session
- * again. Pass it as a router's `authenticate` option. Anywhere else it answers 401.
+ * For routers mounted under /api/v1, where `createApp` has already run `requireVerifiedUser`:
+ * confirms the trusted context without reading the Session again. Pass it as a router's
+ * `authenticate` option. Anywhere else it answers 401.
  */
 export const requireAuthContext: RequestHandler = (_req, res, next) => {
-  if (!hasVerifiedContext(res)) {
-    reject(res, 401, "UNAUTHORIZED", "A verified session is required.");
-    return;
-  }
+  if (!verifiedContext(res)) { reject(res, UNAUTHORIZED); return; }
   next();
 };
+
+/**
+ * The trusted identity inside a business handler behind `requireVerifiedUser`. Throws (500) if
+ * called anywhere else, because that is a wiring bug, not an anonymous request.
+ */
+export function getAuthContext(res: Response): VerifiedAuthContext {
+  const context = verifiedContext(res);
+  if (!context) throw new Error("getAuthContext called on a route without requireVerifiedUser");
+  return context;
+}
 
 /**
  * Checks the resource against the server-established user identity. Missing,
@@ -105,24 +110,15 @@ export function requireOwnedResource(
   const query = OWNERSHIP_QUERIES[kind];
 
   return async (req, res, next) => {
-    if (!hasVerifiedContext(res)) {
-      reject(res, 401, "UNAUTHORIZED", "A verified session is required.");
-      return;
-    }
-    const context = res.locals.auth as VerifiedAuthContext;
+    const context = verifiedContext(res);
+    if (!context) { reject(res, UNAUTHORIZED); return; }
 
     const resourceId = req.params[paramName];
-    if (typeof resourceId !== "string" || !UUID.test(resourceId)) {
-      reject(res, 404, "NOT_FOUND", "Resource not found.");
-      return;
-    }
+    if (!isUuid(resourceId)) { reject(res, NOT_FOUND); return; }
 
     try {
       const result = await database.query<{ id: string }>(query, [resourceId, context.userId]);
-      if (!result.rows.length) {
-        reject(res, 404, "NOT_FOUND", "Resource not found.");
-        return;
-      }
+      if (!result.rows.length) { reject(res, NOT_FOUND); return; }
       next();
     } catch (error) {
       next(error);

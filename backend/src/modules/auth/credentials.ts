@@ -1,10 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { AuthConfig } from "../../config/env.js";
 import { Database } from "../../db/transaction.js";
-import type { AuthEmail } from "../../integrations/email/types.js";
+import type { AuthEmail, AuthEmailPurpose } from "../../integrations/email/types.js";
+import { isUuid } from "../../lib/uuid.js";
 import { AuthFailure } from "./errors.js";
 
-export type CredentialPurpose = "email_verification" | "password_reset";
+export type CredentialPurpose = AuthEmailPurpose;
 export interface PendingCredential extends AuthEmail {
   userId: string;
   issuanceId: string;
@@ -21,10 +22,6 @@ export interface CredentialUser {
 
 export function tokenDigest(token: string): string {
   return createHash("sha256").update(token).digest("hex");
-}
-
-export function isUuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 function sameDigest(left: string, right: string): boolean {
@@ -117,6 +114,11 @@ export class CredentialStore {
     return current.expires_at.getTime() <= this.now().getTime() ? "expired" : "valid";
   }
 
+  /**
+   * Better Auth 1.7.20's own reset record for `token` (identifier `reset-password:<token>`, value
+   * = user ID). It is the authority on whether the token is still unconsumed. Recheck this
+   * coupling when upgrading Better Auth.
+   */
   async resetRecord(token: string): Promise<{ userId: string; expiresAt: Date } | null> {
     const result = await this.database.query<{ value: string; expiresAt: Date }>(
       'SELECT value, "expiresAt" FROM public.auth_verification WHERE identifier = $1 LIMIT 1', [`reset-password:${token}`],

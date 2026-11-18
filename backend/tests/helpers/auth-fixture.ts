@@ -7,6 +7,7 @@ import type { AuthConfig } from "../../src/config/env.js";
 import { Database } from "../../src/db/transaction.js";
 import type { AuthEmail, EmailSender } from "../../src/integrations/email/types.js";
 import { createAuthentication, type Authentication } from "../../src/modules/auth/auth.js";
+import type { AuthReportCode } from "../../src/modules/auth/errors.js";
 
 export class RecordingEmailSender implements EmailSender {
   readonly messages: AuthEmail[] = [];
@@ -49,7 +50,7 @@ export interface AuthFixture {
   config: AuthConfig;
   emailSender: RecordingEmailSender;
   emails: AuthEmail[];
-  errors: string[];
+  errors: AuthReportCode[];
   request(path: string, options?: AuthRequestOptions): Promise<Response>;
   clock: {
     now(): Date;
@@ -114,9 +115,10 @@ export async function createAuthFixture(options: AuthFixtureOptions = {}): Promi
   const testUrl = new URL(adminUrl);
   testUrl.pathname = `/${databaseName}`;
   const pool = new pg.Pool({ connectionString: testUrl.href, max: 10, connectionTimeoutMillis: 5000 });
+  const rateLimitPool = new pg.Pool({ connectionString: testUrl.href, max: 2, connectionTimeoutMillis: 5000 });
   const database = new Database(pool);
   const emailSender = new RecordingEmailSender();
-  const errors: string[] = [];
+  const errors: AuthReportCode[] = [];
   const config: AuthConfig = {
     baseUrl: "http://localhost:3000",
     secret: randomBytes(48).toString("base64url"),
@@ -144,7 +146,7 @@ export async function createAuthFixture(options: AuthFixtureOptions = {}): Promi
           await authentication.close();
         }
       } finally {
-        await pool.end();
+        await Promise.all([pool.end(), rateLimitPool.end()]);
       }
       if (created) await admin.query(`DROP DATABASE "${databaseName}"`);
     } finally {
@@ -165,6 +167,7 @@ export async function createAuthFixture(options: AuthFixtureOptions = {}): Promi
     });
     authentication = createAuthentication({
       database,
+      rateLimitPool,
       config,
       emailSender,
       nativeRateLimitEnabled: options.nativeRateLimitEnabled ?? false,

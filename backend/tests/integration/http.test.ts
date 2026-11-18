@@ -6,7 +6,7 @@ import { Router } from "express";
 import test from "node:test";
 import type { Pool } from "pg";
 import { createApp } from "../../src/app.js";
-import { requireAuthContext, requireOwnedResource } from "../../src/http/authorization.js";
+import { getAuthContext, requireAuthContext, requireOwnedResource } from "../../src/http/authorization.js";
 import { createResumeRouter } from "../../src/modules/resumes/routes.js";
 import { createResumeService } from "../../src/modules/resumes/service.js";
 import { FakeCleanupRepository, FakeResumeRepository, FakeStorage, extraction, fakeExtractor, pdfBytes } from "../fakes/resumes.js";
@@ -31,7 +31,7 @@ test("Express preserves auth bodies/cookies/CORS and enforces real SQL ownership
     ["/workspaces/:workspaceId", "workspace", "workspaceId"],
     ["/conversations/:conversationId", "conversation", "conversationId"],
   ] as const) {
-    router.get(path, requireOwnedResource(fixture.database, kind, param), (_req, res) => { res.json({ owner: res.locals.auth.userId }); });
+    router.get(path, requireOwnedResource(fixture.database, kind, param), (_req, res) => { res.json({ owner: getAuthContext(res).userId }); });
   }
   const app = createApp({ authentication: fixture.authentication, database: fixture.database,
     environment: { auth: fixture.config, trustProxyHops: 0 }, businessRouter: router });

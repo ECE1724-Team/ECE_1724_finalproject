@@ -140,7 +140,7 @@ for (const outcome of ["reject", "disconnect"] as const) {
     await smtpDeadline(fixture.authentication.drainEmailQueue(), "Rejected SMTP delivery did not settle");
     assert.equal(smtp.acceptedMessages, 0);
     assert.deepEqual(await activeCredential(fixture, userId), original);
-    assert.deepEqual(fixture.errors, ["AUTH_EMAIL_DELIVERY_OR_ACTIVATION_FAILED"]);
+    assert.deepEqual(fixture.errors, ["AUTH_EMAIL_DELIVERY_FAILED"]);
 
     const rejected = await fixture.request(verificationUrl(queued, { callbackURL: null }));
     assert.equal(rejected.status, 401);

@@ -214,6 +214,6 @@ test("requireAuthContext accepts only a complete verified context and never read
     const result = await invoke(requireAuthContext, {}, auth === undefined ? {} : { auth });
     assert.equal(result.nextCalled, false);
     assert.equal(result.status, 401);
-    assert.deepEqual(result.body, { error: { code: "UNAUTHORIZED", message: "A verified session is required." } });
+    assert.deepEqual(result.body, { error: { code: "UNAUTHORIZED", message: "A valid session is required." } });
   }
 });
