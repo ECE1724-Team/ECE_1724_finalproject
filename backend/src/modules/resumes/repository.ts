@@ -1,12 +1,12 @@
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
+import type { Db } from "../../db/pool.js";
 
 // Interfaces for the resume and storage-cleanup SQL (Database Design §5.2, §5.11,
 // §7.2–7.3, Appendix C.4). The resume module defines them as the caller; the SQL
 // implementation is written separately. Tests use in-memory fakes from tests/fakes.
 // Repositories return camelCase objects; snake_case stays inside the SQL.
 
-/** The pool, or a client inside a transaction. */
-export type Db = Pool | PoolClient;
+export type { Db };
 
 export type ParseStatus = "succeeded" | "text_unavailable";
 

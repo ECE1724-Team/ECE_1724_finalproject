@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import type { Pool } from "pg";
+import { readDatabaseUrl } from "../../src/db/database-url.mjs";
 import { createPool } from "../../src/db/pool.js";
 
 const exec = promisify(execFile);
@@ -15,15 +16,8 @@ interface TestDatabase {
 
 /** Each caller gets a fresh database, even for tests that commit their own writes. */
 export async function withTestDatabase(run: (database: TestDatabase) => Promise<void>): Promise<void> {
-  const testUrl = process.env.TEST_DATABASE_URL?.trim();
-  if (!testUrl) {
-    throw new Error("TEST_DATABASE_URL is required for npm run test:db. See backend/README.md.");
-  }
-  const url = URL.parse(testUrl);
-  if (!url || url.pathname.length <= 1) {
-    throw new Error("TEST_DATABASE_URL must identify a PostgreSQL test database.");
-  }
-
+  const testUrl = readDatabaseUrl(process.env, "TEST_DATABASE_URL");
+  const url = new URL(testUrl);
   const admin = createPool({ DATABASE_URL: testUrl });
   const name = `jobflow_test_${randomUUID().replaceAll("-", "")}`;
   url.pathname = `/${name}`;

@@ -28,8 +28,6 @@ const EDITABLE_COLUMNS = {
   offerReceived: "offer_received",
 } satisfies Record<keyof ApplicationUpdate, string>;
 
-const ACTIVE_GENERATION = Symbol("GENERATION_ACTIVE");
-
 function inTransaction<T>(db: Db, run: (client: PoolClient) => Promise<T>): Promise<T> {
   return "release" in db ? run(db) : withTransaction(db, run);
 }
@@ -42,15 +40,16 @@ async function findApplication(db: Db, userId: string, id: string, lock = false)
   return row ?? null;
 }
 
+// The resumes CHECKs give every live row a usable parse status and object key,
+// so any live resume of the owner can be selected.
 async function lockResumeSelection(client: PoolClient, userId: string, oldId: string | null, newId: string | null) {
   const ids = [oldId, newId].filter((id) => id !== null);
-  const { rows } = await client.query<{ id: string; eligible: boolean }>(`
-    SELECT id, (deleted_at IS NULL AND parse_status IN ('succeeded', 'text_unavailable')
-        AND nullif(btrim(object_key), '') IS NOT NULL) AS eligible
+  const { rows } = await client.query<{ id: string; live: boolean }>(`
+    SELECT id, deleted_at IS NULL AS live
     FROM public.resumes WHERE user_id = $1 AND id = ANY($2::uuid[])
     ORDER BY id FOR UPDATE
   `, [userId, ids]);
-  return newId === null || rows.some(({ id, eligible }) => id === newId && eligible);
+  return newId === null || rows.some(({ id, live }) => id === newId && live);
 }
 
 export function createPostgresApplicationRepository(): ApplicationRepository {
@@ -186,38 +185,34 @@ export function createPostgresApplicationRepository(): ApplicationRepository {
       });
     },
 
-    async delete(pool, userId, id) {
-      try {
-        return await withTransaction(pool, async (client) => {
-          await client.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-          const { rows: [application] } = await client.query(`
-            SELECT id FROM public.applications WHERE user_id = $1 AND id = $2 FOR UPDATE
-          `, [userId, id]);
-          if (!application) return "NOT_FOUND";
+    delete(pool, userId, id) {
+      return withTransaction(pool, async (client) => {
+        await client.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+        const { rows: [application] } = await client.query(`
+          SELECT id FROM public.applications WHERE user_id = $1 AND id = $2 FOR UPDATE
+        `, [userId, id]);
+        if (!application) return "NOT_FOUND";
 
-          const { rows: [workspace] } = await client.query<{ id: string }>(`
-            SELECT id FROM public.ai_workspaces WHERE application_id = $1 FOR UPDATE
-          `, [id]);
-          if (workspace) {
-            await client.query(`
-              SELECT id FROM public.conversations WHERE workspace_id = $1 ORDER BY id FOR UPDATE
-            `, [workspace.id]);
-            // Read after acquiring the locks so this sees any generation acceptance that just committed.
-            const { rows: [active] } = await client.query(`
-              SELECT 1 FROM public.generation_runs g
-              JOIN public.conversations c ON c.id = g.conversation_id
-              WHERE c.workspace_id = $1 AND g.status IN ('preparing', 'streaming') LIMIT 1
-            `, [workspace.id]);
-            if (active) throw ACTIVE_GENERATION;
-          }
+        const { rows: [workspace] } = await client.query<{ id: string }>(`
+          SELECT id FROM public.ai_workspaces WHERE application_id = $1 FOR UPDATE
+        `, [id]);
+        if (workspace) {
+          await client.query(`
+            SELECT id FROM public.conversations WHERE workspace_id = $1 ORDER BY id FOR UPDATE
+          `, [workspace.id]);
+          // Read after acquiring the locks so this sees any generation acceptance that just committed.
+          const { rows: [active] } = await client.query(`
+            SELECT 1 FROM public.generation_runs g
+            JOIN public.conversations c ON c.id = g.conversation_id
+            WHERE c.workspace_id = $1 AND g.status IN ('preparing', 'streaming') LIMIT 1
+          `, [workspace.id]);
+          // Nothing has been written yet, so committing only releases the locks.
+          if (active) return "GENERATION_ACTIVE";
+        }
 
-          await client.query("DELETE FROM public.applications WHERE user_id = $1 AND id = $2", [userId, id]);
-          return "DELETED";
-        });
-      } catch (error) {
-        if (error === ACTIVE_GENERATION) return "GENERATION_ACTIVE";
-        throw error;
-      }
+        await client.query("DELETE FROM public.applications WHERE user_id = $1 AND id = $2", [userId, id]);
+        return "DELETED";
+      });
     },
   };
   return repository;

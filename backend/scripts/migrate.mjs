@@ -4,9 +4,6 @@ import { readDatabaseUrl } from "../src/db/database-url.mts";
 
 try {
   const connectionString = readDatabaseUrl();
-  if (new URL(connectionString).pathname.length <= 1) {
-    throw new Error("DATABASE_URL must name the PostgreSQL database to migrate");
-  }
   const { values } = parseArgs({ options: { "dry-run": { type: "boolean" } } });
 
   await runner({
