@@ -1,9 +1,11 @@
 import { DatabaseError } from "pg";
 
+export const UNAVAILABLE_MESSAGE = "The service is temporarily unavailable. Please try again.";
+
 /** The service cannot finish safely right now (e.g. the database is unreachable). Maps to HTTP 503. */
 export class ServiceUnavailableError extends Error {
-  constructor(message = "The service is temporarily unavailable. Please try again.") {
-    super(message);
+  constructor() {
+    super(UNAVAILABLE_MESSAGE);
     this.name = "ServiceUnavailableError";
   }
 }

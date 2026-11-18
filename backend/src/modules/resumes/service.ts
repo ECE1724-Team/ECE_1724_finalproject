@@ -8,6 +8,7 @@ import { validateResumePdf, type ResumePdfResult } from "./pdf-policy.js";
 import type { NewResumeRow, ResumeRepository, ResumeRow, StorageCleanupRepository } from "./repository.js";
 
 export type Log = (message: string, details?: Record<string, unknown>) => void;
+export const defaultLog: Log = (message, details) => console.error(message, details ?? "");
 
 export interface ResumeServiceDeps {
   pool: Pool;
@@ -36,7 +37,7 @@ export type ResumeService = ReturnType<typeof createResumeService>;
 // "not found" (missing, deleted or someone else's resume) is returned as null.
 export function createResumeService(deps: ResumeServiceDeps) {
   const { pool, storage, pdf, resumes, cleanup } = deps;
-  const log = deps.log ?? ((message, details) => console.error(message, details ?? ""));
+  const log = deps.log ?? defaultLog;
 
   // Called only when no row references the object.
   async function removeUnusedObject(objectKey: string): Promise<void> {

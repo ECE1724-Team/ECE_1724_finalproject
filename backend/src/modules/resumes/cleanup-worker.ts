@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import { StorageError, type ObjectStorage } from "../../integrations/object-storage/types.js";
 import type { CleanupJob, ResumeRepository, StorageCleanupRepository } from "./repository.js";
-import type { Log } from "./service.js";
+import { defaultLog, type Log } from "./service.js";
 
 // Deletes R2 objects queued in storage_cleanup_jobs (Database Design §5.11): files of deleted
 // resumes, and uploads whose database insert failed. Runs inside the single backend process.
@@ -91,5 +91,4 @@ export function startCleanupWorker(deps: CleanupWorkerDeps, { intervalMs = INTER
   };
 }
 
-const defaultLog = (message: string, details?: Record<string, unknown>) => console.error(message, details ?? "");
 const errorDetails = (error: unknown) => (error instanceof Error ? error.stack : String(error));

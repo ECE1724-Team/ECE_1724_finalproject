@@ -2,10 +2,10 @@ import { Router, type ErrorRequestHandler, type Request, type RequestHandler, ty
 import multer from "multer";
 import { StorageError } from "../../integrations/object-storage/types.js";
 import { PdfError, type PdfErrorCode } from "../../integrations/pdf/types.js";
-import { ServiceUnavailableError, isDbUnavailable } from "./errors.js";
+import { ServiceUnavailableError, UNAVAILABLE_MESSAGE, isDbUnavailable } from "./errors.js";
 import { MAX_RESUME_BYTES } from "./pdf-policy.js";
 import type { ResumeRow } from "./repository.js";
-import type { Log, ResumeService } from "./service.js";
+import { defaultLog, type Log, type ResumeService } from "./service.js";
 
 // /api/v1/resumes (endpoints.json "Resumes"). Mount with the verified-user middleware:
 //   app.use("/api/v1/resumes", createResumeRouter({ service, authenticate: requireVerifiedUser }))
@@ -71,7 +71,7 @@ export function createResumeRouter({ service, authenticate, log = defaultLog }: 
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
     });
-    res.end(Buffer.from(file.bytes.buffer, file.bytes.byteOffset, file.bytes.byteLength));
+    res.end(file.bytes);
   });
 
   router.delete("/:resumeId", async (req, res) => {
@@ -179,8 +179,6 @@ const PDF_ERRORS: Record<Exclude<PdfErrorCode, "cancelled">, [status: number, co
   processing_failed: [503, "PDF_PROCESSING_FAILED"],
 };
 
-const UNAVAILABLE = "The service is temporarily unavailable. Please try again.";
-
 /** HTTP answer for an error, or null when the request was cancelled by the client. */
 export function toHttpError(error: unknown): { status: number; code: string; message: string } | null {
   if (error instanceof HttpError) return { status: error.status, code: error.code, message: error.message };
@@ -190,12 +188,10 @@ export function toHttpError(error: unknown): { status: number; code: string; mes
     return { status, code, message: error.message };
   }
   if (error instanceof StorageError) {
-    return error.code === "cancelled" ? null : { status: 503, code: "SERVICE_UNAVAILABLE", message: UNAVAILABLE };
+    return error.code === "cancelled" ? null : { status: 503, code: "SERVICE_UNAVAILABLE", message: UNAVAILABLE_MESSAGE };
   }
   if (error instanceof ServiceUnavailableError || isDbUnavailable(error)) {
-    return { status: 503, code: "SERVICE_UNAVAILABLE", message: UNAVAILABLE };
+    return { status: 503, code: "SERVICE_UNAVAILABLE", message: UNAVAILABLE_MESSAGE };
   }
   return { status: 500, code: "INTERNAL_ERROR", message: "Something went wrong. Please try again." };
 }
-
-const defaultLog: Log = (message, details) => console.error(message, details ?? "");
