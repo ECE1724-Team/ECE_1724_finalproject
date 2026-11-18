@@ -1,8 +1,8 @@
 ---
 artifact: database-design
-version: "1.9"
+version: "1.13"
 created: 2026-11-09
-updated: 2026-11-16
+updated: 2026-11-17
 requirements_baseline: "PRD 1.8 / AI_Design.md (2026-11-11)"
 status: proposed-design-with-open-decisions
 ---
@@ -17,7 +17,7 @@ The reading paths and supplements carry forward the relevant integration guidanc
 
 **Identity contract updated 2026-11-13:** the authoritative user key is **`public.auth_user.id UUID`**. Business owner columns use matching UUID foreign keys; HTTP/TypeScript IDs are UUID strings. The configuration, migration files and trusted-user interface are linked in [Appendix D](#shared-identity), [Appendix E](#auth-schema) and [Appendix F](#auth-integration-handoff). This records the selected project contract and current source implementation, not shared-database deployment or completed team review.
 
-**Current API snapshot:** GitHub `main` has `endpoints.json` version **1.9.0** and this revision includes its documented business/AI policies. The original §9 preserves the earlier 1.2.0 review. Read [Appendix A](#current-integration-status) before treating a historical gap as still outstanding. Product requirements continue to follow the original source precedence.
+**Current API snapshot:** GitHub `main` has `endpoints.json` version **1.11.0** and this revision includes its documented business/AI policies. The original §9 preserves the earlier 1.2.0 review. Read [Appendix A](#current-integration-status) before treating a historical gap as still outstanding. Product requirements continue to follow the original source precedence.
 
 **AI context revision (v1.3, 2026-11-11):** Following the requester's confirmation recorded in PRD 1.3, base materials are loaded by backend code on every turn rather than through model function calling. Material retrievals are now backend-saved snapshots linked to the generation that first saved them, `conversation_material_state` is removed, and a conversation's comparison baseline is derived from its latest completed generation. Message tool parts are reserved for the optional website tool. Snapshots of a deleted resume's text are retained as read-only history. `endpoints.json` 1.4.0 aligns the AI contract with these changes; see Appendix A.
 
@@ -28,6 +28,8 @@ The reading paths and supplements carry forward the relevant integration guidanc
 **Retry and interruption revision (v1.6, 2026-11-14):** The retry contract in §5.7 is confirmed. Only the latest user message can be retried, and only when its most recent attempt failed or was interrupted. There is no request-key deduplication, so `request_key` is removed. A client disconnect aborts the generation and no partial output is saved (PRD FR-29).
 
 **Crash recovery revision (v1.8, 2026-11-16):** The project runs a single backend instance. On startup, the backend marks every `preparing` or `streaming` run as `interrupted` before accepting requests, which replaces lease-based recovery. `lease_expires_at` and the lease rules are moved to a deferred subsection of §5.7. They are kept for a possible upgrade to multiple backend instances and are not enabled now.
+
+**Resume module revision (v1.13, 2026-11-17):** Jianye owns the `/api/v1/resumes` routes. The resume module now defines the `ResumeRepository` and `StorageCleanupRepository` interfaces in `backend/src/modules/resumes/repository.ts`; Rongxin implements them in SQL (Appendix C.4). §5.11 adds the job status values, what `claim` and `fail` change, and `requeueProcessing`, which the single-instance cleanup worker calls before every pass. `endpoints.json` 1.11.0 adds 413, 500 and 503 responses and the error codes for the resume routes, pending Justin's review.
 
 **Database service contract revision (v1.12, 2026-11-17):** Jianye and Rongxin agreed the repository function shape, startup pool creation, resume insert inputs, resume list and 404 behavior, and storage-cleanup ownership and reasons (Appendix C.4, §5.11). `endpoints.json` 1.10.0 adds `linkedApplicationCount` to `Resume` and removes resume-list pagination.
 
@@ -40,7 +42,7 @@ The reading paths and supplements carry forward the relevant integration guidanc
 | Reader | Start here | Original implementation reference |
 |---|---|---|
 | Justin Smith — non-AI frontend and OpenAPI | [Current API status](#current-integration-status), [Justin guide](#justin-guide), [shared identity](#shared-identity) | §5.1–5.5, §7.1–7.3, §8.1–8.3/8.5, and relevant §11–12 cases |
-| Jianye Zhou — storage/PDF and AI frontend/backend | [Current API status](#current-integration-status), [Jianye guide](#jianye-guide), [shared identity](#shared-identity) | §5.2–5.3, §5.6–5.11, §6.1, §7.2–7.4, §8.4, and relevant §11–12 cases |
+| Jianye Zhou — storage/PDF, resume API and AI frontend/backend | [Current API status](#current-integration-status), [Jianye guide](#jianye-guide), [shared identity](#shared-identity) | §5.2–5.3, §5.6–5.11, §6.1, §7.2–7.4, §8.4, and relevant §11–12 cases |
 | Rongxin Bi — business database, SQL and migrations | Role guides, [identity contract](#shared-identity), [auth migration handoff](#auth-integration-handoff) | Full schema, constraints, lifecycle, SQL, migration and acceptance sections |
 | Authentication/authorization owner | [Confirmed auth flows](#authentication-boundary), [identity contract](#shared-identity), [auth schema](#auth-schema), [handoff](#auth-integration-handoff) | §5.1 and the protected-access/auth checks in §11 |
 | Zishi Yang — application APIs | Justin guide, shared identity, current API status | Application/resume schema, ownership, update transactions and counting semantics |
@@ -463,7 +465,17 @@ Current materials are assembled separately every turn and are never replaced by 
 
 Operational outbox (migration group 006): `id UUID PK`, `object_key TEXT NN`, `reason TEXT NN`, `status TEXT NN`, `attempt_count INTEGER NN DEFAULT 0`, `next_attempt_at TIMESTAMPTZ NN`, `last_error_code TEXT nullable`, `created_at`, `updated_at`. Add a unique deduplication key for the same object cleanup action. `reason` is `resume_deleted` (§7.3) or `upload_rollback` (§7.2 step 6); it has no CHECK, so a later reason such as `orphan` needs no migration (agreed 2026-11-17).
 
-This is a retry mechanism for object cleanup, not a user recovery feature. The object key is opaque and is never returned as a download credential. Rongxin writes the table and the enqueue, claim, complete and fail SQL; claims use `FOR UPDATE SKIP LOCKED` so two workers never take the same job. Jianye writes the worker and chooses the retry timing. Reconciliation of R2 objects without a database row is deferred. Terminal-failure alerting is a deployment decision.
+This is a retry mechanism for object cleanup, not a user recovery feature. The object key is opaque and is never returned as a download credential. `status` is `pending`, `processing` or `done`. Rongxin implements the `StorageCleanupRepository` interface in `backend/src/modules/resumes/repository.ts`:
+
+| Function | Effect |
+|---|---|
+| `enqueue` | Insert a `pending` job due now |
+| `claimDue` | Take up to N `pending` jobs with `next_attempt_at <= now()` using `FOR UPDATE SKIP LOCKED`, set them `processing`, return them |
+| `complete` | Set `done` |
+| `fail` | Set `pending`, `attempt_count + 1`, the given `last_error_code` and `next_attempt_at` |
+| `requeueProcessing` | Set every `processing` job back to `pending`; return the count |
+
+Jianye writes the worker (`cleanup-worker.ts`) and chooses the retry timing: every 30 s it calls `requeueProcessing`, then claims up to 10 jobs; retries come after 1 min, 5 min, 30 min, 2 h, then every 6 h. Calling `requeueProcessing` before every pass is safe only because the project runs one backend instance and passes never overlap (as for AI runs, §5.7); with several instances, a job could be processed twice, which is harmless because R2 deletes are idempotent and the worker skips keys that still belong to a live resume. Reconciliation of R2 objects without a database row is deferred. Terminal-failure alerting is a deployment decision.
 
 ## 6. Ownership, Constraints, and Indexes
 
@@ -818,6 +830,8 @@ This document is ready for team design review, subject to the explicit open item
 
 Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-owned migrations from business work, made resume deletion compatible with live-success checks, unified resume-before-application locking, and qualified FK indexing. Version 1.2 specifies AI input/attempt associations, material-snapshot initialization, tool-result persistence, context-compression boundaries, and failure recovery against PRD 1.2 and AI Design. At those earlier revisions, retry and refresh-fallback mechanisms were tracked as proposals; the later confirmations are recorded below. Version 1.3 applies the PRD 1.3 AI context policy. Base materials are loaded by backend code instead of model tools. `material_retrievals` becomes a generation-linked snapshot table, `conversation_material_state` is removed in favor of a baseline derived from the latest completed generation, and tool parts are limited to the optional website tool. It also adds change-notice and history-annotation derivation, and retains deleted-resume text snapshots as read-only history. The business database owner should review these schema changes before migration 005 is written. Version 1.4 replaces revision counters with content fingerprints computed at turn preparation, removes the six `*_revision` columns from `applications`, renames `material_retrievals` to `material_snapshots`, moves the set of material kinds into a backend registry, and replaces `material_manifest` with `baseline_generation_id`. Version 1.5 records the confirmed application hard-delete policy (§5.3, §7.5): cascading child FKs with internal `NO ACTION` constraints, a delete transaction that rejects active generations, and unblocked migration 007. Version 1.6 confirms the retry contract with latest-message eligibility, removes `request_key` and request deduplication, and specifies abort-on-disconnect with no partial-output persistence; `endpoints.json` 1.7.0 carries the matching contract. Version 1.7 integrates the current authentication implementation: `public.auth_user.id UUID`, UUID owner FKs, the trusted user context, concrete auth migrations and the confirmed email/Session configuration. The business/AI rules from versions 1.3–1.6 remain in force. Version 1.8 replaces lease-based crash recovery with startup recovery for the single-instance deployment and keeps the lease design as a deferred, not-enabled subsection of §5.7 for a possible multi-instance upgrade.
 
+Version 1.13 records Jianye's ownership of the resume routes, the repository interfaces defined in the resume module, the cleanup job status values and `requeueProcessing` (§5.11), and `endpoints.json` 1.11.0.
+
 Version 1.12 records the agreed database service contract (Appendix C.4): repository interfaces and transaction ownership, startup pool creation, backend-generated resume IDs, an unpaginated resume list with `linkedApplicationCount`, 404 for deleted resumes, and storage-cleanup reasons and ownership (§5.11).
 
 Version 1.11 records that migration groups 002–005 are merged and 006 is still pending, and marks the auth source files referenced in Appendices D–E as not yet in the repository.
@@ -832,7 +846,7 @@ Business SQL examples in §8 describe intended work. Migration groups 002–005 
 
 ## Appendix A. Current API Integration Snapshot — Updated 2026-11-15
 
-This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `f136368`, together with the current authentication implementation and identity contract. The local 1.8.0 revision (2026-11-16) changes only the `Interview` schema, as noted in the interviews row below. Documented business routes and schemas remain integration contracts, not evidence of running or tested endpoints. Retain [the original API review](#api-alignment) as historical context.
+This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `f136368`, together with the current authentication implementation and identity contract. The local 1.8.0 revision (2026-11-16) changes only the `Interview` schema, as noted in the interviews row below. Documented business routes and schemas remain integration contracts, not evidence of running or tested endpoints. Retain [the original API review](#api-alignment) as historical context. The resume row is updated to `endpoints.json` 1.11.0 (2026-11-17).
 
 **2026-11-13 identity update:** the authentication implementation, UUID identity contract and migration handoff are now recorded in Appendices D–F. The remaining rows retain this snapshot's business/API review scope.
 
@@ -845,7 +859,7 @@ This snapshot reflects [endpoints.json 1.7.0](endpoints.json) at GitHub commit `
 | Non-AI application list | Still documents `page`, `limit` and the older seven-value status enum | Align six statuses, keyword/sort options, complete counts and Dashboard read models |
 | Applied date and interviews | `appliedAt` remains date-time; interview items lack persistent IDs; full-array replacement and full-application PUT remain documented | Agree date-only representation and individual interview identity/editing. Interview validation is confirmed (§5.5); 1.8.0 aligns the `Interview` schema with it |
 | Offer and timeline | Full historical-offer/status-history API models are still incomplete | Agree read/write fields and response models before final UI integration |
-| Resume library | PDF-only upload with `textStatus`; each resume has `linkedApplicationCount`; the list is not paginated; deletion returns 200 with `unlinkedApplicationCount`; deleted resumes return 404 (1.10.0) | Implement the routes; agree HTTP status codes for PDF and storage errors with Justin |
+| Resume library | PDF-only upload with `textStatus`; each resume has `linkedApplicationCount`; the list is not paginated; deletion returns 200 with `unlinkedApplicationCount`; deleted resumes return 404 (1.10.0). 1.11.0 adds 413, 500 and 503 and lists the error codes (`PDF_INVALID`, `PDF_BUSY`, `SERVICE_UNAVAILABLE`, …) | Routes are implemented and unit-tested with fakes; they still need the repository SQL, migration 006 and the auth middleware. Justin to review the 1.11.0 error codes |
 | Concurrency and recovery | `row_version` has no agreed public non-AI contract; AI durable-attempt and stream-error contracts are described | Agree conflict handling if adopted; reconcile AI durable state after transport loss without assuming replay/resumption |
 | Open product/configuration choices | §12 and current PRD §11 apply; application deletion and AI retry/interruption rules are confirmed | Resolve remaining interview/context/provider settings and the refresh-failure fallback without reopening confirmed deletion/retry policies |
 
@@ -856,7 +870,7 @@ When updating OpenAPI, distinguish the AI selector's status/query contract from 
 
 ## Appendix B. Justin: Non-AI Frontend and OpenAPI Integration — Added
 
-Justin owns non-AI pages and maintains OpenAPI with backend contributors. Jianye owns the AI frontend/backend and file processing. Start with [the current API snapshot](#current-integration-status), then consult original schema/lifecycle sections for the page being integrated.
+Justin owns non-AI pages and maintains OpenAPI with backend contributors. Jianye owns the AI frontend/backend, file processing and the resume API routes. Start with [the current API snapshot](#current-integration-status), then consult original schema/lifecycle sections for the page being integrated.
 
 ### B.1 Page and Field Mapping
 
@@ -882,7 +896,7 @@ The non-AI application list's current query model is not the complete Dashboard/
 
 ### B.3 Agreements Needed Before Final Integration
 
-Coordinate the remaining non-AI enum/date/validation/read-model gaps, interview identity and save behavior, HTTP status codes for PDF and storage errors, and any adopted `row_version` submission/conflict contract. The existing AI routes should be implemented and reviewed against the current 1.7.0 contract rather than redesigned from database column names. Use the fixed UUID identity contract in Appendix D and the confirmed Session/email settings in E.4; the actual SMTP provider and deployment configuration still need to be supplied.
+Coordinate the remaining non-AI enum/date/validation/read-model gaps, interview identity and save behavior, a review of the resume error codes in `endpoints.json` 1.11.0, and any adopted `row_version` submission/conflict contract. The existing AI routes should be implemented and reviewed against the current 1.7.0 contract rather than redesigned from database column names. Use the fixed UUID identity contract in Appendix D and the confirmed Session/email settings in E.4; the actual SMTP provider and deployment configuration still need to be supplied.
 
 Layouts and mock-backed forms can proceed while dependent contracts are resolved. SQL, indexes, locks and AI storage details remain reference material; final client types and requests follow the aligned OpenAPI contract.
 
@@ -891,7 +905,7 @@ Layouts and mock-backed forms can proceed while dependent contracts are resolved
 
 ## Appendix C. Jianye: Storage, PDF Processing, and AI Integration — Added
 
-Jianye owns storage/PDF processing and both AI frontend and backend. Rongxin supplies business SQL/migrations; the authentication owner supplies trusted identity and auth-schema dependencies. This guide carries forward the backup's workflow-first approach while following the newer input/attempt, tool and recovery details in the original §5.7–5.10 and §7.4.
+Jianye owns storage/PDF processing, the resume API routes and both AI frontend and backend. Rongxin supplies business SQL/migrations; the authentication owner supplies trusted identity and auth-schema dependencies. This guide carries forward the backup's workflow-first approach while following the newer input/attempt, tool and recovery details in the original §5.7–5.10 and §7.4.
 
 ### C.1 Workflows and Transaction Boundaries
 
@@ -933,11 +947,11 @@ Agreed between Jianye (storage, PDF and AI) and Rongxin (business SQL). These ru
 
 | Topic | Agreement |
 |---|---|
-| Function shape | Rongxin exposes repository functions behind TypeScript interfaces (for example `ResumeRepository`) so callers can test with fakes. A single-statement read or write takes a database client parameter, so the caller can include it in a transaction. A workflow that must commit atomically is one repository function that opens and commits its own transaction: resume deletion (§7.3) and the AI turn transactions in §7.4 (accept input, commit preparation, save completion, record failure). Callers make object-storage and model calls between these calls, never inside them. |
+| Function shape | Repository functions sit behind TypeScript interfaces so callers can test with fakes. For resumes and storage cleanup, the resume module defines the interfaces (`ResumeRepository`, `StorageCleanupRepository` in `backend/src/modules/resumes/repository.ts`, with in-memory fakes in `backend/tests/fakes/resumes.ts`) and Rongxin implements them in SQL (updated 2026-11-17). A single-statement read or write takes a database client parameter, so the caller can include it in a transaction. A workflow that must commit atomically is one repository function that opens and commits its own transaction: resume deletion (§7.3) and the AI turn transactions in §7.4 (accept input, commit preparation, save completion, record failure). Callers make object-storage and model calls between these calls, never inside them. |
 | Connection pool | The pool is created explicitly at startup (`createPool()`) and passed to the modules that need it. No module reads `DATABASE_URL` or opens connections when it is imported. |
 | Resume insert | The upload workflow generates the resume `id` (`randomUUID()`) and the object key (`createObjectKey()`) before storing the PDF, then passes the owner, id, name, original filename, size, object key and the `validateResumePdf` result. A `succeeded` row stores the extracted text, page count and non-whitespace count; a `text_unavailable` row stores the page count and non-whitespace count with no text. If the insert outcome is unknown, look the row up by `object_key` before deleting the object. |
 | Resume reads and deletion | The list returns all of the owner's live resumes, newest first, not paginated, each with `linkedApplicationCount` (§8.5). A missing, foreign or already deleted resume is not found for get, download and delete (HTTP 404); a client may treat 404 on a retried DELETE as already deleted. Deletion returns `unlinkedApplicationCount`. |
-| Storage cleanup | Rongxin writes migration 006 and the SQL to enqueue, claim (`FOR UPDATE SKIP LOCKED`), complete and fail jobs. Jianye writes the worker that claims a job, deletes the R2 object and records the result, and chooses the retry schedule. Reasons are `resume_deleted` and `upload_rollback`; the column has no CHECK, so a later reason needs no migration. Reconciliation of R2 objects without a database row is deferred. |
+| Storage cleanup | Rongxin writes migration 006 and the SQL to enqueue, claim (`FOR UPDATE SKIP LOCKED`), complete, fail and requeue jobs (§5.11). Jianye writes the worker that claims a job, deletes the R2 object and records the result, and chooses the retry schedule. Reasons are `resume_deleted` and `upload_rollback`; the column has no CHECK, so a later reason needs no migration. Reconciliation of R2 objects without a database row is deferred. |
 
 
 <a id="shared-identity"></a>

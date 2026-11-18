@@ -550,7 +550,7 @@ Assignments follow the Proposal except for the user's explicit confirmation that
 | Authentication and application APIs | Zishi Yang | Registration waits for verification; unverified login/business access is blocked; first verification automatically signs in; 900-second credential expiry, replacement, and reset-time session revocation are confirmed. Remaining application rules are in §11. |
 | Verification/reset email delivery | Zishi Yang | Requires a working email-delivery service and configuration. Provider selection is open; an on-screen notice cannot substitute for actual delivery. |
 | Non-AI frontend and OpenAPI | Justin Smith | Must align the upload dialog, application selection, and error-state contracts. |
-| Storage, PDF processing, AI frontend/backend | Jianye Zhou, supported by Rongxin Bi | Cloudflare R2 is selected for storage; model and service limits remain open. The personal library and parsing are dependencies for AI retrieval. |
+| Storage, PDF processing, resume API routes, AI frontend/backend | Jianye Zhou, supported by Rongxin Bi | Cloudflare R2 is selected for storage; model and service limits remain open. The personal library and parsing are dependencies for AI retrieval. |
 | Integration and delivery | All team members | Cross-checks, startup documentation, and a clean-environment run are required. |
 
 ### 9.2 Risks

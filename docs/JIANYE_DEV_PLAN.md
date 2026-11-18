@@ -111,6 +111,14 @@ Everything that didn't need teammates' code. 40 unit tests pass (25 new).
   non-storage job errors (`unexpected_error`) with their stack.
 - A `name` over multer's 1 KiB `fieldSize` is 422 `VALIDATION_ERROR` like any too-long name (was 400).
 
+### 2026-11-17: Shared docs synced with Phase 4
+- Database Design v1.13: resume routes are mine; the resume module defines the repository
+  interfaces and Rongxin implements them (C.4); §5.11 lists the cleanup job statuses, what each
+  function does, `requeueProcessing` and the single-instance condition; Appendices A–C and the
+  API version (1.11.0) updated.
+- PRD ownership table and backend README (single-instance note) updated. Nothing here is
+  confirmed by Rongxin or Justin yet; §3 below is still to send.
+
 ## Don't undo these
 Worker-thread isolation and the `busy` limit; `If-None-Match` on writes; never accepting a
 storage key or user ID from the browser; no text in `unavailable` results; R2 objects of
@@ -165,7 +173,8 @@ contract, and the integrated checks in "Done when" below pass.
   cookie POST/DELETE; who sets up `app.ts` / `server.ts`; the resume checks inside the
   application update (table above).
 - **Rongxin:** send `src/modules/resumes/repository.ts` (the interfaces, with comments on
-  ordering, locking and return values) and `tests/fakes/resumes.ts` (expected behavior).
+  ordering, locking and return values) and `tests/fakes/resumes.ts` (expected behavior);
+  the cleanup SQL contract is in Database Design §5.11.
   Ask for dates for the SQL, 006, `createPool()` and an `npm run migrate` script.
 - **Justin:** review `endpoints.json` 1.11.0 (413/500/503 and the error codes in the upload
   description). The upload warning and "AI can't read" badge come from `textStatus`; preview

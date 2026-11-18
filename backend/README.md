@@ -116,6 +116,9 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 ### Known gaps
 
 - No real-database or real-auth tests yet; everything above is tested with fakes.
+- Assumes one backend instance: the cleanup worker puts every `processing` job back to
+  `pending` before each pass (Database Design §5.11). Running several instances needs the
+  lease design in Database Design §5.7.
 - The live R2 check has not been run.
 - Text order follows the PDF's internal order. Unusual two-column layouts may come out
   interleaved, so check a few real Word/LaTeX exports by hand.
