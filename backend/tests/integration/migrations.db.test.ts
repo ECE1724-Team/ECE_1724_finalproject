@@ -11,6 +11,7 @@ const migrationNames = [
   "20261116000200_create_status_history_interviews",
   "20261116000300_create_ai_workspaces_conversations",
   "20261116000400_create_ai_persistence",
+  "20261118000700_create_storage_cleanup_jobs",
 ];
 
 const publicTables = [
@@ -18,7 +19,7 @@ const publicTables = [
   "auth_credential_state", "auth_email_rate_limit", "auth_rate_limit", "auth_session",
   "auth_user", "auth_verification", "conversation_summaries", "conversations",
   "generation_materials", "generation_runs", "interviews", "material_snapshots",
-  "messages", "pgmigrations", "resumes",
+  "messages", "pgmigrations", "resumes", "storage_cleanup_jobs",
 ];
 
 async function migrationHistory(pool: Pool) {
@@ -90,7 +91,7 @@ function assertForeignKeys(catalog: CatalogEntry[]) {
   }
 }
 
-test("the six migrations share one history and reproduce the schema after up, up, down, up", async () => {
+test("the migrations share one history and reproduce the schema after up, up, down, up", async () => {
   await withTestDatabase(async ({ pool, migrate }) => {
     assert.deepEqual(tableNames(await readCatalog(pool)), []);
     await migrate();
@@ -104,10 +105,18 @@ test("the six migrations share one history and reproduce the schema after up, up
     assert.equal(activeIndex?.definition,
       "CREATE UNIQUE INDEX generation_runs_one_active_idx ON public.generation_runs USING btree (conversation_id) "
       + "WHERE (status = ANY (ARRAY['preparing'::text, 'streaming'::text]))");
+    const cleanupIndex = catalog.find(({ kind, name }) => kind === "index" && name === "storage_cleanup_jobs_status_next_attempt_idx");
+    assert.equal(cleanupIndex?.definition, "CREATE INDEX storage_cleanup_jobs_status_next_attempt_idx "
+      + "ON public.storage_cleanup_jobs USING btree (status, next_attempt_at)");
 
     await migrate();
     assert.deepEqual(await migrationHistory(pool), history);
     assert.deepEqual(await readCatalog(pool), catalog);
+
+    await migrate({ down: 1 });
+    assert.deepEqual(await migrationHistory(pool), history.slice(0, -1));
+    assert.deepEqual(await readCatalog(pool), catalog.filter(({ relation }) => relation !== "storage_cleanup_jobs"));
+    await migrate();
 
     await migrate({ down: migrationNames.length });
     assert.deepEqual(await migrationHistory(pool), []);

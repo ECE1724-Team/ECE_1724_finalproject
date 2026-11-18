@@ -62,9 +62,10 @@ awaits `pool.end()` at shutdown. Use the callback's client for every statement i
 transaction.
 
 Verified on 2026-11-18 with Node **26.13.1**, PostgreSQL **18.6**, and
-`node-pg-migrate` **9.0.0**. The suite applies these files in order, runs `up` again,
-rolls all six back, and reapplies them. It compares the migration history and schema
-catalog and verifies transaction commit and rollback from a separate connection.
+`node-pg-migrate` **9.0.0**. The suite applies these files in order, verifies a repeat
+`up`, rolls back migration 006 in isolation, and then rolls back and reapplies all
+seven files. It compares the migration history and schema catalog and verifies
+transaction commit and rollback from a separate connection.
 
 1. `20261111000100_auth_core.cjs`
 2. `20261111000200_auth_credentials.cjs`
@@ -72,6 +73,7 @@ catalog and verifies transaction commit and rollback from a separate connection.
 4. `20261116000200_create_status_history_interviews.ts`
 5. `20261116000300_create_ai_workspaces_conversations.ts`
 6. `20261116000400_create_ai_persistence.ts`
+7. `20261118000700_create_storage_cleanup_jobs.ts` (migration 006)
 
 ## Resume storage and PDF parsing (R2 / PDF)
 
@@ -79,10 +81,10 @@ Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_P
 File rules: [PRD §5.2](../docs/PRD.md). Upload and delete transactions:
 [Database Design §7.2–7.3](../docs/Database_Design.md).
 
-**Status:** the R2 adapter, PDF parsing, the resume service, the `/api/v1/resumes` routes and
-the R2 cleanup worker are done and unit-tested with in-memory fakes. Still missing (other
-owners): the SQL behind the repository interfaces and migration 006 (Rongxin), the
-`requireVerifiedUser` middleware (Zishi), and mounting everything in `app.ts`/`server.ts`.
+**Status:** `npm run test:db` exercises upload, unlinking, and worker cleanup through
+`createPostgresResumeModule()` with real PostgreSQL and fake object storage. Apply
+migration 006 with `npm run migrate` before starting the module. Server mounting and
+verified-user middleware are part of team integration.
 
 ### R2 setup
 
@@ -104,7 +106,9 @@ random test object. Without that flag it is reported as skipped.
 | `src/modules/resumes/routes.ts` | `createResumeRouter()`: the five `/api/v1/resumes` routes, upload parsing (multer, 2 MiB), error → HTTP mapping |
 | `src/modules/resumes/service.ts` | `createResumeService()`: upload, list, get, download, remove. Takes a verified `userId`; no Express |
 | `src/modules/resumes/cleanup-worker.ts` | `startCleanupWorker()`: deletes queued R2 objects with retries |
-| `src/modules/resumes/repository.ts` | `ResumeRepository` and `StorageCleanupRepository` interfaces (SQL implemented separately) |
+| `src/modules/resumes/repository.ts` | `ResumeRepository` and `StorageCleanupRepository` interfaces |
+| `src/modules/resumes/postgres-repository.ts` | PostgreSQL implementations of both repositories |
+| `src/modules/resumes/postgres-module.ts` | `createPostgresResumeModule()` wires the service and worker to the same repositories |
 | `src/modules/resumes/pdf-policy.ts` | `validateResumePdf()`: the PRD file rules |
 | `src/integrations/object-storage/r2.ts` | `createR2Storage()`, `createObjectKey()` |
 | `src/integrations/pdf/extractor.ts` | `createPdfExtractor()`: parses PDFs in a worker thread with a timeout and a concurrency limit |
@@ -113,13 +117,14 @@ random test object. Without that flag it is reported as skipped.
 ### Mounting (once `app.ts` exists)
 
 ```ts
+import { createPostgresResumeModule } from "./modules/resumes/postgres-module.js";
+
 const pool = createPool();
 const storage = createR2Storage(readR2Config());
 const pdf = createPdfExtractor();                 // ONE per process: it holds the parse limit
-const deps = { pool, storage, resumes: resumeRepository, cleanup: cleanupRepository };
-const service = createResumeService({ ...deps, pdf });
+const { service, startWorker } = createPostgresResumeModule({ pool, storage, pdf });
 app.use("/api/v1/resumes", createResumeRouter({ service, authenticate: requireVerifiedUser }));
-const worker = startCleanupWorker(deps);
+const worker = startWorker();
 // On shutdown: stop accepting requests, await worker.stop(), storage.close(), await pool.end().
 ```
 
@@ -166,7 +171,7 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 
 ### Known gaps
 
-- The resume tests use fake repositories and fake authentication.
+- The HTTP route tests use fake authentication. The PostgreSQL workflow test calls the service directly.
 - Assumes one backend instance: the cleanup worker puts every `processing` job back to
   `pending` before each pass (Database Design §5.11). Running several instances needs the
   lease design in Database Design §5.7.

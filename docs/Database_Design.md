@@ -557,9 +557,9 @@ Object storage and PostgreSQL do not share a transaction. Use compensating clean
 Within one DB transaction:
 
 1. Lock and authorize the resume. A missing, foreign or already deleted resume is not found (HTTP 404).
-2. Mark it inaccessible (`deleted_at`) so no new link or download can revive it.
-3. Lock affected applications in stable order. Set each `resume_id = NULL`, increment `row_version`, and update timestamps. Return the number of links actually removed.
-4. Clear the deleted row's live extracted text and insert a cleanup job for the object key with reason `resume_deleted`. The live-success CHECK is conditional on `deleted_at IS NULL`, so this update does not conflict with a retained `succeeded` parse status. Retain the opaque object identity until cleanup bookkeeping no longer requires it.
+2. Lock affected applications in ID order.
+3. Set `deleted_at` and clear the resume's live extracted text in one update. The live-success CHECK allows the tombstone to retain its parse status and opaque object key.
+4. For each linked application, set `resume_id = NULL`, increment `row_version`, and update its timestamp. Insert a cleanup job for the object key with reason `resume_deleted`. Return the number of links actually removed.
 5. Commit; the worker removes private bytes with retry.
 
 This tombstone supports immediate access removal and reliable cleanup; long-term retention of the library row's metadata is not defined. Historical messages and material snapshots, including snapshots of the deleted resume's text, remain unchanged and readable as history per FR-16/FR-34 and the 2026-11-11 retention decision. A generation already initialized may finish using its fixed historical snapshot. Subsequent turns observe the unlinked state, use an unavailable-material snapshot, and receive a change notice that the resume is no longer available. Deletion does not delete applications or other resumes.
@@ -734,7 +734,7 @@ The reviewed `endpoints.json` is version 1.2.0. Its authentication contract alre
 
 ## 10. Migration and Setup Plan
 
-Groups 002–005 are implemented in `backend/migrations` and merged into `main` (2026-11-17); 006 is still planned. Group labels are logical ordering; the filenames are listed in the Readiness column.
+Groups 002–006 are implemented in `backend/migrations`. The group numbers indicate logical order. The Readiness column lists the filenames.
 
 | Order | Migration scope | Readiness |
 |---|---|---|
@@ -743,7 +743,7 @@ Groups 002–005 are implemented in `backend/migrations` and merged into `main` 
 | 003 | Status history and individual interviews | **Implemented:** `20261116000200_create_status_history_interviews.ts` |
 | 004 | Unique workspace and independent conversations | **Implemented:** `20261116000300_create_ai_workspaces_conversations.ts` |
 | 005 | Generation runs and ordered messages with same-conversation input/attempt FKs; material snapshots linked to their first generation, generation materials, summaries; active-run, baseline-lookup and snapshot checks | **Implemented:** `20261116000400_create_ai_persistence.ts`. Resolve the refresh-failure fallback before exposing that path |
-| 006 | Cleanup outbox and private-file lifecycle support | **Not yet written.** Needed before resume deletion and upload compensation (§7.2, §7.3). Columns, reasons and ownership are agreed in §5.11 and Appendix C.4 |
+| 006 | Cleanup outbox and private-file lifecycle support | **Implemented:** `20261118000700_create_storage_cleanup_jobs.ts`. See §5.11 for the queue contract and the [backend README](../backend/README.md#postgresql-setup-and-tests) for migration verification. |
 | 007 | Application hard delete: verify the `ON DELETE CASCADE` and internal `NO ACTION` actions declared in 002–005 and add the deletion-path migration test; no extra filters or indexes | FK actions are folded into 002–005 and were checked by hand on an empty database; the automated deletion-path test is not yet written |
 
 Implementation procedure:
@@ -844,7 +844,7 @@ Version 1.10 confirms the `text_unavailable` resume state, records `ON DELETE RE
 
 Version 1.9 records the confirmed interview field rules: `interview_name` and `starts_at` are NOT NULL, the name is trimmed and limited to 100 characters, and no other interview columns or states are added.
 
-Business SQL examples in §8 describe intended work. Migration groups 002–005 exist as files; the authentication sections reference the two merged auth migrations and auth source files that are not yet in the repository.
+Business SQL examples in §8 describe intended work. Migration groups 002–006 exist as files. The authentication sections reference the two merged auth migrations and the planned auth source files.
 
 <a id="current-integration-status"></a>
 
