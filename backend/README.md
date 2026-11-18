@@ -75,6 +75,12 @@ transaction commit and rollback from a separate connection.
 6. `20261116000400_create_ai_persistence.ts`
 7. `20261118000700_create_storage_cleanup_jobs.ts` (migration 006)
 
+The AI schema integration tests verify one workspace per application, independent
+conversations, one active generation per conversation, and same-conversation run and
+snapshot references. The application deletion tests cover the AI cascades and the
+active-generation guard. Run both with `npm run test:db`.
+[AI schema tests](tests/integration/ai-schema.db.test.ts) · [Application deletion tests](tests/integration/application-deletion.db.test.ts)
+
 ## Application and interview repositories
 
 Import `createPostgresApplicationRepository`, `createPostgresApplicationStatusHistoryRepository`,
