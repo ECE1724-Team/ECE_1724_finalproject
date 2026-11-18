@@ -34,7 +34,9 @@ Registration returns `token: null` without a login Session. Correct passwords do
 
 The reset-link GET checks only and redirects; it never consumes, renews, changes a password or revokes Sessions. The submission repeats latest/expiry/unused checks. A successful reset consumes its native record, changes the password and revokes every old Session in one transaction. It creates no new login Session.
 
-Business routes receive identity only through `createApp({ businessRouter })`, which runs the origin check and `requireVerifiedUser` for all of `/api/v1`. Routers that take their own `authenticate` handler (such as the resume router) use `requireAuthContext`, which confirms `res.locals.auth` without a second Session read. Business errors use `{ "error": { "code", "message" } }`: 401 `UNAUTHORIZED`, 403 `EMAIL_NOT_VERIFIED`, 403 `FORBIDDEN` for an untrusted origin, 404 `NOT_FOUND` for missing or foreign resources, 503 `SERVICE_UNAVAILABLE` when PostgreSQL is unreachable, and 500 `INTERNAL_ERROR` otherwise. Logs record only the error class and code, never driver messages that could quote connection details. CORS exposes `Retry-After`, `Location` and `Content-Disposition` so the cross-origin frontend can read the 429/503 wait time, created-resource location and download file name.
+Business routes receive identity only through `createApp({ businessRouter })`, which runs the origin check and `requireVerifiedUser` for all of `/api/v1`. Routers that take their own `authenticate` handler (such as the resume router) use `requireAuthContext`, which confirms `res.locals.auth` without a second Session read. Handlers read the identity with `getAuthContext(res)`; `res.locals.auth` is typed through `src/types/express.d.ts`. Business errors use `{ "error": { "code", "message" } }`: 401 `UNAUTHORIZED`, 403 `EMAIL_NOT_VERIFIED`, 403 `FORBIDDEN` for an untrusted origin, 404 `NOT_FOUND` for missing or foreign resources, 503 `SERVICE_UNAVAILABLE` when PostgreSQL is unreachable, and 500 `INTERNAL_ERROR` otherwise. Logs record only the error class and code, never driver messages that could quote connection details. CORS exposes `Retry-After`, `Location` and `Content-Disposition` so the cross-origin frontend can read the 429/503 wait time, created-resource location and download file name.
+
+Auth endpoints keep Better Auth's error body, `{ "code", "message" }`. Project rejections use the codes in `AuthFailureCode` (`src/modules/auth/errors.ts`). When PostgreSQL cannot be reached, an auth endpoint answers 503 `SERVICE_UNAVAILABLE` ("Authentication is temporarily unavailable. Please try again."), the same rule as `/api/v1`; any other unexpected failure answers 500 `INTERNAL_SERVER_ERROR`. Both are rolled back. The 503 answer is not yet listed for the auth endpoints in `endpoints.json`; the API documentation owner adds it.
 
 For an authenticated request to revoke another user's Session, Better Auth returns a generic success without deleting that Session. List/revocation remain ownership-scoped; the generic response is not proof that the supplied token existed.
 
@@ -44,9 +46,9 @@ The requester selected a seven-day Session, 60-second same-recipient/purpose ema
 
 `auth_credential_state` has one row per `(user_id, purpose)`. A monotonically increasing `sequence` reserves each send attempt. The nullable `active_sequence`, current issuance ID/digest and expiry group describe the accepted current link. Reserving a send changes no active fields. A fresh random verification JWT nonce distinguishes same-second sends. Native reset records retain the library's generic identifier/value semantics.
 
-After the account transaction commits, the in-process mail queue sends the prepared message outside database locks. Successful SMTP acceptance triggers a new short activation transaction. Only a higher accepted sequence may replace the current link, so a slower older send cannot restore an obsolete credential after a newer accepted send. Failed/rejected sends leave the old active link unchanged. An expired prepared credential is not activated. The HTTP generic acceptance response does not disclose whether mail was sent.
+After the account transaction commits, the in-process mail queue sends the prepared message outside database locks. Successful SMTP acceptance triggers a new short activation transaction. Only a higher accepted sequence may replace the current link, so a slower older send cannot restore an obsolete credential after a newer accepted send. Failed/rejected sends leave the old active link unchanged. An expired prepared credential is not activated. The HTTP generic acceptance response does not disclose whether mail was sent. The queue (`src/modules/auth/outbox.ts`) sends at most two messages at a time, and every SMTP send is bounded (10 s to connect, 10 s for the greeting, 30 s of socket inactivity), so a stuck mail server cannot hold the queue or shutdown for minutes. A rejected send is reported as `AUTH_EMAIL_DELIVERY_FAILED`; an accepted send whose activation fails as `AUTH_CREDENTIAL_ACTIVATION_FAILED`.
 
-`auth_email_rate_limit` applies the confirmed limits to existing and unknown recipients using HMAC keys, without storing additional plaintext email addresses there. Limits count requests, including failed send attempts. Better Auth's native IP/path limiter uses an independent PostgreSQL pool and atomic custom storage, so failed account transactions do not roll back security counters. Raw paths/tokens are hashed before storage.
+`auth_email_rate_limit` applies the confirmed limits to existing and unknown recipients using HMAC keys, without storing additional plaintext email addresses there. Limits count requests, including failed send attempts. Better Auth's native IP/path limiter uses atomic custom storage on a second PostgreSQL pool, so failed account transactions do not roll back security counters. `server.ts` creates that pool with `createPool()` next to the main pool and passes it as `rateLimitPool` (Database Design C.4); it closes both after the email queue drains. Raw paths/tokens are hashed before storage.
 
 SMTP acceptance and database activation are separate systems. A process/storage failure after acceptance may leave that prepared link inactive; it does not authorize restoring an obsolete link or bypassing the current-state check. Errors are reported with safe codes, and users can request another email. The implementation does not claim durable mail replay, automatic cross-system recovery or inbox-delivery guarantees.
 
@@ -56,9 +58,24 @@ The project `Database` uses its own AsyncLocalStorage to share one PoolClient ac
 
 Signin, verification and reset use the same user lock ordering. This prevents an old-password signin from creating a Session after a concurrent reset has revoked Sessions. Latest-credential checks remain inside that transaction; reset GET approval is never reused as POST authorization. Single-row native consumption is an atomic `DELETE ... RETURNING` operation.
 
-Better Auth reports every endpoint error, including expected 4xx answers such as a wrong password or an expired link, to `onAPIError`. Only non-API errors and 5xx answers are reported as `BETTER_AUTH_INTERNAL`, so the log is not flooded by ordinary user mistakes. Both PostgreSQL pools log idle-client errors instead of letting a database restart crash the process.
+Better Auth reports every endpoint error, including expected 4xx answers such as a wrong password or an expired link, to `onAPIError`. Only non-API errors and 5xx answers are reported as `BETTER_AUTH_INTERNAL`, so the log is not flooded by ordinary user mistakes. Both PostgreSQL pools come from `createPool()`, whose `error` listener logs idle-client errors instead of letting a database restart crash the process. Startup errors print only `ConfigurationError` messages, which name a setting or missing table but never a value.
 
 Cookie caching is disabled. Session reads used by business authorization bypass cached data and do not refresh the Session. The regular get-session HTTP endpoint retains the library's refresh behavior and cookie handling. Revoked Session rows cannot be recreated by a stale cookie. Never cache the trusted user context across requests.
+
+## Code map
+
+| File | Responsibility |
+|---|---|
+| `src/modules/auth/auth.ts` | `createAuthentication()`: route allowlist and origin check, one transaction per request, commit only on 2xx/3xx, queue emails after commit, 503/500 mapping |
+| `src/modules/auth/options.ts` | The Better Auth configuration; each setting maps to a confirmed rule (Database Design E.4) |
+| `src/modules/auth/routes.ts` | Exposed endpoints and their methods, Session-only routes, email-issuing routes |
+| `src/modules/auth/guards.ts` | `before` hook: one guard per path (email limits, sign-in lock, Session routes, verification link, reset link/submission) and failure redirects |
+| `src/modules/auth/issuance.ts` | `sendVerificationEmail` / `sendResetPassword`: reserve a sequence and record the job inside the transaction |
+| `src/modules/auth/outbox.ts` | After-commit email queue: concurrency limit, drain, separate failure codes |
+| `src/modules/auth/credentials.ts` | SQL for user locks, email limits, credential sequence/activation/latest checks |
+| `src/modules/auth/pg-adapter.ts`, `rate-limit.ts` | PostgreSQL adapter for Better Auth; native rate-limit storage |
+| `src/modules/auth/errors.ts`, `constants.ts`, `schema.ts` | Error and report codes; `/api/auth`, the 900-second lifetime, the client-IP header; startup schema check |
+| `src/http/authorization.ts`, `src/http/origin.ts` | `requireVerifiedUser`, `requireAuthContext`, `getAuthContext`, `requireOwnedResource`; the shared CSRF origin rule |
 
 ## Frontend and teammate checklist
 

@@ -48,8 +48,14 @@ schema: [Database Design Appendices D–F](../docs/Database_Design.md#shared-ide
 - Business routers go in `createApp({ businessRouter })` (`src/app.ts`). Inside it, use
   `requireAuthContext` where a router asks for an `authenticate` handler (it checks the context
   without a second Session read), and `requireOwnedResource(database, kind, param)` for
-  application/resume/workspace/conversation IDs. Still scope every SQL statement by
-  `res.locals.auth.userId`.
+  application/resume/workspace/conversation IDs. In a handler, read the identity with
+  `getAuthContext(res)` and scope every SQL statement by its `userId`.
+- Auth endpoints (`/api/auth/*`) keep Better Auth's `{ code, message }` body. PostgreSQL down →
+  503 `SERVICE_UNAVAILABLE`; other unexpected failures → 500 `INTERNAL_SERVER_ERROR`.
+- `server.ts` creates two pools with `createPool()`: the main one and `rateLimitPool` for Better
+  Auth's IP/path counters, which must survive a rolled-back request. Auth emails are sent after
+  commit by a queue of at most two concurrent SMTP sends, each bounded by 10 s / 10 s / 30 s
+  (connect / greeting / socket) timeouts. File map: [Auth_Implementation.md](../docs/Auth_Implementation.md#code-map).
 - Confirmed settings (2026-11-11): 7-day Sessions; verification/reset links last 900 s and only the
   latest link per user and purpose works; 60 s cooldown and at most 5 emails per 15 min per
   recipient and purpose; a replacement link becomes active only after SMTP accepts it.
@@ -334,12 +340,15 @@ to change.
 
 - `src/server.ts` calls `createPool({ DATABASE_URL: environment.databaseUrl })`, so the URL
   checked at startup is the one that is connected.
-- `src/modules/auth/auth.ts` no longer imports `watchIdleErrors`. Its separate rate-limit pool
-  (`new pg.Pool(...)`, not made by `createPool()`) registers its own `error` listener. Without
-  one, a PostgreSQL restart would crash the process.
+- `src/modules/auth/auth.ts` no longer imports `watchIdleErrors`. At merge time its separate
+  rate-limit pool (`new pg.Pool(...)`) got its own `error` listener. The later auth refactor
+  replaced that: `server.ts` now creates the rate-limit pool with `createPool()` as well, so
+  both pools share `main`'s listener.
 
-Idle-client errors are now logged in full. They are messages such as "Connection terminated
-unexpectedly" and do not contain the password.
+Idle-client errors are now logged in full, as the whole error object. A PostgreSQL restart
+produces about 100 lines per idle connection, including the client's user, host and database
+name. The password is not printed (`pg` keeps it non-enumerable). A shorter log line is a
+possible follow-up for the owner of `pool.ts`.
 
 ### 2. `backend/src/db/transaction.ts`: this branch's version, with `main`'s rollback handling
 
