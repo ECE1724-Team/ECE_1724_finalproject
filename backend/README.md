@@ -28,10 +28,10 @@ Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_P
 File rules: [PRD §5.2](../docs/PRD.md). Upload and delete transactions:
 [Database Design §7.2–7.3](../docs/Database_Design.md).
 
-**Status:** the R2 adapter, PDF extraction and resume acceptance rules are done and
-unit-tested. Not done yet: HTTP routes, auth checks, database records, receiving
-uploads with a 2 MiB cut-off, and background cleanup of deleted files. These need
-the auth, database and API work from the rest of the team.
+**Status:** the R2 adapter, PDF parsing, the resume service, the `/api/v1/resumes` routes and
+the R2 cleanup worker are done and unit-tested with in-memory fakes. Still missing (other
+owners): the SQL behind the repository interfaces and migration 006 (Rongxin), the
+`requireVerifiedUser` middleware (Zishi), and mounting everything in `app.ts`/`server.ts`.
 
 ### R2 setup
 
@@ -46,72 +46,77 @@ To test against real R2, point `.env` at a **development-only** bucket, set
 `R2_INTEGRATION_TEST=1` and run `npm run test:r2`. It writes, reads and deletes one
 random test object. Without that flag it is reported as skipped.
 
-### Using the modules
+### Files
 
 | File | Purpose |
 |---|---|
-| `src/config/env.ts` | `readR2Config()`: reads and checks the R2 variables |
+| `src/modules/resumes/routes.ts` | `createResumeRouter()`: the five `/api/v1/resumes` routes, upload parsing (multer, 2 MiB), error → HTTP mapping |
+| `src/modules/resumes/service.ts` | `createResumeService()`: upload, list, get, download, remove. Takes a verified `userId`; no Express |
+| `src/modules/resumes/cleanup-worker.ts` | `startCleanupWorker()`: deletes queued R2 objects with retries |
+| `src/modules/resumes/repository.ts` | `ResumeRepository` and `StorageCleanupRepository` interfaces (SQL implemented separately) |
+| `src/modules/resumes/pdf-policy.ts` | `validateResumePdf()`: the PRD file rules |
 | `src/integrations/object-storage/r2.ts` | `createR2Storage()`, `createObjectKey()` |
 | `src/integrations/pdf/extractor.ts` | `createPdfExtractor()`: parses PDFs in a worker thread with a timeout and a concurrency limit |
-| `src/modules/resumes/pdf-policy.ts` | `validateResumePdf()`: the PRD file rules |
+| `src/config/env.ts` | `readR2Config()`: reads and checks the R2 variables |
+
+### Mounting (once `app.ts` exists)
 
 ```ts
-// Once at server startup. Use ONE extractor per process (it holds the concurrency limit).
-const pdf = createPdfExtractor();
+const pool = createPool();
 const storage = createR2Storage(readR2Config());
-
-// In the upload handler, after auth and after receiving at most 2 MiB:
-const result = await validateResumePdf(bytes, pdf, { signal }); // throws PdfError if rejected
-const key = createObjectKey();                                   // never use a key from the browser
-await storage.putNew(key, bytes, { signal });
-// Save key in the database, plus result.extraction.text when result.textStatus === "available".
+const pdf = createPdfExtractor();                 // ONE per process: it holds the parse limit
+const deps = { pool, storage, resumes: resumeRepository, cleanup: cleanupRepository };
+const service = createResumeService({ ...deps, pdf });
+app.use("/api/v1/resumes", createResumeRouter({ service, authenticate: requireVerifiedUser }));
+const worker = startCleanupWorker(deps);
+// On shutdown: stop accepting requests, await worker.stop(), storage.close(), await pool.end().
 ```
 
-- **Rejected** (`PdfError`): over 2 MiB, not a PDF, damaged, password-protected, more than 2 pages.
-- **Accepted, `textStatus: "available"`**: at least 100 non-whitespace characters and text on every page. `extraction.text` is what the AI uses.
-- **Accepted, `textStatus: "unavailable"`**: e.g. a scanned or image-only resume. Stored and linkable, but no text is saved and the UI shows an AI warning. Confirmed 2026-11-17 (PRD §5.2); the database stores it as `parse_status = 'text_unavailable'`.
+`authenticate` must reject unauthenticated or unverified users and set
+`res.locals.auth.userId`. The router runs it before reading any upload body.
 
-Storage operations: `putNew` refuses to overwrite an existing key; `read` returns the
-whole file as `bytes` (or `null` if missing); `head` returns metadata (or `null`);
-`delete` is safe to repeat. Pass a `signal` so a cancelled request stops the work.
+### File rules
 
-### Errors
+- **Rejected**: over 2 MiB, not a PDF, damaged, password-protected, more than 2 pages. Nothing is stored.
+- **Accepted, `textStatus: "available"`**: at least 100 non-whitespace characters and text
+  on every page. The extracted text is saved for the AI.
+- **Accepted, `textStatus: "unavailable"`**: e.g. a scanned resume. Stored and linkable,
+  but no text is saved; the frontend shows the AI warning from `textStatus`. Stored as
+  `parse_status = 'text_unavailable'`.
 
-| Error | Codes |
-|---|---|
-| `PdfError` | File problems: `invalid_pdf`, `too_large`, `too_many_pages`, `unreadable_encryption`. Server-side, worth a retry: `processing_failed`, `timeout`, `cancelled`, `busy` |
-| `StorageError` | `conflict`, `access_denied`, `timeout`, `cancelled`, `service_error` |
+### HTTP errors
 
-How these map to HTTP status codes is still to be agreed with the API/frontend owner.
-A storage `timeout` does not prove the write failed, so don't delete or overwrite based on it.
+Body: `{ "error": { "code", "message" } }` (see `endpoints.json`).
 
-Limits are constants in code: R2 timeout 30 s (`r2.ts`), PDF parse timeout 15 s,
-2 parses at a time and 256 MB worker heap (`extractor.ts`).
+| HTTP | `error.code` | When |
+|---|---|---|
+| 400 | `BAD_REQUEST` | Missing `name` or `file`, or more than one file |
+| 404 | `NOT_FOUND` | Missing, deleted or someone else's resume, or an id that isn't a UUID |
+| 413 | `PDF_TOO_LARGE` | File over 2 MiB |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | Upload not sent as `multipart/form-data` |
+| 422 | `VALIDATION_ERROR` | Name not 1–200 characters after trimming |
+| 422 | `PDF_INVALID`, `PDF_TOO_MANY_PAGES`, `PDF_PASSWORD_PROTECTED` | File problems |
+| 503 | `PDF_BUSY` (+ `Retry-After: 5`), `PDF_PROCESSING_FAILED`, `SERVICE_UNAVAILABLE` | Server-side, worth a retry |
+| 500 | `INTERNAL_ERROR` | Bugs; details only in the server log |
 
-### Rules for the resume API routes
+Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
+2 parses at a time, 256 MB worker heap (`extractor.ts`); cleanup every 30 s, retries after
+1 min, 5 min, 30 min, 2 h, then every 6 h (`cleanup-worker.ts`).
 
-Whoever writes the resume routes, please keep these:
+### Rules for code that touches resumes
 
-- Check the session and verified email **before** reading the upload body, then stop
-  reading at 2 MiB. Never take the user ID or a storage key from the request.
-- Upload is synchronous: return `201` only after the file is in R2 and the database row
-  is saved. If the row insert fails, delete the R2 object (or queue cleanup).
-- If you can't tell whether the database commit succeeded, re-read the row before
-  deleting anything; deleting the object blindly can destroy a saved resume.
-- File responses: `Content-Type: application/pdf`, `Cache-Control: private, no-store`,
-  and a sanitized filename in `Content-Disposition`. Abort the R2 read when the client
-  disconnects.
-- Preview: the frontend fetches the normal file endpoint with its session and shows it
-  through a Blob URL (revoked when the viewer closes), so no extra preview route is needed.
-- Linking a resume to an application is done through the application update, which is a
-  **full replacement**: sending only `resumeId` would clear the other fields. The
-  resume must belong to the same user, not be deleted, and be `succeeded` or
-  `text_unavailable`.
-- Deleted files are removed from R2 only by the cleanup worker after the delete
+- Never take a user ID or a storage key from the request.
+- Linking a resume to an application goes through the application update, which is a
+  **full replacement**: sending only `resumeId` would clear the other fields. The resume
+  must belong to the same user, not be deleted, and be `succeeded` or `text_unavailable`,
+  checked in the same transaction (resume row locked before the application).
+- R2 objects of deleted resumes are removed only by the cleanup worker after the delete
   transaction commits. Never use a bucket lifecycle rule to expire resume objects.
 
 ### Known gaps
 
+- No real-database or real-auth tests yet; everything above is tested with fakes.
+- The live R2 check has not been run.
 - Text order follows the PDF's internal order. Unusual two-column layouts may come out
   interleaved, so check a few real Word/LaTeX exports by hand.
 - Tests for encrypted PDFs and for 99 + 1 characters split across pages were dropped
