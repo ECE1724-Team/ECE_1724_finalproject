@@ -147,6 +147,7 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
-#  
+
+# Personal local notes
 /Note/
 note.md
