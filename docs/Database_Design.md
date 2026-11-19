@@ -37,7 +37,7 @@ The reading paths and supplements carry forward the relevant integration guidanc
 
 **Migration status revision (v1.11, 2026-11-17):** Business migration groups 002–005 are merged into `main` (§10). Group 006 is not yet written. The auth source files referenced in Appendices D–E are not yet in the repository; their links are replaced by plain paths.
 
-**Auth code status revision (2026-11-18):** the authentication source files named in Appendices D–E, `docs/Auth_Implementation.md` and the auth test fixtures are merged with this revision of `main`; `backend/src/app.ts` applies `requireVerifiedUser` to `/api/v1`. The paths below remain plain text.
+**Auth code status revision (2026-11-18):** the authentication source files named in Appendices D–E, `docs/Auth_Implementation.md` and the auth test fixtures are in the repository from this revision on; `backend/src/app.ts` applies `requireVerifiedUser` to `/api/v1`. The paths below remain plain text.
 
 **Text-unavailable and owner-FK revision (v1.10, 2026-11-17):** The `text_unavailable` resume state (PRD §5.2) is confirmed and no longer proposed. Business owner FKs to `public.auth_user(id)` use `ON DELETE RESTRICT`; there is no account-deletion feature. Internal same-conversation FKs, including `generation_materials` → `generation_runs`, are `NO ACTION`, and `generation_materials` cascades from `conversations` directly (§7.5). `endpoints.json` 1.9.0 marks the `textStatus` contract confirmed. Rejected uploads no longer create a row, so `parse_status` has only `succeeded` and `text_unavailable` and `parse_error_code` is removed (§7.2).
 

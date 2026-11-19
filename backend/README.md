@@ -18,7 +18,7 @@ npm run dev            # builds, then starts the API on PORT (default 3000)
 Use a dedicated development database, generate a private `BETTER_AUTH_SECRET`, put the
 frontend's exact origin in `AUTH_TRUSTED_ORIGINS`, and configure SMTP (a local SMTP catcher
 is fine in development). Keep `.env` out of git. Startup checks that the auth tables exist; it
-never creates or migrates the schema itself.
+never creates or migrates the schema itself. Step-by-step values: [Local configuration](#local-configuration).
 
 | Command | What it does |
 |---|---|
@@ -33,6 +33,68 @@ never creates or migrates the schema itself.
 
 `dist/` is build output and is not committed. Deploy it together with `node_modules`
 (the PDF parser loads font data from `pdfjs-dist` at runtime).
+
+<a id="local-configuration"></a>
+
+### Local configuration (`backend/.env`)
+
+`.env` is git-ignored. Each developer uses their own local PostgreSQL role and password; no shared
+credentials are stored in the repository. `npm run migrate`, `npm run test:db` and `npm start`
+load `.env` automatically, and an exported variable takes precedence over it.
+
+**1. Create a database role and database.** Pick one option (Ubuntu/WSL commands shown; `sudo`
+asks for your Linux login password, not the new database password):
+
+```sh
+# Option A: password over TCP (matches .env.example)
+sudo -u postgres createuser --createdb --pwprompt jobflow   # prompts for the new role's password
+sudo -u postgres createdb -O jobflow jobflow_dev
+# DATABASE_URL=postgresql://jobflow:<password>@localhost:5432/jobflow_dev
+
+# Option B: no password, Unix socket (role name = your Linux user name)
+sudo -u postgres createuser --createdb "$USER"
+createdb jobflow_dev
+# DATABASE_URL=postgresql:///jobflow_dev
+```
+
+URL-encode special characters in the password (`@` → `%40`, `:` → `%3A`, `/` → `%2F`, `#` → `%23`).
+With option B, a stopped database currently answers 500 instead of 503, because the socket error
+code (`ENOENT`) is not recognized as "database unavailable".
+
+**2. Run a local SMTP catcher.** Verification and password-reset links become valid only after
+the SMTP server accepts the email. Without a reachable SMTP server, every link stays invalid. In
+development, run [Mailpit](https://mailpit.axllent.org/) (SMTP on port 1025, inbox at
+http://localhost:8025) in its own terminal:
+
+```sh
+curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/install.sh | sudo bash
+mailpit
+```
+
+**3. Fill in `.env`** (copy `.env.example` first):
+
+| Variable | Development value | Notes |
+|---|---|---|
+| `DATABASE_URL` | from step 1 | Must name the database. Startup and `npm run migrate` reject it otherwise |
+| `NODE_ENV` / `PORT` | `development` / `3000` | `NODE_ENV` must be `development`, `test` or `production` |
+| `BETTER_AUTH_URL` | `http://localhost:3000` | This backend's own origin (no path). Email links are built from it, and it is automatically trusted |
+| `BETTER_AUTH_SECRET` | output of `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` | At least 32 characters. Placeholder words such as `replace` or `changeme` are rejected |
+| `AUTH_TRUSTED_ORIGINS` | `http://localhost:5173` | The frontend's exact origin(s), comma-separated. API clients such as Postman must send this value as the `Origin` header |
+| `AUTH_SESSION_SECONDS`, `AUTH_EMAIL_COOLDOWN_SECONDS`, `AUTH_EMAIL_WINDOW_SECONDS`, `AUTH_EMAIL_MAX_PER_WINDOW` | `604800`, `60`, `900`, `5` | Confirmed project values (7-day Session; 60 s cooldown; 5 emails per 15 min). Keep them |
+| `AUTH_COOKIE_SAME_SITE` | `lax` | `none` requires an HTTPS `BETTER_AUTH_URL` |
+| `TRUST_PROXY_HOPS` | `0` | Set it only behind a known reverse-proxy chain |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | `127.0.0.1` / `1025` / `false` | Mailpit from step 2 |
+| `SMTP_FROM` | `"JobFlow AI <no-reply@example.com>"` | Required |
+| `SMTP_USER` / `SMTP_PASSWORD` | empty | Set both or neither |
+| `TEST_DATABASE_URL` | empty | Empty: `npm run test:db` starts a disposable cluster. Never point it at `jobflow_dev`, because the tests create and drop databases |
+| `R2_*` | empty | Not read at startup until the resume routes are mounted; see [R2 setup](#r2-setup) |
+
+In production, `BETTER_AUTH_URL` and every trusted origin must use HTTPS.
+
+**4. Check.** `npm run migrate` must apply the migrations (a connection error means the role or
+password in `DATABASE_URL` is wrong). `npm run dev` must print `JobFlow API listening on port
+3000`. A configuration error names the setting but never prints its value; `Missing auth tables`
+means the migrations have not been applied.
 
 ## Authentication and authorization
 
