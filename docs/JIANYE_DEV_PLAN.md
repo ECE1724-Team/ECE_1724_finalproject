@@ -20,104 +20,39 @@ AI behavior in [AI Design](AI_Design.md), routes in [endpoints.json](endpoints.j
 
 ## Progress log
 
-### 2026-11-15: Phases 1–3 built
-- Added `@aws-sdk/client-s3` and `pdfjs-dist`; tests run on Node's built-in runner (no
-  test framework). Node 26. Backend stays CommonJS; only the PDF worker is ESM (`.mts`)
-  because PDF.js is ESM-only.
-- R2 adapter (`r2.ts`): four operations `putNew` / `read` / `head` / `delete`, random
-  server-side keys, and `If-None-Match: *` so a write never overwrites.
-- PDF parsing (`extractor.ts`, `worker.mts`): each parse runs in a worker thread that is
-  killed on timeout or cancel, because PDF.js cannot be interrupted otherwise. Max 2 at a
-  time per process; more fail fast with `busy`.
-- Acceptance rules (`pdf-policy.ts`): 2 MiB, 1–2 pages, real PDF, not password-protected.
-- Fixtures build fictional PDFs in code; no real resumes in the repo.
-- Key decisions: modules don't depend on Express or the database, so they can be tested
-  and reused by the cleanup worker; storage keys only ever come from the server.
+Details live in the code comments, [backend/README.md](../backend/README.md) and Database
+Design; this log keeps what was decided and why.
 
-### 2026-11-15: Simplification pass
-- Config cut to the 4 R2 variables + `R2_INTEGRATION_TEST`; region fixed to `auto`;
-  timeouts and limits became code constants instead of env vars.
-- `read` returns the whole file as bytes instead of a stream (files ≤ 2 MiB). This removed
-  the hardest-to-read code.
-- Removed duplicate checks and unused test code (PDF encryption helpers).
+### 2026-11-15: Phases 1–3 (R2 adapter, PDF parsing, file rules)
+- R2 adapter with four operations (`putNew` / `read` / `head` / `delete`); writes use
+  `If-None-Match: *` so they never overwrite; keys are random and server-side only.
+- PDF.js runs in a worker thread that can be killed on timeout or cancel, max 2 per process
+  (`busy` beyond that). Modules don't depend on Express or the database.
+- Simplified right after: only the 4 R2 env vars, limits as code constants, `read` returns the
+  whole file (≤ 2 MiB, no stream).
 
-### 2026-11-15 → 11-17: Text-unavailable resumes
-- Readable PDFs without usable text (scanned, image-only) are now **stored, not rejected**:
-  viewable, downloadable and linkable, but the AI can't use them and the UI warns.
-  `validateResumePdf` returns `textStatus: "available"` (with text) or `"unavailable"`
-  (with no text at all, so partial text can never reach the AI). `insufficient_text` error removed.
-- Proposed 11-15, **confirmed 11-17**. DB stores it as `parse_status = 'text_unavailable'`
-  with `extracted_text = NULL` (migration updated in `db5cb92`). API field `Resume.textStatus`.
+### 2026-11-15 → 11-17: Text-unavailable resumes (confirmed 11-17)
+Readable PDFs without usable text are stored and linkable instead of rejected, with no saved
+text (`textStatus: "unavailable"`, `parse_status = 'text_unavailable'`). Upload is synchronous;
+rejected files leave nothing behind. Rules: PRD §5.2.
 
-### 2026-11-16 → 11-17: Docs and agreements
-- Merged my handoff notes into `backend/README.md`; this file became my personal plan.
-- Upload is **synchronous** (confirmed 11-17): parse first, write to R2 and the database only
-  for accepted files; nothing is stored for rejected ones.
-- Added `tests/tsconfig.json` so VS Code type-checks tests.
+### 2026-11-17: Agreements with Rongxin
+Repository interfaces I can fake, pool passed in at startup, server-generated resume id and
+key, unpaginated list with `linkedApplicationCount`, 404 for deleted/foreign resumes, cleanup
+SQL by Rongxin and worker by me. Recorded in Database Design Appendix C.4 and §5.11.
 
-### 2026-11-17: Agreements with Rongxin (Database Design Appendix C.4)
-- Repository functions sit behind TypeScript interfaces I can fake. Single statements take a
-  client; atomic workflows (resume delete, AI turn steps) are one function with their own transaction.
-- Pool is created at startup with `createPool()` and passed in, like `createR2Storage(readR2Config())`.
-- Upload generates the resume id (`randomUUID()`) and object key before writing R2; unknown insert
-  outcome → look up by `object_key` before deleting the object.
-- Resume list: all live resumes, newest first, not paginated, with `linkedApplicationCount`
-  (endpoints 1.10.0). Deleted, missing or foreign resume → 404 everywhere.
-- Cleanup: Rongxin writes migration 006 and the enqueue/claim/complete/fail SQL; I write the worker
-  and pick the retry schedule. Reasons `resume_deleted`, `upload_rollback` (no CHECK). Orphan
-  reconciliation deferred.
-
-### 2026-11-17: Phase 4 planned
-- The resume API routes are mine. I define the repository interfaces; Rongxin implements the SQL.
-- Upload parsing with `multer`; the cleanup worker runs in the server process; unit tests
-  with fakes until there is a migrate script.
-
-### 2026-11-17: Phase 4 module work done
-Everything that didn't need teammates' code. 40 unit tests pass (25 new).
-- `repository.ts`: `ResumeRepository` / `StorageCleanupRepository` interfaces with comments
-  on ordering, locking and return values. Differences from the draft: `insert` and
-  `findLiveByObjectKey` return the full row, so a recovered upload can be returned directly.
-- `service.ts`: upload / list / get / download / remove, following §7.2–7.3. Upload: validate →
-  R2 → insert; once the file is in R2 the client's cancel is ignored so the insert always
-  finishes. Failed insert: PostgreSQL error (SQLSTATE) → delete the object, else queue
-  `upload_rollback`, else log the key; no reply → look up by `object_key` first; lookup also
-  fails → keep the object, 503. Download: object missing → 404 if the resume was deleted
-  meanwhile, otherwise 500. Delete never touches R2.
-- `errors.ts`: `ServiceUnavailableError`, and telling a definite DB failure (SQLSTATE, not class
-  08) from "database unreachable" (classes 08/53/57P, network errors).
-- `cleanup-worker.ts`: claim 10 every 30 s, never two passes at once, `resetInterrupted` at
-  start, retries after 1 min / 5 min / 30 min / 2 h, then every 6 h. Skips (and completes) a
-  job whose key still belongs to a live resume.
-- `routes.ts`: auth runs before multer; multer 2.5.0 (pinned) with 2 MiB, one file, one field,
-  and `defParamCharset: "utf8"` (its default latin1 garbles Chinese file names). Non-UUID id
-  → 404. Download headers: `application/pdf`, `private, no-store`, `nosniff`, RFC 6266 file
-  name. Error codes as in backend/README "HTTP errors"; 415 is only for non-multipart
-  requests, a non-PDF file is 422 `PDF_INVALID`.
-- Tests: `tests/fakes/resumes.ts` (in-memory repositories, storage, extractor) and
-  `resume-service`, `cleanup-worker`, `resume-routes` tests. Route tests run a real Express
-  server on a random port with Node's `fetch`; no `supertest`.
-- `endpoints.json` 1.11.0: 413/500/503 responses and the error codes for the resume routes.
-  `backend/README.md`: files, mounting, HTTP errors, rules.
-- `npm audit` reports 3 moderate issues from `node-pg-migrate`'s `glob`; they were there before multer.
-
-### 2026-11-17: Phase 4 review fixes
-42 unit tests pass; each new check fails on the code before these fixes.
-- A PostgreSQL answer is now `instanceof DatabaseError` (pg), not a five-character `code`:
-  `EPIPE` matched the old pattern, so a socket error skipped the row lookup and returned 500.
-- The cleanup worker calls `resetInterrupted` (renamed `requeueProcessing`) before **every** pass, not only at start. Before,
-  a database blip during a pass left the whole claimed batch `processing` until the next restart.
-  Safe because there is one instance and passes never overlap.
-- Logging: every 5xx except `PDF_BUSY` is logged (before, only 500), and the worker logs
-  non-storage job errors (`unexpected_error`) with their stack.
-- A `name` over multer's 1 KiB `fieldSize` is 422 `VALIDATION_ERROR` like any too-long name (was 400).
-
-### 2026-11-17: Shared docs synced with Phase 4
-- Database Design v1.13: resume routes are mine; the resume module defines the repository
-  interfaces and Rongxin implements them (C.4); §5.11 lists the cleanup job statuses, what each
-  function does, `requeueProcessing` and the single-instance condition; Appendices A–C and the
-  API version (1.11.0) updated.
-- PRD ownership table and backend README (single-instance note) updated. Nothing here is
-  confirmed by Rongxin or Justin yet; §3 below is still to send.
+### 2026-11-17: Phase 4 module work (service, routes, cleanup worker)
+- The resume routes are mine; I defined `repository.ts` and the fakes, Rongxin implements the SQL.
+- Upload: once the PDF is in R2 the insert always finishes; an unclear insert is looked up by
+  `object_key` before any delete. Delete never touches R2; the worker does, after the commit.
+- Routes: auth before multer; multer must use `defParamCharset: "utf8"` (latin1 garbles Chinese
+  file names). Error codes in `endpoints.json` 1.11.0 and backend README.
+- Worker: every 30 s, `requeueProcessing` then claim 10; skips keys of live resumes. Relies on a
+  single backend instance.
+- Review fixes: PostgreSQL errors are detected with `instanceof DatabaseError` (a socket
+  `EPIPE` used to look like a SQLSTATE and skip the lookup); all 5xx except `PDF_BUSY` are logged.
+- Tests: in-memory fakes; route tests run a real Express server with Node's `fetch`.
+- Shared docs synced (Database Design v1.13, PRD ownership row). Not yet confirmed by Rongxin or Justin.
 
 ## Don't undo these
 Worker-thread isolation and the `busy` limit; `If-None-Match` on writes; never accepting a
@@ -146,7 +81,7 @@ looking a row up before deleting the object of an unclear insert; the worker's l
 ### 2. Phase 4: what's left (blocked on teammates)
 
 The module work (2a in the original plan) is done; see the Progress log entry
-"2026-11-17: Phase 4 module work done". What remains needs someone else's code first.
+"2026-11-17: Phase 4 module work". What remains needs someone else's code first.
 
 | What | Waiting for | Until then |
 |---|---|---|

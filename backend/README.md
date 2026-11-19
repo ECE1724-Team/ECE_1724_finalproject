@@ -302,6 +302,9 @@ random test object. Without that flag it is reported as skipped.
 | `src/integrations/pdf/extractor.ts` | `createPdfExtractor()`: parses PDFs in a worker thread with a timeout and a concurrency limit |
 | `src/config/env.ts` | `readR2Config()`: reads and checks the R2 variables |
 
+The PDF worker is `worker.mts` (compiled to `.mjs`) because PDF.js is ESM-only; the rest of
+the backend stays CommonJS, so don't convert the whole package to ESM for it.
+
 ### Mounting from server startup
 
 Mount the routes through `createApp({ businessRouter })`, so they sit behind the `/api/v1`
