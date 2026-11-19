@@ -23,7 +23,7 @@ test("mounted resume routes preserve private access and clean up after an HTTP d
       res.sendStatus(401);
       return;
     }
-    res.locals.auth = { userId, emailVerified: true };
+    res.locals.auth = { userId, sessionId: `test-session-${userId}`, emailVerified: true };
     next();
   };
   const app = express();

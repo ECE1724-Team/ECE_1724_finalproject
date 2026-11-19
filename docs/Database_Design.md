@@ -37,6 +37,8 @@ The reading paths and supplements carry forward the relevant integration guidanc
 
 **Migration status revision (v1.11, 2026-11-17):** Business migration groups 002–005 are merged into `main` (§10). Group 006 is not yet written. The auth source files referenced in Appendices D–E are not yet in the repository; their links are replaced by plain paths.
 
+**Auth code status revision (2026-11-18):** the authentication source files named in Appendices D–E, `docs/Auth_Implementation.md` and the auth test fixtures are in the repository from this revision on; `backend/src/app.ts` applies `requireVerifiedUser` to `/api/v1`. The paths below remain plain text.
+
 **Text-unavailable and owner-FK revision (v1.10, 2026-11-17):** The `text_unavailable` resume state (PRD §5.2) is confirmed and no longer proposed. Business owner FKs to `public.auth_user(id)` use `ON DELETE RESTRICT`; there is no account-deletion feature. Internal same-conversation FKs, including `generation_materials` → `generation_runs`, are `NO ACTION`, and `generation_materials` cascades from `conversations` directly (§7.5). `endpoints.json` 1.9.0 marks the `textStatus` contract confirmed. Rejected uploads no longer create a row, so `parse_status` has only `succeeded` and `text_unavailable` and `parse_error_code` is removed (§7.2).
 
 **Interview field revision (v1.9, 2026-11-16):** PRD 1.8 FR-07 confirms that `interview_name` and `starts_at` are both required and that `interviews` has no other business columns and no state column (§5.5). The provisional nullability is removed.
@@ -962,7 +964,7 @@ Agreed between Jianye (storage, PDF and AI) and Rongxin (business SQL). These ru
 
 ## Appendix D. Shared User Identity — Confirmed Contract
 
-**Repository status (2026-11-17):** only the two auth migrations are in this repository. The auth source files named in Appendices D–E (`backend/src/modules/auth/auth.ts`, `pg-adapter.ts`, `types.ts`, `backend/src/http/authorization.ts`, `backend/tests/helpers/auth-fixture.ts`) and `docs/Auth_Implementation.md` have not been merged, and `backend/src/app.ts` is still empty. Paths below give their expected locations; business routes cannot use `res.locals.auth` until that code lands.
+**Repository status (2026-11-18):** the two auth migrations and the auth source files named in Appendices D–E (`backend/src/modules/auth/auth.ts`, `pg-adapter.ts`, `types.ts`, `backend/src/http/authorization.ts`, `backend/tests/helpers/auth-fixture.ts`) and `docs/Auth_Implementation.md` are in this repository. `backend/src/app.ts` applies the origin check and `requireVerifiedUser` to `/api/v1`, so business routers mounted through `createApp({ businessRouter })` receive `res.locals.auth`.
 
 **Status: CONFIRMED project integration contract, synchronized 2026-11-13.** The current configuration and migrations fix the table and type below. This status records the selected contract; it does not assert team approval, a merged branch or migration execution in the shared environment.
 
@@ -987,7 +989,7 @@ The implementation uses the same PostgreSQL database as business data, the `publ
 | HTTP / TypeScript IDs | UUID strings; application code treats them as opaque strings |
 | Authorization | Valid Session, currently verified email, and ownership of the requested resource |
 
-See [the current authentication schema](#auth-schema) and the implementation guide (`docs/Auth_Implementation.md`, not yet in the repository) for fields, library mappings, and transaction requirements. UUID applies to row IDs and matching user FKs; Session tokens, provider identifiers and email credentials keep their existing text semantics.
+See [the current authentication schema](#auth-schema) and the implementation guide (`docs/Auth_Implementation.md`) for fields, library mappings, and transaction requirements. UUID applies to row IDs and matching user FKs; Session tokens, provider identifiers and email credentials keep their existing text semantics.
 
 The planned trusted context interface (`backend/src/modules/auth/types.ts`) is:
 
@@ -1003,15 +1005,15 @@ The planned authorization middleware (`backend/src/http/authorization.ts`) expos
 
 For conversations and other indirect resources, derive ownership through conversation → workspace → application → user. Use email/name only as user attributes; changing either does not create a new owner identity. Frontend route guards and database FKs complement the backend checks without replacing them.
 
-The [application entry](../backend/src/app.ts) must apply `requireVerifiedUser` to `/api/v1`; it is currently empty. `requireOwnedResource(database, kind, paramName)` supports application, resume, workspace and conversation ownership checks and must be mounted by the corresponding business routes. The production entry currently supplies no business router; the identity contract does not imply that business CRUD routes are implemented.
+The [application entry](../backend/src/app.ts) applies `requireVerifiedUser` to `/api/v1`. Routers that take their own `authenticate` handler use `requireAuthContext`, which confirms `res.locals.auth` without a second Session read. `requireOwnedResource(database, kind, paramName)` supports application, resume, workspace and conversation ownership checks against the merged business tables and must be mounted by the corresponding business routes. The production entry currently supplies no business router; the identity contract does not imply that business CRUD routes are implemented.
 
-The physical table/key/type and auth migration files are available; the trusted identity interface is specified above but its code is not yet merged. Rongxin coordinates dependent business migration order; Justin and Jianye consume the same API identity and server context. Follow the [backend setup guide](../backend/README.md) and test fixtures (`backend/tests/helpers/auth-fixture.ts`, not yet in the repository) when preparing isolated verified/unverified accounts. Auth-owned child FKs currently use `ON DELETE CASCADE`. Business owner FKs use `ON DELETE RESTRICT`, so a user with resumes or applications cannot be deleted at the database level; this adds no account-deletion feature. The confirmed application-to-child hard-delete cascades in §7.5 are a separate policy. Shared-environment execution and acceptance evidence remain separate integration work.
+The physical table/key/type and auth migration files are available; the trusted identity interface specified above is implemented. Rongxin coordinates dependent business migration order; Justin and Jianye consume the same API identity and server context. Follow the [backend setup guide](../backend/README.md) and test fixtures (`backend/tests/helpers/auth-fixture.ts`) when preparing isolated verified/unverified accounts. Auth-owned child FKs currently use `ON DELETE CASCADE`. Business owner FKs use `ON DELETE RESTRICT`, so a user with resumes or applications cannot be deleted at the database level; this adds no account-deletion feature. The confirmed application-to-child hard-delete cascades in §7.5 are a separate policy. Shared-environment execution and acceptance evidence remain separate integration work.
 
 <a id="auth-schema"></a>
 
 ## Appendix E. Authentication Database — Current Implementation
 
-**Status: migrations IMPLEMENTED; auth source code not yet in the repository (see Appendix D); shared identity contract CONFIRMED.** The auth owner maintains the two migration files linked in Appendix F. They use the same PostgreSQL database as business data, with `auth_` table prefixes in `public`, matching Better Auth and `@better-auth/core` 1.7.20, the project `pg` adapter and current configuration. The summaries below describe those files; they are not deployment or test evidence. The migration SQL is the complete DDL reference.
+**Status: migrations and auth source code IMPLEMENTED (see Appendix D); shared identity contract CONFIRMED.** The auth owner maintains the two migration files linked in Appendix F. They use the same PostgreSQL database as business data, with `auth_` table prefixes in `public`, matching Better Auth and `@better-auth/core` 1.7.20, the project `pg` adapter and current configuration. The summaries below describe those files; they are not deployment or test evidence. The migration SQL is the complete DDL reference.
 
 ### E.1 Better Auth Core Tables
 

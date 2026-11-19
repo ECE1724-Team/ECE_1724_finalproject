@@ -1,6 +1,7 @@
 # Backend
 
-Express + TypeScript backend. Use Node **26.x** (see `.nvmrc`).
+Express + TypeScript backend (CommonJS output). Use Node **26.x** (see `.nvmrc`) and
+PostgreSQL with `gen_random_uuid()` support.
 
 ## Setup and commands
 
@@ -10,19 +11,137 @@ From `backend/`:
 nvm use
 npm ci
 cp .env.example .env   # only if you don't have a .env yet
+npm run migrate        # applies every migration in migrations/ to DATABASE_URL
+npm run dev            # builds, then starts the API on PORT (default 3000)
 ```
+
+Use a dedicated development database, generate a private `BETTER_AUTH_SECRET`, put the
+frontend's exact origin in `AUTH_TRUSTED_ORIGINS`, and configure SMTP (a local SMTP catcher
+is fine in development). Keep `.env` out of git. Startup checks that the auth tables exist; it
+never creates or migrates the schema itself. Step-by-step values: [Local configuration](#local-configuration).
 
 | Command | What it does |
 |---|---|
 | `npm run typecheck` | Type-checks `src/` and `tests/`, writes nothing |
-| `npm test` | Compiles to `dist/tests/` and runs the unit tests. The route tests use HTTP loopback |
+| `npm test` | Compiles to `dist/tests/` and runs the offline unit and contract tests (no credentials, database or network needed; route tests use HTTP loopback) |
+| `npm run test:db` | Runs every test, including the PostgreSQL ones, on disposable databases; see [Checks](#checks) |
 | `npm run build` | Compiles `src/` to `dist/` for running or deploying |
-| `npm run migrate` | Applies pending PostgreSQL migrations |
-| `npm run test:db` | Runs the PostgreSQL integration tests against disposable databases |
+| `npm start` | Runs the compiled server (`dist/server.js`), reading `.env` if present |
+| `npm run dev` | `build` + `start` (no watch mode: the PDF worker only exists as compiled output) |
+| `npm run migrate` / `npm run migrate:down` | Applies all pending migrations (`npm run migrate -- --dry-run` lists them) / rolls back the latest one. `migrate:down` can destroy data; use it only on a development or test database |
 | `npm run test:r2` | Optional real R2 check, see below |
 
 `dist/` is build output and is not committed. Deploy it together with `node_modules`
 (the PDF parser loads font data from `pdfjs-dist` at runtime).
+
+<a id="local-configuration"></a>
+
+### Local configuration (`backend/.env`)
+
+`.env` is git-ignored. Each developer uses their own local PostgreSQL role and password; no shared
+credentials are stored in the repository. `npm run migrate`, `npm run test:db` and `npm start`
+load `.env` automatically, and an exported variable takes precedence over it.
+
+**1. Create a database role and database.** Pick one option (Ubuntu/WSL commands shown; `sudo`
+asks for your Linux login password, not the new database password):
+
+```sh
+# Option A: password over TCP (matches .env.example)
+sudo -u postgres createuser --createdb --pwprompt jobflow   # prompts for the new role's password
+sudo -u postgres createdb -O jobflow jobflow_dev
+# DATABASE_URL=postgresql://jobflow:<password>@localhost:5432/jobflow_dev
+
+# Option B: no password, Unix socket (role name = your Linux user name)
+sudo -u postgres createuser --createdb "$USER"
+createdb jobflow_dev
+# DATABASE_URL=postgresql:///jobflow_dev
+```
+
+URL-encode special characters in the password (`@` → `%40`, `:` → `%3A`, `/` → `%2F`, `#` → `%23`).
+With option B, a stopped database currently answers 500 instead of 503, because the socket error
+code (`ENOENT`) is not recognized as "database unavailable".
+
+**2. Run a local SMTP catcher.** Verification and password-reset links become valid only after
+the SMTP server accepts the email. Without a reachable SMTP server, every link stays invalid. In
+development, run [Mailpit](https://mailpit.axllent.org/) (SMTP on port 1025, inbox at
+http://localhost:8025) in its own terminal:
+
+```sh
+curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/install.sh | sudo bash
+mailpit
+```
+
+**3. Fill in `.env`** (copy `.env.example` first):
+
+| Variable | Development value | Notes |
+|---|---|---|
+| `DATABASE_URL` | from step 1 | Must name the database. Startup and `npm run migrate` reject it otherwise |
+| `NODE_ENV` / `PORT` | `development` / `3000` | `NODE_ENV` must be `development`, `test` or `production` |
+| `BETTER_AUTH_URL` | `http://localhost:3000` | This backend's own origin (no path). Email links are built from it, and it is automatically trusted |
+| `BETTER_AUTH_SECRET` | output of `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` | At least 32 characters. Placeholder words such as `replace` or `changeme` are rejected |
+| `AUTH_TRUSTED_ORIGINS` | `http://localhost:5173` | The frontend's exact origin(s), comma-separated. API clients such as Postman must send this value as the `Origin` header |
+| `AUTH_SESSION_SECONDS`, `AUTH_EMAIL_COOLDOWN_SECONDS`, `AUTH_EMAIL_WINDOW_SECONDS`, `AUTH_EMAIL_MAX_PER_WINDOW` | `604800`, `60`, `900`, `5` | Confirmed project values (7-day Session; 60 s cooldown; 5 emails per 15 min). Keep them |
+| `AUTH_COOKIE_SAME_SITE` | `lax` | `none` requires an HTTPS `BETTER_AUTH_URL` |
+| `TRUST_PROXY_HOPS` | `0` | Set it only behind a known reverse-proxy chain |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | `127.0.0.1` / `1025` / `false` | Mailpit from step 2 |
+| `SMTP_FROM` | `"JobFlow AI <no-reply@example.com>"` | Required |
+| `SMTP_USER` / `SMTP_PASSWORD` | empty | Set both or neither |
+| `TEST_DATABASE_URL` | empty | Empty: `npm run test:db` starts a disposable cluster. Never point it at `jobflow_dev`, because the tests create and drop databases |
+| `R2_*` | empty | Not read at startup until the resume routes are mounted; see [R2 setup](#r2-setup) |
+
+In production, `BETTER_AUTH_URL` and every trusted origin must use HTTPS.
+
+**4. Check.** `npm run migrate` must apply the migrations (a connection error means the role or
+password in `DATABASE_URL` is wrong). `npm run dev` must print `JobFlow API listening on port
+3000`. A configuration error names the setting but never prints its value; `Missing auth tables`
+means the migrations have not been applied.
+
+## Authentication and authorization
+
+Owner: Zishi Yang. Design and behavior: [Auth_Implementation.md](../docs/Auth_Implementation.md);
+schema: [Database Design Appendices D–F](../docs/Database_Design.md#shared-identity).
+
+- Better Auth 1.7.20 is mounted at `/api/auth` (only the routes in `endpoints.json` are exposed).
+  Browsers send `credentials: "include"`; never store Session tokens in local storage.
+- Every `/api/v1` request first passes a CSRF origin check (unsafe methods must come from
+  `AUTH_TRUSTED_ORIGINS`) and `requireVerifiedUser`, which reads the Session from PostgreSQL
+  and sets `res.locals.auth = { userId, sessionId, emailVerified: true }`. Anonymous → 401
+  `UNAUTHORIZED`, unverified → 403 `EMAIL_NOT_VERIFIED`, database down → 503 `SERVICE_UNAVAILABLE`.
+- Business routers go in `createApp({ businessRouter })` (`src/app.ts`). Inside it, use
+  `requireAuthContext` where a router asks for an `authenticate` handler (it checks the context
+  without a second Session read), and `requireOwnedResource(database, kind, param)` for
+  application/resume/workspace/conversation IDs. In a handler, read the identity with
+  `getAuthContext(res)` and scope every SQL statement by its `userId`.
+- Auth endpoints (`/api/auth/*`) keep Better Auth's `{ code, message }` body. PostgreSQL down →
+  503 `SERVICE_UNAVAILABLE`; other unexpected failures → 500 `INTERNAL_SERVER_ERROR`.
+- `server.ts` creates two pools with `createPool()`: the main one and `rateLimitPool` for Better
+  Auth's IP/path counters, which must survive a rolled-back request. Auth emails are sent after
+  commit by a queue of at most two concurrent SMTP sends, each bounded by 10 s / 10 s / 30 s
+  (connect / greeting / socket) timeouts. File map: [Auth_Implementation.md](../docs/Auth_Implementation.md#code-map).
+- Confirmed settings (2026-11-11): 7-day Sessions; verification/reset links last 900 s and only the
+  latest link per user and purpose works; 60 s cooldown and at most 5 emails per 15 min per
+  recipient and purpose; a replacement link becomes active only after SMTP accepts it.
+- Production requires HTTPS origins. Set `TRUST_PROXY_HOPS` only for a known reverse-proxy chain.
+
+<a id="checks"></a>
+
+### Checks
+
+`npm run test:db` loads `.env` if present and runs every compiled test one at a time: unit,
+contract, the auth integration tests and the `*.db.test.ts` repository and migration tests.
+The live R2 check (`r2.test.js`) is excluded; run it with `npm run test:r2`.
+
+- **`TEST_DATABASE_URL` set** (exported or in `.env`): the tests use that server. Point it at an
+  isolated test server where the role may `CREATE DATABASE` (for example
+  `createdb jobflow_test` with a role that has `CREATEDB`), never at the application database.
+- **`TEST_DATABASE_URL` unset or empty**: the script creates a disposable PostgreSQL cluster from
+  the local server binaries (`pg_config --bindir`) on a private Unix socket and removes it
+  afterwards. It must run as a non-root user allowed to create local sockets.
+
+Either way, every fixture creates and drops its own randomly named database. SMTP tests use a
+localhost-only server and send no real mail. Add PostgreSQL tests under `tests/integration/`
+with the `.db.test.ts` suffix; `withTestDatabase()` and `insertTestOwners(pool)` in
+`tests/helpers/database.ts` provide a migrated database and two fictional owners.
 
 ## PostgreSQL setup and tests
 
@@ -41,27 +160,14 @@ files from `migrations/` and records them together in `public.pgmigrations`. Run
 `npm run migrate` again applies only pending files. Use `npm run migrate -- --dry-run`
 to list the migrations that would run. `npm run build` compiles `src/`.
 
-Set `TEST_DATABASE_URL` in `.env` or export it when running `npm run test:db`. Use a local
-PostgreSQL test database and a role with `CREATEDB`. For example, if your local role
-already has that privilege, run the following from `backend/`.
-
-```sh
-createdb jobflow_test
-TEST_DATABASE_URL=postgresql://localhost:5432/jobflow_test npm run test:db
-```
-
-The suite uses that connection to create a fresh, uniquely named database for each
-fixture. It closes the pool and drops the database it created after the test. Migration
-and reset steps run serially. `TEST_DATABASE_URL` is required and can be configured
-independently of `DATABASE_URL`. Add PostgreSQL integration tests under
-`tests/integration/` with the `.db.test.ts` suffix. The fixture helper provides two
-fictional owners via `insertTestOwners(pool)` after migrations complete.
+See [Checks](#checks) for `npm run test:db`.
 
 For application code, `createPool(env)` reads `DATABASE_URL` when called and defaults
 to `process.env`. It applies the same check as `npm run migrate`, so the URL must name
 its database. The caller passes the pool to `withTransaction(pool, callback)` and
 awaits `pool.end()` at shutdown. Use the callback's client for every statement in the
-transaction.
+transaction. If the callback catches a failed statement, `withTransaction` throws: PostgreSQL has
+rolled the whole transaction back, so it is not reported as a success.
 
 Verified on 2026-11-18 with Node **26.13.1**, PostgreSQL **18.6**, and
 `node-pg-migrate` **9.0.0**. The suite applies these files in order, verifies a repeat
@@ -164,6 +270,9 @@ The HTTP test supplies test middleware and fake object storage. Apply migration 
 with `npm run migrate` before starting the module.
 [Resume HTTP integration test](tests/integration/resume-http.db.test.ts)
 
+The routes belong in `businessRouter` (see [Mounting](#mounting-from-server-startup));
+`server.ts` does not mount them yet.
+
 ### R2 setup
 
 1. Create a **private** R2 bucket (keep `r2.dev` and public custom domains off).
@@ -187,7 +296,7 @@ random test object. Without that flag it is reported as skipped.
 | `src/modules/resumes/repository.ts` | `ResumeRepository` and `StorageCleanupRepository` interfaces |
 | `src/modules/resumes/postgres-repository.ts` | PostgreSQL implementations of both repositories |
 | `src/modules/resumes/postgres-module.ts` | `createPostgresResumeModule()` wires the service and worker to the same repositories |
-| `src/modules/resumes/postgres-routes.ts` | `mountPostgresResumeRoutes()` mounts the PostgreSQL-backed routes and returns the worker starter |
+| `src/modules/resumes/postgres-routes.ts` | `mountPostgresResumeRoutes()` mounts on a bare Express app; with `createApp` use `createPostgresResumeModule()` instead (see Mounting) |
 | `src/modules/resumes/pdf-policy.ts` | `validateResumePdf()`: the PRD file rules |
 | `src/integrations/object-storage/r2.ts` | `createR2Storage()`, `createObjectKey()` |
 | `src/integrations/pdf/extractor.ts` | `createPdfExtractor()`: parses PDFs in a worker thread with a timeout and a concurrency limit |
@@ -195,21 +304,32 @@ random test object. Without that flag it is reported as skipped.
 
 ### Mounting from server startup
 
-```ts
-import { mountPostgresResumeRoutes } from "./modules/resumes/postgres-routes.js";
+Mount the routes through `createApp({ businessRouter })`, so they sit behind the `/api/v1`
+origin check and `requireVerifiedUser`. In `src/server.ts`, where `environment`, `database`
+and `authentication` are already created:
 
-const pool = createPool();
+```ts
+const pool = createPool({ DATABASE_URL: environment.databaseUrl });
 const storage = createR2Storage(readR2Config());
-const pdf = createPdfExtractor();                 // ONE per process: it holds the parse limit
-const startResumeWorker = mountPostgresResumeRoutes(app, {
-  pool, storage, pdf, authenticate: requireVerifiedUser(authentication),
-});
-const worker = startResumeWorker();
-// On shutdown: stop accepting requests, await worker.stop(), storage.close(), await pool.end().
+const pdf = createPdfExtractor();                       // ONE per process: it holds the parse limit
+const { service, startWorker } = createPostgresResumeModule({ pool, storage, pdf });
+
+const businessRouter = Router();
+businessRouter.use("/resumes", createResumeRouter({ service, authenticate: requireAuthContext }));
+const app = createApp({ authentication, database, environment, businessRouter });
+const worker = startWorker();
+// Shutdown: stop accepting requests → await worker.stop() → storage.close()
+//           → authentication.close() → pool.end()
 ```
 
-`authenticate` must reject unauthenticated or unverified users and set
-`res.locals.auth.userId`. The router runs it before reading any upload body.
+Do not use `mountPostgresResumeRoutes(app, …)` with `createApp`: it registers the routes
+after `createApp`'s final 404 handler (every resume request would get 404) and would skip the
+`/api/v1` origin check. See [Merge notes](#merge-notes).
+```
+
+`createApp` already runs the origin check and `requireVerifiedUser` for all of `/api/v1`, so
+`requireAuthContext` only confirms `res.locals.auth`. The router runs it before reading any
+upload body.
 
 ### File rules
 
@@ -251,7 +371,8 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 
 ### Known gaps
 
-- The live session check requires the team's verified-user middleware and server startup.
+- `server.ts` does not mount the resume routes and cleanup worker yet (see
+  [Mounting](#mounting-from-server-startup)).
 - Assumes one backend instance: the cleanup worker puts every `processing` job back to
   `pending` before each pass (Database Design §5.11). Running several instances needs the
   lease design in Database Design §5.7.
@@ -260,3 +381,124 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
   interleaved, so check a few real Word/LaTeX exports by hand.
 - Tests for encrypted PDFs and for 99 + 1 characters split across pages were dropped
   because their fixtures failed; that behavior is untested.
+
+<a id="merge-notes"></a>
+
+## Merge notes: `main` (4bc6cb0) into `feat/authentication`
+
+Owner: Zishi Yang, 2026-11-18. Merging Rongxin's PostgreSQL work from `main` into the auth
+branch conflicted in four files. This section records how each was resolved and what else had
+to change.
+
+### 1. `backend/src/db/pool.ts`: `main`'s version
+
+| | `main` (kept) | `feat/authentication` (dropped) |
+|---|---|---|
+| Signature | `createPool(env = process.env)`, URL checked by `readDatabaseUrl()` | `createPool(connectionString)` |
+| Types | `export type Db = Pool \| PoolClient` | none |
+| Idle-client `error` listener | Logs the whole error | `watchIdleErrors(pool)`, logs only the code |
+
+`main`'s file is used unchanged. Two places outside the conflict had to follow:
+
+- `src/server.ts` calls `createPool({ DATABASE_URL: environment.databaseUrl })`, so the URL
+  checked at startup is the one that is connected.
+- `src/modules/auth/auth.ts` no longer imports `watchIdleErrors`. At merge time its separate
+  rate-limit pool (`new pg.Pool(...)`) got its own `error` listener. The later auth refactor
+  replaced that: `server.ts` now creates the rate-limit pool with `createPool()` as well, so
+  both pools share `main`'s listener.
+
+Idle-client errors are now logged in full, as the whole error object. A PostgreSQL restart
+produces about 100 lines per idle connection, including the client's user, host and database
+name. The password is not printed (`pg` keeps it non-enumerable). A shorter log line is a
+possible follow-up for the owner of `pool.ts`.
+
+### 2. `backend/src/db/transaction.ts`: this branch's version, with `main`'s rollback handling
+
+**Conflict.** Both sides gave `withTransaction(pool, callback)` a `pool` parameter and discard
+the client when `ROLLBACK` fails. They differ in three ways:
+
+| | `main` | `feat/authentication` |
+|---|---|---|
+| COMMIT result | Not checked | Throws unless PostgreSQL answers `COMMIT` |
+| Failed ROLLBACK | `release(true)` and logs the rollback error | `release(rollbackError)`, no log |
+| `Database` class | Absent | Present; the auth code shares one transaction through it |
+
+**Resolution.** This branch's file, with `main`'s failed-ROLLBACK handling. `withTransaction` is now:
+
+```ts
+export async function withTransaction<T>(pool: Pool, callback: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let discard: true | undefined;
+  try {
+    await client.query("BEGIN");
+    const result = await callback(client);
+    const commit = await client.query("COMMIT");
+    if (commit.command !== "COMMIT") throw new Error("PostgreSQL rolled back an aborted transaction");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      discard = true;                       // never return a connection in an unknown state
+      console.error("Transaction rollback failed:", rollbackError);
+    }
+    throw error;
+  } finally {
+    client.release(discard);
+  }
+}
+```
+
+The `Database` class is unchanged.
+
+The COMMIT check is kept because a callback might catch a failed statement, for example in
+the nested `inTransaction` calls of the application repository. PostgreSQL has then aborted the
+transaction and answers COMMIT with ROLLBACK. Without the check this was reported as a
+success although nothing was written.
+
+**Test changes** in `tests/unit/db.test.ts` (from `main`):
+
+- The mock client in "a successful transaction commits and releases the client once" now returns
+  `{ command }` like a real `pg` client. The old mock returned `undefined`, which the COMMIT check
+  rejects.
+- The two rollback tests are unchanged: they still expect `release(true)` and the logged
+  `rollbackError`.
+- New test "a COMMIT answered with ROLLBACK is reported as a failure, not a success".
+
+### 3. `backend/package.json` scripts: this branch's runner, `main`'s migrate script
+
+| Script | Result | Why |
+|---|---|---|
+| `test` | This branch: unit **and** contract tests | The auth contract tests live in `tests/contract/` |
+| `test:db` | `node --env-file-if-exists=.env scripts/test-with-postgres.mjs` | `main`'s glob (`integration/*.db.test.js`) skipped the auth integration tests. `main`'s version also required `TEST_DATABASE_URL`; this one uses it when set (including from `.env`) and otherwise starts a disposable cluster |
+| `migrate` | `main`'s `scripts/migrate.mjs` | Validates `DATABASE_URL`, one transaction, `--dry-run` |
+| `migrate:down` | Kept from this branch | `main` had none |
+| `test:r2` | Unchanged (identical on both sides) | |
+
+`scripts/test-with-postgres.mjs` now skips `r2.test.js`. Because `test:db` loads `.env`, an
+`R2_INTEGRATION_TEST=1` there would otherwise make the database suite touch a real bucket.
+The live check stays in `npm run test:r2`. Dependencies did not change, so `package-lock.json`
+did not conflict.
+
+### 4. `backend/README.md`: both sides combined
+
+| Hunk | Result |
+|---|---|
+| Command table | This branch's rows (`start`, `dev`, `migrate:down`), plus `npm run migrate -- --dry-run`; `test:db` described as in item 3 |
+| Sections after the table | Both kept: "Authentication and authorization" with [Checks](#checks), then `main`'s "PostgreSQL setup and tests", "Application and interview repositories" and "Application list and Dashboard reads". `main`'s `TEST_DATABASE_URL`-only paragraph is merged into Checks |
+| Resume status | `main`'s text, plus a pointer to the mounting rule |
+| Mounting example | Rewritten (below) |
+| Known gaps | Both old lines were out of date. Replaced by "`server.ts` does not mount the resume routes yet" |
+
+**Why the mounting example was rewritten.** `main` documented
+`mountPostgresResumeRoutes(app, { authenticate: requireVerifiedUser(authentication) })`.
+With `createApp` this does not work:
+
+- It adds `/api/v1/resumes` to `app` after `createApp()` has returned, which places it behind the
+  final 404 handler, so every resume request gets 404.
+- In any order it bypasses the `/api/v1` origin (CSRF) check and reads the Session twice.
+
+`main`'s HTTP test does not catch this because it uses test middleware on a bare Express app.
+[Mounting](#mounting-from-server-startup) now uses `createPostgresResumeModule()` and
+`businessRouter`. To agree with Jianye and Rongxin: remove `mountPostgresResumeRoutes`, or make
+it take a `Router` and mount at `"/resumes"`.

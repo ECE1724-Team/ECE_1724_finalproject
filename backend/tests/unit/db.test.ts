@@ -24,7 +24,8 @@ test("createPool validates configuration when called", () => {
 test("a successful transaction commits and releases the client once", async (t) => {
   const pool = createPool({ DATABASE_URL: "postgresql://localhost/unit_test" });
   t.after(() => pool.end());
-  const query = t.mock.fn(async (_sql: string) => {});
+  // Like pg, answer each statement with its command tag; withTransaction checks COMMIT's.
+  const query = t.mock.fn(async (sql: string) => ({ command: sql.split(" ")[0] }));
   const release = t.mock.fn((_discard?: boolean) => {});
   const client = { query, release } as unknown as PoolClient;
   const connect = t.mock.method(pool, "connect", async () => client);
@@ -69,3 +70,20 @@ for (const rollbackFails of [false, true]) {
     if (rollbackFails) assert.equal(log.mock.calls[0].arguments[1], rollbackError);
   });
 }
+
+test("a COMMIT answered with ROLLBACK is reported as a failure, not a success", async (t) => {
+  const pool = createPool({ DATABASE_URL: "postgresql://localhost/unit_test" });
+  t.after(() => pool.end());
+  // The callback caught a failed statement, so PostgreSQL aborted the transaction and
+  // answers COMMIT with ROLLBACK: nothing was written.
+  const query = t.mock.fn(async (sql: string) => ({ command: sql === "COMMIT" ? "ROLLBACK" : sql.split(" ")[0] }));
+  const release = t.mock.fn((_discard?: boolean) => {});
+  const client = { query, release } as unknown as PoolClient;
+  t.mock.method(pool, "connect", async () => client);
+
+  await assert.rejects(withTransaction(pool, async () => "looks committed"), /rolled back an aborted transaction/);
+
+  assert.deepEqual(query.mock.calls.map(({ arguments: args }) => args[0]), ["BEGIN", "COMMIT", "ROLLBACK"]);
+  assert.equal(release.mock.callCount(), 1);
+  assert.equal(release.mock.calls[0].arguments[0], undefined);
+});
