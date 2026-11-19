@@ -1,5 +1,4 @@
 import ApplicationForm from "@/components/ApplicationForm";
-import NavBar from "@/components/NavBar";
 import { useParams } from "react-router";
 import { useEffect, useState } from "react";
 
@@ -7,9 +6,10 @@ import type {
     Application,
 } from "../types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { fakeApplications } from "@/lib/testpayloads";
 
 
-export default function Application() {
+export default function Application({mock = false}) {
     const { id } = useParams();
 
     const [application, setApplication] = useState<Application | null>(null);
@@ -35,7 +35,17 @@ export default function Application() {
             }
         }
 
-        loadApplication();
+        if (mock) {
+            setApplication(fakeApplications.find((app) => app.id === id) || null);
+            setLoading(false);
+            return;
+        }
+
+        if(id){
+            loadApplication();
+        }else{
+            setLoading(false);
+        }
     }, [id]);
 
     if (loading) return (
@@ -45,7 +55,7 @@ export default function Application() {
             </Alert>
         </div>
     );
-    
+
     if (loadError) return (
         <div className="mx-auto grid max-w-2xl gap-5 rounded-lg p-6">
             <Alert variant="destructive" className="rounded-md py-2 text-red-700">
@@ -55,7 +65,7 @@ export default function Application() {
     );
 
 
-    if (!application) return (
+    if (id && !application) return (
         <div className="mx-auto grid max-w-2xl gap-5 rounded-lg p-6">
             <Alert className="rounded-md py-2">
                 <AlertDescription>{"Application not found"}</AlertDescription>
@@ -64,10 +74,8 @@ export default function Application() {
     );
 
     return (<>
-        <NavBar currentLocation="/applications" />
         <div>
-            <h1>Application</h1>
-            <ApplicationForm />
+            <ApplicationForm application={application ?? undefined} mock={mock} />
         </div>
     </>
     );

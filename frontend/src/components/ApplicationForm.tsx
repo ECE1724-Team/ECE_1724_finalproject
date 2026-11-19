@@ -19,10 +19,12 @@ import type {
   Resume,
   ResumeList,
 } from "../types";
+import { fakeResumes } from "../lib/testpayloads";
 
 type ApplicationFormProps = {
   application?: Application;
   locked?: boolean;
+  mock?: boolean;
 };
 
 type ApplicationFormData = {
@@ -67,6 +69,7 @@ const NO_RESUME = "No Resumes Found";
 
 export default function ApplicationForm({
   application,
+  mock = false,
 }: ApplicationFormProps) {
   const isReadOnly = application ? true : false;
   const [form, setForm] = useState<ApplicationFormData>(
@@ -89,7 +92,7 @@ export default function ApplicationForm({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resumes, setResumes] = useState<Resume[]>([]);
+  const [resumes, setResumes] = useState<Resume[]>(mock ? fakeResumes : []);
   const [loadingResumes, setLoadingResumes] = useState(true);
 
   useEffect(() => {
@@ -111,6 +114,12 @@ export default function ApplicationForm({
       } finally {
           setLoadingResumes(false);
       }
+    }
+
+    if(mock) {
+        setResumes(fakeResumes);
+        setLoadingResumes(false);
+        return;
     }
 
     loadResumes();
@@ -344,9 +353,16 @@ export default function ApplicationForm({
               <SelectTrigger id="resumeId" className={fieldClass}>
                 <SelectValue
                   placeholder={loadingResumes ? "Loading resumes..." : "Select a resume"}
-                />
+                >
+                  {loadingResumes && form.resumeId
+                    ? "Loading resumes..."
+                    : form.resumeId
+                      ? resumes.find((resume) => resume.id === form.resumeId)?.name
+                        ?? "Resume unavailable"
+                      : "No resume"}
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="w-max min-w-(--anchor-width)">
                 <SelectItem value={NO_RESUME}>No resume</SelectItem>
                 {resumes.map((resume) => (
                   <SelectItem key={resume.id} value={resume.id}>
