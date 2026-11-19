@@ -264,14 +264,9 @@ Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_P
 File rules: [PRD §5.2](../docs/PRD.md). Upload and delete transactions:
 [Database Design §7.2–7.3](../docs/Database_Design.md).
 
-**Status:** `npm run test:db` exercises upload, owner isolation, download, unlinking,
-and worker cleanup through the mounted routes with real PostgreSQL and PDF parsing.
-The HTTP test supplies test middleware and fake object storage. Apply migration 006
-with `npm run migrate` before starting the module.
-[Resume HTTP integration test](tests/integration/resume-http.db.test.ts)
+**Status (2026-11-19).** The five resume routes, PostgreSQL repositories, PDF extractor and cleanup worker are implemented. The server entry point still needs to mount the routes and start the worker. Apply the migrations, including group 006, with `npm run migrate` before enabling the module.
 
-The routes belong in `businessRouter` (see [Mounting](#mounting-from-server-startup));
-`server.ts` does not mount them yet.
+The database suite covers two parts of the request path. Real session cookies and Origin checks exercise a resume router with fake repositories. A second test uses real PostgreSQL repositories and PDF extraction with test identities. Both substitute object storage. The closeout plan brings these together and tracks a separate live R2 check. [Session HTTP test](tests/integration/http.test.ts) · [PostgreSQL HTTP test](tests/integration/resume-http.db.test.ts) · [Jianye's closeout plan](../docs/JIANYE_DEV_PLAN.md#phase-4-closeout)
 
 ### R2 setup
 
@@ -282,9 +277,15 @@ The routes belong in `businessRouter` (see [Mounting](#mounting-from-server-star
 
 Browsers never talk to R2 directly; PDFs are served through the authenticated backend.
 
-To test against real R2, point `.env` at a **development-only** bucket, set
-`R2_INTEGRATION_TEST=1` and run `npm run test:r2`. It writes, reads and deletes one
-random test object. Without that flag it is reported as skipped.
+**Agreed startup behavior for Phase 4** (pending implementation in `server.ts`)
+
+| R2 settings | Expected behavior |
+|---|---|
+| All four empty in development or test | Start the other routes, warn once and skip the resume routes and worker. |
+| Partial or invalid settings in any environment, or empty in production | Fail startup with the setting name. Keep secret values out of logs. |
+| All four valid | Mount the routes and start one worker sharing the main database pool. Check connectivity on actual storage operations. During an R2 outage, uploads and file reads return 503. Lists, metadata and deletion can still succeed while PostgreSQL is available. Cleanup retries later. |
+
+Use a single cleanup worker per database/bucket pair, including when developers share a dev environment. For the live adapter check, point the four settings at an isolated development bucket and run `R2_INTEGRATION_TEST=1 npm run test:r2`. Verify the test reports a pass. A missing flag or setting produces a skip.
 
 ### Files
 
@@ -307,32 +308,16 @@ the backend stays CommonJS, so don't convert the whole package to ESM for it.
 
 ### Mounting from server startup
 
-Mount the routes through `createApp({ businessRouter })`, so they sit behind the `/api/v1`
-origin check and `requireVerifiedUser`. In `src/server.ts`, where `environment`, `database`
-and `authentication` are already created:
+In `src/server.ts`, add the resume router to the business router passed to `createApp`. This keeps it alongside the team's application routes and behind the common Origin and verified-session checks. The example shows the enabled branch and uses the main pool and business router already created by startup.
 
 ```ts
-const pool = createPool({ DATABASE_URL: environment.databaseUrl });
-const storage = createR2Storage(readR2Config());
-const pdf = createPdfExtractor();                       // ONE per process: it holds the parse limit
+const storage = createR2Storage(r2Config);
+const pdf = createPdfExtractor();
 const { service, startWorker } = createPostgresResumeModule({ pool, storage, pdf });
-
-const businessRouter = Router();
 businessRouter.use("/resumes", createResumeRouter({ service, authenticate: requireAuthContext }));
-const app = createApp({ authentication, database, environment, businessRouter });
-const worker = startWorker();
-// Shutdown: stop accepting requests → await worker.stop() → storage.close()
-//           → authentication.close() → pool.end()
 ```
 
-Do not use `mountPostgresResumeRoutes(app, …)` with `createApp`: it registers the routes
-after `createApp`'s final 404 handler (every resume request would get 404) and would skip the
-`/api/v1` origin check. See [Merge notes](#merge-notes).
-```
-
-`createApp` already runs the origin check and `requireVerifiedUser` for all of `/api/v1`, so
-`requireAuthContext` only confirms `res.locals.auth`. The router runs it before reading any
-upload body.
+Pass that router into `createApp({ authentication, database, environment, businessRouter })` and retain the handle from `const worker = startWorker()` at startup. On shutdown, drain HTTP requests, await `worker.stop()`, close the storage client, drain authentication and close both existing pools. The router validates the shared auth context before parsing multipart data. The older `mountPostgresResumeRoutes` helper takes a bare Express app. Registering a router after `createApp` has returned places it behind the final 404 handler.
 
 ### File rules
 
