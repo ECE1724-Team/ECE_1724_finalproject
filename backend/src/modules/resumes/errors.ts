@@ -18,11 +18,14 @@ function sqlState(error: unknown): string | undefined {
 
 /**
  * PostgreSQL answered and the statement failed, so nothing was written.
- * Class 08 (connection exception) is excluded: the outcome may be unknown.
+ * A connection exception, a fatal session error, or statement_completion_unknown
+ * can leave the outcome unknown. PostgreSQL can localize the severity of a shutdown.
  */
 export function isDefiniteDbFailure(error: unknown): boolean {
-  const state = sqlState(error);
-  return state !== undefined && !state.startsWith("08");
+  if (!(error instanceof DatabaseError)) return false;
+  const { code, severity } = error;
+  return code !== undefined && !code.startsWith("08") && !code.startsWith("57P") && code !== "40003"
+    && severity !== "FATAL" && severity !== "PANIC";
 }
 
 const NETWORK_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EAI_AGAIN"]);

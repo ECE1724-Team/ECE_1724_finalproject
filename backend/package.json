@@ -7,6 +7,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist/tests/tests/unit/*.test.js",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "test:db": "tsc -p tsconfig.test.json && node --env-file-if-exists=.env --test --test-concurrency=1 dist/tests/tests/integration/*.db.test.js",
     "test:r2": "tsc -p tsconfig.test.json && node --env-file-if-exists=.env --test dist/tests/tests/integration/r2.test.js"
   },
   "engines": {
