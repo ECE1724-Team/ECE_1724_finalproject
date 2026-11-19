@@ -1,9 +1,12 @@
+import { Router } from "express";
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
 import { ConfigurationError } from "./config/errors.js";
 import { createPool } from "./db/pool.js";
 import { Database } from "./db/transaction.js";
 import { createSmtpEmailSender } from "./integrations/email/smtp.js";
+import { createPostgresApplicationService } from "./modules/applications/postgres-module.js";
+import { createApplicationRouter } from "./modules/applications/routes.js";
 import { createAuthentication } from "./modules/auth/auth.js";
 import { assertAuthSchema } from "./modules/auth/schema.js";
 
@@ -27,7 +30,10 @@ async function main() {
   const authentication = createAuthentication({
     database, rateLimitPool, config: environment.auth, emailSender: createSmtpEmailSender(environment.smtp),
   });
-  const app = createApp({ authentication, database, environment });
+  // Business routes sit behind createApp's /api/v1 origin check and requireVerifiedUser.
+  const businessRouter = Router();
+  businessRouter.use("/applications", createApplicationRouter({ service: createPostgresApplicationService(pool) }));
+  const app = createApp({ authentication, database, environment, businessRouter });
   const server = app.listen(environment.port, () => { console.log(`JobFlow API listening on port ${environment.port}`); });
 
   let closing = false;

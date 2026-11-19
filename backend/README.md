@@ -196,6 +196,77 @@ October 29 to November 5, 2026 includes interview IDs
 boundary. Deleting application `…002` changes the totals to 1 application, 0 interviews
 and 0 offers, with only `…001` in recent applications.
 
+<a id="applications-api"></a>
+
+## Applications API (`/api/v1/applications`)
+
+Owner: Zishi Yang. Code: `src/modules/applications/` (`validation.ts`, `service.ts`, `routes.ts`;
+`postgres-module.ts` wires Rongxin's repositories). Mounted in `server.ts` through `businessRouter`,
+so every route already has a verified Session and the origin check; the user ID always comes from
+`getAuthContext(res)`. Another user's application and a malformed ID both answer 404.
+
+| Route | Result |
+|---|---|
+| `GET /api/v1/applications?q=&status=&sort=` | 200 `{ data: ApplicationSummary[], counts: { total, byStatus } }`. `q`: literal, case-insensitive company/position substring. `status`: one of the six. `sort`: `newest` (default) or `company`. All matches, no pagination. `counts` cover all of the user's applications and ignore `q`/`status` |
+| `POST /api/v1/applications` | 201 + `Location`, body `Application`. Only `companyName` and `jobTitle` are required; `status` defaults to `saved` |
+| `GET /api/v1/applications/{id}` | 200 `Application` |
+| `PUT /api/v1/applications/{id}` | 200 `Application`. Full replacement: `companyName`, `jobTitle`, `status` required; omitted optional fields are cleared (`interviews` → `[]`, `offerReceived` → `false`). Optional `rowVersion` from the last GET; a different stored version → 409 `VERSION_CONFLICT` |
+| `DELETE /api/v1/applications/{id}` | 204. Hard delete with interviews, history, AI workspace and conversations; 409 `GENERATION_ACTIVE` while a generation is preparing/streaming |
+
+**`Application`** (GET/POST/PUT response): `id`, `companyName`, `jobTitle`, `status`,
+`appliedDate` (`"YYYY-MM-DD"` or null), `jobDescription`, `jobUrl`, `resumeId`, `resumeName`,
+`companyWebsiteUrl`, `companyNotes`, `notes`, `offerReceived`, `interviews` (`{ id, type,
+scheduledAt }`, ordered by time), `statusHistory` (`{ fromStatus, toStatus, changedAt }`, oldest
+first; creation is not a change), `rowVersion` (decimal string), `createdAt`, `updatedAt`.
+**`ApplicationSummary`** (list rows): `id`, `companyName`, `jobTitle`, `status`, `appliedDate`,
+`resumeId`, `resumeName`, `createdAt`.
+
+Request rules:
+
+- Statuses are `saved`, `applied`, `oa`, `interview`, `offer`, `rejected`.
+- Entering `offer` sets `offerReceived` to true even if the request says false. Leaving `offer`
+  keeps whatever the request sends.
+- Text fields: `""` or null clears them. `companyName`/`jobTitle` are trimmed, at most 200
+  characters. Caps are 50,000 characters for `jobDescription` and 20,000 for the notes.
+- `jobUrl` and `companyWebsiteUrl` must be absolute http(s) URLs, because the UI renders them as links.
+- Interviews: `type` is trimmed, 1–100 characters. `scheduledAt` is an instant with an offset
+  (`Z` or `±hh:mm`); past values are allowed. At most 50 per application.
+- On PUT, an interview with `id` updates that interview, one without `id` is added, and existing
+  interviews that are not listed are deleted. On POST, `id` is not allowed.
+- `resumeId` must be one of the user's live resumes. Otherwise the answer is 422 and nothing is saved.
+- Unknown fields → 422, with a hint for old names (`appliedAt` → `appliedDate`). Read-only
+  fields copied from a GET (`id`, `resumeName`, `statusHistory`, timestamps) are ignored.
+
+Errors use `{ "error": { "code", "message" } }`:
+
+| HTTP | Code | When |
+|---|---|---|
+| 400 | `BAD_REQUEST` | Body is not a JSON object, or a bad `q`/`status`/`sort` |
+| 404 | `NOT_FOUND` | Missing, someone else's or malformed ID |
+| 409 | `VERSION_CONFLICT` | Stale `rowVersion`, or a concurrent resume relink |
+| 409 | `GENERATION_ACTIVE` | DELETE during an active AI generation |
+| 422 | `VALIDATION_ERROR` | A field is missing or invalid, the resume is unusable, or an interview `id` does not belong to the application |
+
+Plus 401/403/503/500 from `createApp`. A rejected request writes nothing; a PUT that fails in its
+interview part rolls back the application change too.
+
+**Differences from `endpoints.json` 1.11.0.** Following PRD §8.1 and Database Design §9 and
+Appendix B, the confirmed PRD rules win over the older application schema. The API documentation
+owner should update the contract:
+
+| `endpoints.json` 1.11.0 | Implemented |
+|---|---|
+| `ApplicationStatus` with `interviewing`, `offered`, `withdrawn`, `accepted`; no OA | The six PRD statuses, the same values as `AiApplicationStatus` |
+| `appliedAt` (date-time) | `appliedDate` (`YYYY-MM-DD`): PRD asks for a date, stored as `applied_date DATE` |
+| `location` | Removed: not a PRD field and not stored |
+| List `page`/`limit`, `pagination` | `q`/`status`/`sort` and `counts` (PRD FR-23), no pagination (PRD §11 leaves it open) |
+| Interviews without IDs | `interviews[].id` in responses and optional on PUT, so edits keep identity (FR-07) |
+| No offer flag, timeline or version | `offerReceived` (FR-06), `statusHistory` (FR-24), `rowVersion` + 409 `VERSION_CONFLICT` |
+| — | `resumeName` for display; 422 for an unusable resume |
+
+Not yet built: the Dashboard read (`readDashboard()` exists; the route and its time-zone input
+still need agreement with Justin) and mounting the resume routes in `server.ts`.
+
 ## Resume storage and PDF parsing (R2 / PDF)
 
 Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_PLAN.md)).
