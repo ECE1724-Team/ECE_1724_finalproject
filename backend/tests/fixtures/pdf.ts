@@ -15,6 +15,36 @@ export function textPage(lines: string[] = resumeLines, x = 54): Page {
   return { runs: lines.map((text, i) => ({ text, x, y: 740 - i * 22 })) };
 }
 
+export function makeSplitThresholdPdf(): Buffer {
+  return makePdf([textPage(["A".repeat(49), "B".repeat(50)]), textPage(["C"])]);
+}
+
+// One blank page exported with Quartz PDF encryption (open password: "fixture-password").
+// Keep the file inline so the parser tests need no tools or dependencies to create it.
+export function makePasswordProtectedPdf(): Buffer {
+  return Buffer.from(`
+JVBERi0xLjYKJcTl8uXrp/Og0MTGCjMgMCBvYmoKPDwgL0ZpbHRlciAvRmxhdGVEZWNvZGUgL0xlbmd0aCAzMiA+PgpzdHJl
+YW0KYbCmIjKA89ymGquVwJ7xmSAHyKYuM7XdIwLdfBI+C6MKZW5kc3RyZWFtCmVuZG9iagoxIDAgb2JqCjw8IC9UeXBlIC9Q
+YWdlIC9QYXJlbnQgMiAwIFIgL1Jlc291cmNlcyA0IDAgUiAvQ29udGVudHMgMyAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwg
+L1Byb2NTZXQgWyAvUERGIF0gPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9NZWRpYUJveCBbMCAwIDQwIDQw
+XSAvQ291bnQgMSAvS2lkcyBbIDEgMCBSIF0gPj4KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0NhdGFsb2cgL1BhZ2VzIDIg
+MCBSIC9WZXJzaW9uIC8xLjYgPj4KZW5kb2JqCjYgMCBvYmoKPDwgL1Byb2R1Y2VyIChhsKYiMoDz3KZcMDMyq5XAnvGZXDAz
+MkhcMDA2x5XuhlwwMTDEpKK1yVwwMzdRLdAssGAt9pFnaFdt3lwwMzC5nCWy90FyTE+dXDAwMz+JsrjdIeKgaWFcMDI1ZnGr
+wtu4Qd+vaKwlMSkKL0NyZWF0aW9uRGF0ZSAoYbCmIjKA89ymXDAzMquVwJ7xmcCCXDAyN5pJ7v9KiLSinNBj7+tHSJ5811ww
+MzHg3DlcMDA2jFwwMzXnXDAyN384KQovTW9kRGF0ZSAoYbCmIjKA89ymXDAzMquVwJ7xmcCCXDAyN5pJ7v9KiLSinNBj7+tH
+SJ5811wwMzHg3DlcMDA2jFwwMzXnXDAyN384KQo+PgplbmRvYmoKNyAwIG9iago8PCAvRmlsdGVyIC9TdGFuZGFyZCAvViA0
+IC9SIDQgL0xlbmd0aCAxMjggL0NGIDw8IC9TdGRDRiA8PCAvQXV0aEV2ZW50IC9Eb2NPcGVuCi9DRk0gL0FFU1YyIC9MZW5n
+dGggMTYgPj4gPj4gL1N0bUYgL1N0ZENGIC9TdHJGIC9TdGRDRiAvRW5jcnlwdE1ldGFkYXRhIHRydWUKL08gPDc1ZWE0NGU1
+YmY1MGIwN2IxZmM4ZDlhOGYyZWQ1MmJlMGJmM2ZmMGE3NGRiNmFlZWUwYmFlNDQ3ODc2NWYxZjA+IC9VIDxiMmNlZDVmYmQ2
+NjAwYjQ0NTMxZjgyNGVjOGE1MGQ5NjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwPgovUCAtNCA+PgplbmRvYmoK
+eHJlZgowIDgKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMTI1IDAwMDAwIG4gCjAwMDAwMDAyNDQgMDAwMDAgbiAKMDAw
+MDAwMDAyMiAwMDAwMCBuIAowMDAwMDAwMjA1IDAwMDAwIG4gCjAwMDAwMDAzMjUgMDAwMDAgbiAKMDAwMDAwMDM4OCAwMDAw
+MCBuIAowMDAwMDAwNjg3IDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgOCAvUm9vdCA1IDAgUiAvRW5jcnlwdCA3IDAgUiAv
+SW5mbyA2IDAgUiAvSUQgWyA8ZTc3NTc5YmU1NmQ5MmMxZGJmYjlkODM0MjNmZmFmODc+CjxlNzc1NzliZTU2ZDkyYzFkYmZi
+OWQ4MzQyM2ZmYWY4Nz4gXSA+PgpzdGFydHhyZWYKMTAwOAolJUVPRgo=
+`, "base64");
+}
+
 // Small real PDFs with correct objects/xref, no external fixture library or personal data.
 export function makePdf(pages: Page[] = [textPage()], options: Options = {}): Buffer {
   const objects: Buffer[] = [];

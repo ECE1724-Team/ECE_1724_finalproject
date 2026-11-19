@@ -10,13 +10,13 @@ AI behavior in [AI Design](AI_Design.md), routes in [endpoints.json](endpoints.j
 
 | Area | Current state |
 |---|---|
-| Phases 1–3 | Test setup, R2 adapter, PDF parser and acceptance policy implemented. Live R2 verification and two parser fixtures remain open. |
-| Phase 4 | Five resume routes, service, cleanup worker, PostgreSQL repositories, migration 006, verified sessions and Origin checks are available. The server entry point still needs to connect them. |
+| Phases 1–3 | Test setup, R2 adapter, PDF parser, acceptance policy and both parser fixtures are in place. Live R2 verification is pending in Stage 2. |
+| Phase 4 | Stage 1 passed locally. The server mounts the five resume routes and starts one cleanup worker when R2 is configured. |
 | Application API and frontend | The team has implemented the application routes and opened a PR. Justin's review is pending. Use that PR for the browser handoff. |
-| Environment | Development branch ready. Jianye will fill in the local R2 settings later. Stage 1 can proceed now. |
+| Environment | Stage 1 passed with disposable PostgreSQL and fake storage. Jianye will fill in the local R2 settings for Stage 2. |
 | AI Copilot | Later work. Its input is the saved text of the currently linked resume. |
 
-The 42-test result recorded on November 17 covered the earlier module work. Current integration coverage is split across two tests. One uses real sessions with fake resume repositories and a fake PDF extractor. The other uses real resume SQL and PDF extraction with test identities. Both use fake storage. [Session HTTP test](../backend/tests/integration/http.test.ts) · [PostgreSQL resume HTTP test](../backend/tests/integration/resume-http.db.test.ts)
+The resume HTTP integration test exercises the startup router with real sessions, PostgreSQL, PDF extraction and fake storage. [Resume HTTP test](../backend/tests/integration/resume-http.db.test.ts)
 
 ## Phase 4 closeout
 
@@ -33,10 +33,12 @@ Jianye owns the two stages below. Track **backend acceptance** and the **team br
 
 **Acceptance**
 
-- [ ] From `backend/`, `npm run typecheck`, `npm test`, `npm run test:db` and `npm run build` pass without cloud credentials. With the other backend settings valid and R2 blank, development starts with one warning, serves `/health` and skips the resume routes and worker. Invalid configuration names the setting without printing its value.
-- [ ] A verified owner uploads a PDF (201), can list it on a fresh request, and downloads identical bytes with private cache headers. Anonymous and revoked sessions get 401, an unverified session gets 403, an untrusted write origin gets 403, and another verified user gets 404 on the owner's file and delete endpoints.
-- [ ] A valid PDF of exactly 2,097,152 bytes is accepted. One extra byte gives 413. The password-required PDF gives `PDF_PASSWORD_PROTECTED` (422). The 99 + 1 fixture yields `available`. A scan yields `unavailable` with SQL `extracted_text IS NULL`. Rejected files create neither a resume row nor a storage object.
-- [ ] With a simulated storage outage, upload/download report 503, while metadata reads and database deletion still work. After deletion the file endpoint gives 404. A fresh worker finishes the persisted cleanup job when storage recovers and leaves other live files intact.
+- [x] From `backend/`, `npm run typecheck`, `npm test`, `npm run test:db` and `npm run build` pass without cloud credentials. With the other backend settings valid and R2 blank, development starts with one warning, serves `/health` and skips the resume routes and worker. Invalid configuration names the setting without printing its value.
+- [x] A verified owner uploads a PDF (201), can list it on a fresh request, and downloads identical bytes with private cache headers. Anonymous and revoked sessions get 401, an unverified session gets 403, an untrusted write origin gets 403, and another verified user gets 404 on the owner's file and delete endpoints.
+- [x] A valid PDF of exactly 2,097,152 bytes is accepted. One extra byte gives 413. The password-required PDF gives `PDF_PASSWORD_PROTECTED` (422). The 99 + 1 fixture yields `available`. A scan yields `unavailable` with SQL `extracted_text IS NULL`. Rejected files create neither a resume row nor a storage object.
+- [x] With a simulated storage outage, upload/download report 503, while metadata reads and database deletion still work. After deletion the file endpoint gives 404. A fresh worker finishes the persisted cleanup job when storage recovers and leaves other live files intact.
+
+**Evidence (2026-11-19).** Typecheck and build passed on Node 26.8.2. `npm test` passed 102 tests and `npm run test:db` passed 158 with disposable PostgreSQL 18.6. Startup smoke checks on the compiled server confirmed the blank-R2 behavior, startup and one cleanup pass with an unreachable local storage endpoint, and clean SIGTERM exits in both modes. An occupied port left the cleanup job pending. Invalid endpoint configuration exited with the setting name. Real R2 and the browser handoff are Stage 2.
 
 ### Stage 2 — Verify real R2 and hand off the browser workflow
 
