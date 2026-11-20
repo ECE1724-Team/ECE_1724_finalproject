@@ -326,8 +326,51 @@ owner should update the contract:
 | No offer flag, timeline or version | `offerReceived` (FR-06), `statusHistory` (FR-24), `rowVersion` + 409 `VERSION_CONFLICT` |
 | — | `resumeName` for display; 422 for an unusable resume |
 
-Not yet built: the Dashboard read (`readDashboard()` exists; the route and its time-zone input
-still need agreement with Justin) and mounting the resume routes in `server.ts`.
+## Dashboard API (`/api/v1/dashboard`)
+
+Owner: Zishi Yang. Code: `src/modules/dashboard/` (`time-window.ts`, `routes.ts`) on top of
+Rongxin's `readDashboard()`. Mounted in `server.ts` through `businessRouter`, behind the same
+origin check and `requireVerifiedUser` as the other business routes.
+
+`GET /api/v1/dashboard?timeZone=America/Toronto` → 200:
+
+```json
+{
+  "counts": { "total": 6, "byStatus": { "saved": 1, "applied": 1, "oa": 1, "interview": 1, "offer": 1, "rejected": 1 } },
+  "offersEverReceived": 2,
+  "interviewSessions": 5,
+  "upcomingInterviews": {
+    "timeZone": "America/Toronto", "start": "2026-10-29T04:00:00.000Z", "end": "2026-11-05T05:00:00.000Z",
+    "items": [{ "id": "…", "applicationId": "…", "type": "Onsite", "scheduledAt": "…", "companyName": "Globex", "jobTitle": "Full-stack Developer" }]
+  },
+  "recentApplications": [{ "id": "…", "companyName": "…", "jobTitle": "…", "status": "offer", "appliedDate": null, "resumeId": null, "resumeName": null, "createdAt": "…" }]
+}
+```
+
+- **Totals (FR-03).**
+  - `counts` covers all of the user's applications, saved and rejected ones included. It has the
+    same shape as the application list's `counts`, so `byStatus` can drive the clickable status chart.
+  - `offersEverReceived` counts applications that ever reached Offer.
+  - `interviewSessions` counts every interview round, not only the upcoming ones.
+- **Next 7 days.**
+  - `timeZone` is required. Send the browser's
+    `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+  - The window runs from local midnight today (inclusive) to local midnight seven calendar dates
+    later (exclusive). It is built from calendar dates, so it is 167 or 169 hours long when it
+    crosses a daylight-saving change.
+  - `start` and `end` are returned so the page can label the range. Items are in time order.
+  - The zone is echoed as sent. IANA names in any letter case are accepted, and so are fixed
+    offsets such as `+05:00`.
+- **Recent applications.** The newest 5 (`RECENT_APPLICATIONS`), in the application-list summary
+  shape.
+- **Errors.** A missing, repeated or unknown `timeZone` → 400 `BAD_REQUEST`. Plus 401/403/503/500
+  from `createApp`.
+- **Field names** follow the Applications API (`jobTitle`, `type`, `scheduledAt`), not the column
+  names `readDashboard()` returns.
+
+**Proposals to agree with Justin** (not fixed by the PRD): the `timeZone` query parameter and the
+response shape above, and showing 5 recent applications. `endpoints.json` has no Dashboard entry
+yet.
 
 ## Resume storage and PDF parsing (R2 / PDF)
 

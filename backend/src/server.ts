@@ -13,6 +13,8 @@ import { createR2Storage } from "./integrations/object-storage/r2.js";
 import { createPdfExtractor } from "./integrations/pdf/extractor.js";
 import { createAuthentication } from "./modules/auth/auth.js";
 import { assertAuthSchema } from "./modules/auth/schema.js";
+import { readDashboard } from "./modules/dashboard/postgres-repository.js";
+import { createDashboardRouter } from "./modules/dashboard/routes.js";
 import { mountPostgresResumeRoutes } from "./modules/resumes/postgres-routes.js";
 
 async function main() {
@@ -39,6 +41,7 @@ async function main() {
   // Business routes sit behind createApp's /api/v1 origin check and requireVerifiedUser.
   const businessRouter = Router();
   businessRouter.use("/applications", createApplicationRouter({ service: createPostgresApplicationService(pool) }));
+  businessRouter.use("/dashboard", createDashboardRouter({ read: (userId, options) => readDashboard(pool, userId, options) }));
   const storage = environment.r2 && createR2Storage(environment.r2);
   const startResumeWorker = storage && mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
   if (!storage) console.warn("R2 settings are empty. Resume routes and cleanup worker are disabled.");
