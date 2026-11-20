@@ -137,7 +137,7 @@ test("the migrations share one history and reproduce the schema after up, up, do
   });
 });
 
-test("npm run migrate uses only the validated DATABASE_URL to select its database", () => withTestDatabase(async ({ pool, url }) => {
+test("both migration commands use only the validated DATABASE_URL to select their database", () => withTestDatabase(async ({ pool, url }) => {
   const cwd = await mkdtemp(join(tmpdir(), "jobflow-migrate-"));
   let connections = 0;
   const fallback = createServer((socket) => {
@@ -157,8 +157,8 @@ test("npm run migrate uses only the validated DATABASE_URL to select its databas
     delete env.DATABASE_URL;
     const fallbackEnv = { ...env, PGHOST: "127.0.0.1", PGPORT: String(port), PGUSER: "fallback", PGDATABASE: "fallback",
       JOBFLOW_TEST_UNUSED_DATABASE_URL: "" };
-    const run = (env: NodeJS.ProcessEnv, ...args: string[]) =>
-      exec("npm", ["run", "migrate", "--", ...args], { cwd, env, timeout: 30_000 });
+    const run = (command: string, env: NodeJS.ProcessEnv, ...args: string[]) =>
+      exec("npm", ["run", command, "--", ...args], { cwd, env, timeout: 30_000 });
     const envPath = join(cwd, ".env");
     const rejectedUrls = [
       ["PGAPPNAME=jobflow_migration_test", /DATABASE_URL is not configured/],
@@ -166,18 +166,23 @@ test("npm run migrate uses only the validated DATABASE_URL to select its databas
       ["DATABASE_URL=https://example.test/db", /DATABASE_URL must be a PostgreSQL connection URL/],
       ["DATABASE_URL=postgresql://127.0.0.1", /DATABASE_URL must name the PostgreSQL database/],
     ] as const;
-    for (const [contents, message] of rejectedUrls) {
-      await writeFile(envPath, `${contents}\n`);
-      await assert.rejects(run(fallbackEnv), { code: 1, stderr: message });
+    for (const command of ["migrate", "migrate:down"]) {
+      for (const [contents, message] of rejectedUrls) {
+        await writeFile(envPath, `${contents}\n`);
+        await assert.rejects(run(command, fallbackEnv), { code: 1, stderr: message });
+      }
+      await writeFile(envPath, `DATABASE_URL="${url}"\n`);
+      await assert.rejects(run(command, fallbackEnv, "--database-url-var", "JOBFLOW_TEST_UNUSED_DATABASE_URL"),
+        { code: 1, stderr: /Unknown option/ });
     }
-    await writeFile(envPath, `DATABASE_URL="${url}"\n`);
-    await assert.rejects(run(fallbackEnv, "--database-url-var", "JOBFLOW_TEST_UNUSED_DATABASE_URL"),
-      { code: 1, stderr: /Unknown option/ });
     assert.equal(connections, 0);
     assert.deepEqual(tableNames(await readCatalog(pool)), []);
 
-    await run(env);
+    await run("migrate", env);
     assert.deepEqual((await migrationHistory(pool)).map(({ name }) => name), migrationNames);
+    await run("migrate:down", env);
+    assert.deepEqual((await migrationHistory(pool)).map(({ name }) => name), migrationNames.slice(0, -1));
+    assert.deepEqual(tableNames(await readCatalog(pool)), publicTables.filter((table) => table !== "storage_cleanup_jobs"));
     assert.equal(connections, 0);
   } finally {
     if (fallback.listening) await promisify(fallback.close).call(fallback);

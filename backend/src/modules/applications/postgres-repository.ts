@@ -2,7 +2,8 @@ import type { PoolClient } from "pg";
 import { withTransaction } from "../../db/transaction.js";
 import type {
   ApplicationCounts, ApplicationDetailRow, ApplicationListRow, ApplicationRepository, ApplicationRow, ApplicationStatus,
-  ApplicationStatusHistoryRepository, ApplicationStatusHistoryRow, ApplicationUpdate, Db, InterviewRepository, InterviewRow,
+  ApplicationStatusHistoryRepository, ApplicationStatusHistoryRow, ApplicationUpdate, ApplicationUpdateResult, Db,
+  InterviewRepository, InterviewRow,
 } from "./repository.js";
 
 const APPLICATION_LIST_FIELDS = `id, company_name AS "companyName",
@@ -53,7 +54,7 @@ async function lockResumeSelection(client: PoolClient, userId: string, oldId: st
 }
 
 export function createPostgresApplicationRepository(): ApplicationRepository {
-  const repository: ApplicationRepository = {
+  const repository = {
     insert(db, application) {
       return inTransaction(db, async (client) => {
         const resumeId = application.resumeId?.toLowerCase() ?? null;
@@ -119,7 +120,8 @@ export function createPostgresApplicationRepository(): ApplicationRepository {
       return counts;
     },
 
-    update(db, userId, id, expectedRowVersion, changes) {
+    update(db: Db, userId: string, id: string, expectedRowVersion: string | undefined, changes: ApplicationUpdate,
+      saveInterviews?: (client: PoolClient) => Promise<boolean>): Promise<ApplicationUpdateResult> {
       return inTransaction(db, async (client) => {
         const resumeId = changes.resumeId?.toLowerCase() ?? changes.resumeId;
         let oldResumeId: string | null | undefined;
@@ -155,34 +157,37 @@ export function createPostgresApplicationRepository(): ApplicationRepository {
           assignments.push(`${column} = ${parameter}`);
           comparisons.push(`${column} IS DISTINCT FROM ${parameter}`);
         }
-        if (!assignments.length) return { outcome: "OK", application: current };
-
-        const { rows: [updated] } = await client.query<ApplicationRow>(`
+        const write = assignments.length ? await client.query<ApplicationRow>(`
           UPDATE public.applications
           SET ${assignments.join(", ")}, row_version = row_version + 1, updated_at = statement_timestamp()
           WHERE user_id = $1 AND id = $2 AND (${comparisons.join(" OR ")})
           RETURNING ${APPLICATION_FIELDS}
-        `, values);
-        if (!updated) return { outcome: "OK", application: current };
+        `, values) : undefined;
+        const updated = write?.rows[0];
 
-        if (current.status !== updated.status) {
+        if (updated && current.status !== updated.status) {
           await client.query(`
             INSERT INTO public.application_status_history (application_id, sequence_no, old_status, new_status, changed_at)
             SELECT $1, COALESCE(max(sequence_no), 0) + 1, $2, $3, statement_timestamp()
             FROM public.application_status_history WHERE application_id = $1
           `, [id, current.status, updated.status]);
         }
-        return { outcome: "OK", application: updated };
+        // Run interview writes under the same locks, after the application update.
+        const interviewsChanged = await saveInterviews?.(client);
+        if (updated || !interviewsChanged) return { outcome: "OK", application: updated ?? current };
+
+        const { rows: [versioned] } = await client.query<ApplicationRow>(`
+          UPDATE public.applications
+          SET row_version = row_version + 1, updated_at = statement_timestamp()
+          WHERE user_id = $1 AND id = $2
+          RETURNING ${APPLICATION_FIELDS}
+        `, [userId, id]);
+        return { outcome: "OK", application: versioned };
       });
     },
 
-    updateWithInterviews(pool, userId, id, expectedRowVersion, changes, saveInterviews) {
-      return withTransaction(pool, async (client) => {
-        // Interview inserts lock the parent application. Let update take the resume locks first.
-        const result = await repository.update(client, userId, id, expectedRowVersion, changes);
-        if (result.outcome === "OK") await saveInterviews(client);
-        return result;
-      });
+    updateWithInterviews(pool, userId, id, expectedRowVersion, changes, saveInterviews): Promise<ApplicationUpdateResult> {
+      return repository.update(pool, userId, id, expectedRowVersion, changes, saveInterviews);
     },
 
     delete(pool, userId, id) {
@@ -214,7 +219,7 @@ export function createPostgresApplicationRepository(): ApplicationRepository {
         return "DELETED";
       });
     },
-  };
+  } satisfies ApplicationRepository;
   return repository;
 }
 
