@@ -1,11 +1,11 @@
-import type { Express } from "express";
+import type { Router } from "express";
+import { requireAuthContext } from "../../http/authorization.js";
 import { createPostgresResumeModule } from "./postgres-module.js";
-import { createResumeRouter, type ResumeRouterOptions } from "./routes.js";
+import { createResumeRouter } from "./routes.js";
 
-type MountOptions = Parameters<typeof createPostgresResumeModule>[0] & Pick<ResumeRouterOptions, "authenticate">;
-
-export function mountPostgresResumeRoutes(app: Express, { authenticate, ...deps }: MountOptions) {
+/** Mount on the business router passed to createApp. Starting the worker is up to the caller. */
+export function mountPostgresResumeRoutes(router: Router, deps: Parameters<typeof createPostgresResumeModule>[0]) {
   const { service, startWorker } = createPostgresResumeModule(deps);
-  app.use("/api/v1/resumes", createResumeRouter({ service, authenticate, log: deps.log }));
+  router.use("/resumes", createResumeRouter({ service, authenticate: requireAuthContext, log: deps.log }));
   return startWorker;
 }

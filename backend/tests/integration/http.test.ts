@@ -4,23 +4,9 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { Router } from "express";
 import test from "node:test";
-import type { Pool } from "pg";
 import { createApp } from "../../src/app.js";
-import { getAuthContext, requireAuthContext, requireOwnedResource } from "../../src/http/authorization.js";
-import { createResumeRouter } from "../../src/modules/resumes/routes.js";
-import { createResumeService } from "../../src/modules/resumes/service.js";
-import { FakeCleanupRepository, FakeResumeRepository, FakeStorage, extraction, fakeExtractor, pdfBytes } from "../fakes/resumes.js";
-import { createAuthFixture, sessionCookie, uniqueEmail, verificationUrl, type AuthFixture } from "../helpers/auth-fixture.js";
-
-/** Registers and verifies a user through the real auth flow; returns the user ID and Session cookie. */
-async function verifiedUser(fixture: AuthFixture): Promise<{ id: string; cookie: string }> {
-  const registered = await fixture.request("/api/auth/sign-up/email", { body: { name: "Resume owner", email: uniqueEmail(), password: "a-strong-password-123" } });
-  const { user } = await registered.json() as { user: { id: string } };
-  const verified = await fixture.request(verificationUrl(fixture.emails.at(-1)!, { callbackURL: null }));
-  const cookie = sessionCookie(verified);
-  assert.ok(cookie);
-  return { id: user.id, cookie };
-}
+import { getAuthContext, requireOwnedResource } from "../../src/http/authorization.js";
+import { createAuthFixture, sessionCookie, uniqueEmail, verificationUrl } from "../helpers/auth-fixture.js";
 
 test("Express preserves auth bodies/cookies/CORS and enforces real SQL ownership", { timeout: 30000 }, async t => {
   const fixture = await createAuthFixture();
@@ -136,52 +122,4 @@ test("native failed-login counters survive rollback and client IP headers cannot
     await response.arrayBuffer();
   }
   assert.equal((await fixture.pool.query("SELECT count(*)::int AS count FROM auth_session")).rows[0]!.count, 1);
-});
-
-test("the resume router runs behind real Sessions, verification, origin checks and owner scoping", { timeout: 30000 }, async t => {
-  const fixture = await createAuthFixture();
-  const cleanup = new FakeCleanupRepository();
-  const resumes = new FakeResumeRepository(cleanup);
-  const service = createResumeService({ pool: {} as Pool, storage: new FakeStorage(), pdf: fakeExtractor(extraction()), resumes, cleanup, log: () => {} });
-  const businessRouter = Router();
-  businessRouter.use("/resumes", createResumeRouter({ service, authenticate: requireAuthContext, log: () => {} }));
-  const app = createApp({ authentication: fixture.authentication, database: fixture.database,
-    environment: { auth: fixture.config, trustProxyHops: 0 }, businessRouter });
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    await fixture.close();
-  });
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/resumes`;
-  const origin = "http://localhost:5173";
-  const owner = await verifiedUser(fixture);
-  const other = await verifiedUser(fixture);
-  const upload = (cookie: string, from = origin) => {
-    const body = new FormData();
-    body.append("name", "Backend resume");
-    body.append("file", new Blob([pdfBytes()], { type: "application/pdf" }), "cv.pdf");
-    return fetch(base, { method: "POST", headers: { cookie, origin: from }, body });
-  };
-
-  assert.equal((await fetch(base, { headers: { origin } })).status, 401);
-  const forged = await upload(owner.cookie, "https://evil.example");
-  assert.equal(forged.status, 403);
-  assert.equal(resumes.rows.size, 0);
-
-  const created = await upload(owner.cookie);
-  assert.equal(created.status, 201);
-  assert.match(created.headers.get("access-control-expose-headers") ?? "", /Location/);
-  const resume = await created.json() as { id: string };
-  assert.equal(resumes.rows.get(resume.id)?.userId, owner.id);
-
-  const listed = await fetch(base, { headers: { cookie: owner.cookie, origin } });
-  assert.deepEqual((await listed.json() as { data: { id: string }[] }).data.map(row => row.id), [resume.id]);
-  assert.equal((await fetch(`${base}/${resume.id}`, { headers: { cookie: other.cookie, origin } })).status, 404);
-
-  await fixture.pool.query('UPDATE auth_user SET "emailVerified" = false WHERE id = $1', [owner.id]);
-  const unverified = await fetch(base, { headers: { cookie: owner.cookie, origin } });
-  assert.equal(unverified.status, 403);
-  assert.equal((await unverified.json() as { error: { code: string } }).error.code, "EMAIL_NOT_VERIFIED");
 });

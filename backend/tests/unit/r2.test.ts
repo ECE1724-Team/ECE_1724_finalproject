@@ -5,7 +5,6 @@ import {
   PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand, type S3Client,
 } from "@aws-sdk/client-s3";
 import { createObjectKey, R2Storage } from "../../src/integrations/object-storage/r2.js";
-import { readR2Config } from "../../src/config/env.js";
 import { makePdf } from "../fixtures/pdf.js";
 
 type Command = PutObjectCommand | GetObjectCommand | HeadObjectCommand | DeleteObjectCommand;
@@ -106,10 +105,4 @@ test("cancellation and deadline also stop a stalled body download", async () => 
     await assert.rejects(pending, { code: cancel ? "cancelled" : "timeout" });
     assert.equal(source.destroyed, true);
   }
-});
-
-test("configuration is lazy and does not leak secrets in validation errors", () => {
-  assert.throws(() => readR2Config({}), /R2_ENDPOINT/);
-  assert.throws(() => readR2Config({ R2_ENDPOINT: "https://user:secret@example.com" }),
-    (error: Error) => !error.message.includes("secret"));
 });

@@ -5,6 +5,7 @@ import express, { type RequestHandler } from "express";
 import type { Pool } from "pg";
 import { StorageError } from "../../src/integrations/object-storage/types.js";
 import { PdfError, type PdfExtraction } from "../../src/integrations/pdf/types.js";
+import { MAX_RESUME_BYTES } from "../../src/modules/resumes/pdf-policy.js";
 import { cleanFileName, createResumeRouter, toHttpError } from "../../src/modules/resumes/routes.js";
 import { createResumeService } from "../../src/modules/resumes/service.js";
 import {
@@ -105,7 +106,7 @@ test("no verified user: 401 and the 3 MiB body never reaches the parser or stora
   assert.equal(storage.calls.length, 0);
 });
 
-test("upload input errors: 415, 400, 422 and 413", async () => {
+test("upload input errors: 415, 400 and 422", async () => {
   reset();
   const json = await call("", { method: "POST", body: JSON.stringify({ name: "x" }), headers: { "content-type": "application/json" } });
   assert.deepEqual([json.status, await errorCode(json)], [415, "UNSUPPORTED_MEDIA_TYPE"]);
@@ -124,10 +125,20 @@ test("upload input errors: 415, 400, 422 and 413", async () => {
     assert.deepEqual([invalid.status, await errorCode(invalid)], [422, "VALIDATION_ERROR"]);
   }
   assert.equal((await upload({ name: "中".repeat(200) })).status, 201, "200 characters is allowed");
+});
 
-  const big = await upload({ name: "x", files: [{ bytes: pdfBytes(2 * 1024 * 1024 + 1), fileName: "big.pdf" }] });
+test("multipart accepts exactly 2 MiB and rejects one byte more before extraction", async () => {
+  const { pdf, resumes, storage } = reset();
+  const uploadSize = (size: number) => upload({ name: "CV", files: [{ bytes: pdfBytes(size), fileName: "cv.pdf" }] });
+  const exact = await uploadSize(MAX_RESUME_BYTES);
+  assert.equal(exact.status, 201);
+  assert.equal((await exact.json() as { sizeBytes: number }).sizeBytes, MAX_RESUME_BYTES);
+
+  const big = await uploadSize(MAX_RESUME_BYTES + 1);
   assert.deepEqual([big.status, await errorCode(big)], [413, "PDF_TOO_LARGE"]);
-  assert.equal(current.storage.calls.length, 1, "only the 200-character upload was stored");
+  assert.equal(pdf.calls, 1);
+  assert.equal(resumes.rows.size, 1);
+  assert.equal(storage.objects.size, 1);
 });
 
 test("PDF problems map to 422 and server-side problems to 503", async () => {
