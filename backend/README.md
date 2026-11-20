@@ -129,7 +129,7 @@ schema: [Database Design Appendices D–F](../docs/Database_Design.md#shared-ide
 
 `npm run test:db` loads `.env` if present and runs every compiled test one at a time: unit,
 contract, the auth integration tests and the `*.db.test.ts` repository and migration tests.
-The live R2 check (`r2.test.js`) is excluded; run it with `npm run test:r2`.
+Only the live R2 check (`tests/integration/r2.test.ts`) is excluded. Run it with `npm run test:r2`.
 
 - **`TEST_DATABASE_URL` set** (exported or in `.env`): the tests use that server. Point it at an
   isolated test server where the role may `CREATE DATABASE` (for example
@@ -264,9 +264,9 @@ Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_P
 File rules: [PRD §5.2](../docs/PRD.md). Upload and delete transactions:
 [Database Design §7.2–7.3](../docs/Database_Design.md).
 
-**Status (2026-11-19).** The server mounts the five resume routes and starts the cleanup worker when R2 is configured. Apply the migrations, including group 006, with `npm run migrate` before enabling the module.
+**Status (2026-11-19).** The live R2 adapter test passed. The compiled server also passed upload, list, metadata, byte-identical PDF download, and deletion with a verified session, PostgreSQL and real R2. All four cleanup jobs reached `done`, R2 confirmed the objects were absent, and SIGTERM exited cleanly. Apply all migrations with `npm run migrate` before enabling the module. [Stage 2 results and samples](../docs/JIANYE_DEV_PLAN.md#phase-4-stage-2)
 
-The resume HTTP test uses the startup router composition, real session cookies, migrated PostgreSQL, the PDF extractor and fake object storage. The workflow tests cover cleanup retries after restart and an insert that commits after a client timeout. [Resume HTTP test](tests/integration/resume-http.db.test.ts) · [Resume workflow tests](tests/integration/resume-workflow.db.test.ts) · [Jianye's closeout plan](../docs/JIANYE_DEV_PLAN.md#phase-4-closeout)
+The resume HTTP test uses the startup router composition, real session cookies, migrated PostgreSQL, the PDF extractor and fake object storage. The workflow tests cover cleanup retries after restart and an insert that commits after a client timeout. [Resume HTTP test](tests/integration/resume-http.db.test.ts) · [Resume workflow tests](tests/integration/resume-workflow.db.test.ts)
 
 ### R2 setup
 
@@ -360,9 +360,14 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 - Assumes one backend instance: the cleanup worker puts every `processing` job back to
   `pending` before each pass (Database Design §5.11). Running several instances needs the
   lease design in Database Design §5.7.
-- The live R2 check has not been run.
-- Text order follows the PDF's internal order. Unusual two-column layouts may come out
-  interleaved, so check a few real Word/LaTeX exports by hand.
+- Extracted text follows the PDF's internal order. The verified Word-source example and
+  two-column LaTeX export read in section order. The Canva sample had readable text,
+  but spaced headings appeared as separate letters and some text was out of visual order.
+- A crash between the R2 write and the insert can leave an object with no row; bucket
+  reconciliation is deferred (Database Design §7.2). Also deferred: per-user quotas and
+  streamed downloads (files are read whole, ≤ 2 MiB).
+- The team browser check is pending the reviewed application API and the connected resume dialog.
+  Sample PDFs for it: `tests/fixtures/resume-samples/` (two-column LaTeX, raster scan).
 
 <a id="merge-notes"></a>
 
@@ -481,5 +486,5 @@ With `createApp` this does not work:
 - In any order it bypasses the `/api/v1` origin (CSRF) check and reads the Session twice.
 
 `main`'s HTTP test does not catch this because it uses test middleware on a bare Express app.
-[Phase 4 closeout](../docs/JIANYE_DEV_PLAN.md#phase-4-closeout) resolved this by making
+[Phase 4, Stage 1](../docs/JIANYE_DEV_PLAN.md#phase-4-stage-1) resolved this by making
 `mountPostgresResumeRoutes` take the business router and mount at `"/resumes"`.

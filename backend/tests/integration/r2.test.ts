@@ -9,23 +9,29 @@ const missing = required.filter((name) => !process.env[name]?.trim());
 const skip = process.env.R2_INTEGRATION_TEST !== "1" ? "Set R2_INTEGRATION_TEST=1 for an isolated development bucket."
   : missing.length ? `Missing configuration: ${missing.join(", ")}` : false;
 
-test("real R2: write, collision, read, metadata, delete and absence", { skip }, async () => {
+test("real R2: write, collision, read, metadata, delete and absence", { skip }, async (t) => {
   const storage = createR2Storage(readR2Config());
   const key = `integration-tests/${createObjectKey()}`;
   const bytes = makePdf();
-  try {
-    await storage.putNew(key, bytes);
-    await assert.rejects(storage.putNew(key, bytes), { code: "conflict" });
-    assert.deepEqual((await storage.read(key))?.bytes, bytes);
-    const metadata = await storage.head(key);
-    assert.equal(metadata?.contentType, "application/pdf");
-    assert.equal(metadata?.contentLength, bytes.length);
-    await storage.delete(key);
-    await storage.delete(key);
-    assert.equal(await storage.head(key), null);
-    assert.equal(await storage.read(key), null);
-  } finally {
-    // The key is a fresh random UUID, so this can only remove this test's own object.
-    await storage.delete(key).finally(() => storage.close());
-  }
+  let deleted = false;
+  t.after(async () => {
+    try {
+      // A failed write can still have reached R2. Only clean up this test's random key.
+      if (!deleted) await storage.delete(key);
+    } finally {
+      storage.close();
+    }
+  });
+
+  await storage.putNew(key, bytes);
+  await assert.rejects(storage.putNew(key, bytes), { code: "conflict" });
+  assert.deepEqual((await storage.read(key))?.bytes, bytes);
+  const metadata = await storage.head(key);
+  assert.equal(metadata?.contentType, "application/pdf");
+  assert.equal(metadata?.contentLength, bytes.length);
+  await storage.delete(key);
+  deleted = true;
+  await storage.delete(key);
+  assert.equal(await storage.head(key), null);
+  assert.equal(await storage.read(key), null);
 });

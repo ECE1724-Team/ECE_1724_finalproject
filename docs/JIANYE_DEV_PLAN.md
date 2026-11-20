@@ -1,102 +1,60 @@
 # Jianye's Dev Plan and Progress Log
 
-Owner: Jianye Zhou. Areas: resume storage (Cloudflare R2), PDF parsing, and the AI Copilot.
-This is my own working record. What the team needs lives in shared docs:
-usage and API-route rules in [backend/README.md](../backend/README.md), file rules in
-[PRD §5.2](PRD.md), upload/delete transactions in [Database Design §7.2–7.3](Database_Design.md),
-AI behavior in [AI Design](AI_Design.md), routes in [endpoints.json](endpoints.json).
+Owner: Jianye Zhou. Areas: resume storage (Cloudflare R2), PDF parsing, resume API, AI Copilot.
+This is my own record. Shared rules live in [backend/README.md](../backend/README.md) (setup,
+errors, limits, known gaps), [PRD §5.2](PRD.md) (file rules),
+[Database Design §5.11, §7.2–7.3, C.4](Database_Design.md) (cleanup, upload/delete, repository
+contract), [AI Design](AI_Design.md) and [endpoints.json](endpoints.json).
 
-## R2 / PDF status (2026-11-19)
+## Status (2026-11-19)
 
-| Area | Current state |
+| Area | State |
 |---|---|
-| Phases 1–3 | Test setup, R2 adapter, PDF parser, acceptance policy and both parser fixtures are in place. Live R2 verification is pending in Stage 2. |
-| Phase 4 | Stage 1 passed locally. The server mounts the five resume routes and starts one cleanup worker when R2 is configured. |
-| Application API and frontend | The team has implemented the application routes and opened a PR. Justin's review is pending. Use that PR for the browser handoff. |
-| Environment | Stage 1 passed with disposable PostgreSQL and fake storage. Jianye will fill in the local R2 settings for Stage 2. |
-| AI Copilot | Later work. Its input is the saved text of the currently linked resume. |
-
-The resume HTTP integration test exercises the startup router with real sessions, PostgreSQL, PDF extraction and fake storage. [Resume HTTP test](../backend/tests/integration/resume-http.db.test.ts)
-
-## Phase 4 closeout
-
-Jianye owns the two stages below. Track **backend acceptance** and the **team browser check** separately. The non-AI workflow target is November 25. Paths under `src/` and `tests/` and all npm commands below are relative to `backend/`.
-
-### Stage 1 — Connect the server and verify the backend locally
-
-| Files | Code and tests |
-|---|---|
-| `src/config/env.ts`, `tests/contract/configuration.test.ts` | Reuse `readR2Config`. In development or test, four empty R2 settings disable resumes with one startup warning. Reject partial or invalid settings in every environment and missing settings in production. Test each case, including a valid configuration. Validate locally so a temporary R2 outage still permits startup. |
-| `src/server.ts`, `src/modules/resumes/postgres-module.ts`, `src/modules/resumes/routes.ts` | Use the existing main pool, one R2 client and one PDF extractor. Add `/resumes` to the shared business router passed to `createApp`, alongside the application routes when their PR lands. Use `requireAuthContext` after the common Origin and session checks. Start one cleanup worker when resumes are enabled. On shutdown, drain HTTP requests and stop the worker before closing R2, authentication and the existing pools. |
-| `tests/integration/resume-http.db.test.ts` | Exercise the same router composition as startup. Use the verified cookies and migrated database from `tests/helpers/auth-fixture.ts`, the real PDF extractor and `FakeStorage`. Cover upload, list, metadata, download and delete. Use the existing worker restart and delayed-insert tests in `resume-workflow.db.test.ts` for recovery. |
-| `tests/fixtures/pdf.ts`, `tests/unit/pdf.test.ts`, `tests/unit/resume-routes.test.ts` | Add a small password-required PDF and a two-page PDF with 99 non-whitespace characters on page one and one on page two. Exercise the real parser. Check the exact 2 MiB limit through multipart upload as well as the existing over-limit rejection. |
-
-**Acceptance**
-
-- [x] From `backend/`, `npm run typecheck`, `npm test`, `npm run test:db` and `npm run build` pass without cloud credentials. With the other backend settings valid and R2 blank, development starts with one warning, serves `/health` and skips the resume routes and worker. Invalid configuration names the setting without printing its value.
-- [x] A verified owner uploads a PDF (201), can list it on a fresh request, and downloads identical bytes with private cache headers. Anonymous and revoked sessions get 401, an unverified session gets 403, an untrusted write origin gets 403, and another verified user gets 404 on the owner's file and delete endpoints.
-- [x] A valid PDF of exactly 2,097,152 bytes is accepted. One extra byte gives 413. The password-required PDF gives `PDF_PASSWORD_PROTECTED` (422). The 99 + 1 fixture yields `available`. A scan yields `unavailable` with SQL `extracted_text IS NULL`. Rejected files create neither a resume row nor a storage object.
-- [x] With a simulated storage outage, upload/download report 503, while metadata reads and database deletion still work. After deletion the file endpoint gives 404. A fresh worker finishes the persisted cleanup job when storage recovers and leaves other live files intact.
-
-**Evidence (2026-11-19).** Typecheck and build passed on Node 26.8.2. `npm test` passed 102 tests and `npm run test:db` passed 158 with disposable PostgreSQL 18.6. Startup smoke checks on the compiled server confirmed the blank-R2 behavior, startup and one cleanup pass with an unreachable local storage endpoint, and clean SIGTERM exits in both modes. An occupied port left the cleanup job pending. Invalid endpoint configuration exited with the setting name. Real R2 and the browser handoff are Stage 2.
-
-### Stage 2 — Verify real R2 and hand off the browser workflow
-
-| Files or owner | Work and evidence |
-|---|---|
-| Jianye · local `.env`, `tests/integration/r2.test.ts` | When ready, configure the four R2 settings for a private development-only bucket with bucket-scoped read/write access. Run the existing opt-in test with `R2_INTEGRATION_TEST=1 npm run test:r2`. Record the date and actual pass or skip. |
-| Jianye · `src/server.ts` via `npm start`, backend README, this log | With the other backend settings in place, use `npm run migrate`, then `npm run build` and `npm start`. Run one round trip through the running API with a verified session and real R2. Use fictional Word, LaTeX two-column, Canva and scan samples to check reading order and text availability. Record the outcomes here and update the README's startup status after verification. |
-| Team · application API PR and Justin's UI | Once Justin confirms the PR, use its reviewed update contract. The current OpenAPI specifies a full application PUT, so preserve the other fields and interviews when changing `resumeId`. Justin owns UI and OpenAPI changes. Jianye verifies file behavior and supplies the samples. |
-
-**Backend acceptance**
-
-- [ ] The R2 test actually executes. It verifies conditional writes, identical bytes, metadata, repeat deletion and absence. A skipped test leaves cloud acceptance pending.
-- [ ] Through the running API, upload and re-fetch a resume, preview/download the original bytes and delete it. Verify immediate loss of API access, then confirm the cleanup job is `done` and the object is absent in the dev bucket. Record whether names, headings and column order remain readable in each text export and whether the scan is marked unavailable. Stop the running server with SIGTERM and confirm it exits cleanly. Run one backend worker for this database and bucket.
-
-**Team browser check** · Target November 25, after the application PR and UI are available.
-
-- [ ] With mock data off in Chrome and Edge, upload through the resume dialog and reload. Check the actual PDF preview, download, text-unavailable warning on upload and selection, and link counts. If an upload response is lost, refresh the list before retrying.
-- [ ] Link V1 to two applications. Reject an invalid replacement and verify both links still point to V1. Upload V2 and switch one application to it. Verify the other still uses V1 and both retain their other fields and interviews. Link both to V1 again, confirm the displayed count of two, delete V1, and verify two links were removed and both applications remain.
-
-### Scope of cleanup
-
-Queue committed deletions. On a confirmed insert failure, try deleting the object immediately and enqueue it if deletion fails. If an insert's outcome is unknown, a lookup may briefly find nothing before PostgreSQL commits. Keep the object in that case. A crash between writing the file and saving the row can leave an orphan. Automatic bucket reconciliation, multi-instance worker leases, per-user quotas and streaming downloads remain deferred. [Database Design §7.2](Database_Design.md#72-upload-and-parsing)
+| Resume backend | Done. Phase 4 Stages 1–2 passed, including live R2. |
+| Browser check | Pending (target Nov 25): needs application API [PR #11](https://github.com/ECE1724-Team/ECE_1724_finalproject/pull/11) reviewed and the resume dialog connected; the frontend still uses mocks. |
+| AI Copilot | Not started. |
 
 ## Progress log
 
-Details live in the code comments, [backend/README.md](../backend/README.md) and Database
-Design; this log keeps what was decided and why.
+### 2026-11-15 → 11-17: Phases 1–4 (modules)
+- R2 adapter (`putNew`/`read`/`head`/`delete`, writes never overwrite); PDF.js in a killable
+  worker thread, max 2 at a time. Scanned PDFs are stored as `text_unavailable` instead of rejected.
+- Resume service, routes and cleanup worker are mine; Rongxin wrote the SQL behind my
+  `repository.ts` interfaces (Database Design C.4).
+- Lessons: multer needs `defParamCharset: "utf8"` (Chinese file names); detect PostgreSQL
+  errors with `instanceof DatabaseError` (a socket `EPIPE` looked like a SQLSTATE).
 
-### 2026-11-15: Phases 1–3 (R2 adapter, PDF parsing, file rules)
-- R2 adapter with four operations (`putNew` / `read` / `head` / `delete`); writes use
-  `If-None-Match: *` so they never overwrite; keys are random and server-side only.
-- PDF.js runs in a worker thread that can be killed on timeout or cancel, max 2 per process
-  (`busy` beyond that). Modules don't depend on Express or the database.
-- Simplified right after: only the 4 R2 env vars, limits as code constants, `read` returns the
-  whole file (≤ 2 MiB, no stream).
+<a id="phase-4-stage-1"></a>
 
-### 2026-11-15 → 11-17: Text-unavailable resumes (confirmed 11-17)
-Readable PDFs without usable text are stored and linkable instead of rejected, with no saved
-text (`textStatus: "unavailable"`, `parse_status = 'text_unavailable'`). Upload is synchronous;
-rejected files leave nothing behind. Rules: PRD §5.2.
+### 2026-11-19: Phase 4 Stage 1 (server wiring, local)
+Routes mounted on the shared business router behind Origin and verified-session checks; one
+worker starts after listen and stops before its dependencies close. Blank R2 in development
+skips the module with one warning. DB tests cover all five routes, auth cases, the exact 2 MiB
+boundary, password/99+1/scan fixtures and storage outages
+([HTTP test](../backend/tests/integration/resume-http.db.test.ts),
+[recovery tests](../backend/tests/integration/resume-workflow.db.test.ts)).
 
-### 2026-11-17: Agreements with Rongxin
-Repository interfaces I can fake, pool passed in at startup, server-generated resume id and
-key, unpaginated list with `linkedApplicationCount`, 404 for deleted/foreign resumes, cleanup
-SQL by Rongxin and worker by me. Recorded in Database Design Appendix C.4 and §5.11.
+<a id="phase-4-stage-2"></a>
 
-### 2026-11-17: Phase 4 module work (service, routes, cleanup worker)
-- The resume routes are mine; I defined `repository.ts` and the fakes, Rongxin implements the SQL.
-- Upload: once the PDF is in R2 the insert always finishes; an unclear insert is looked up by
-  `object_key` before any delete. Delete never touches R2; the worker does, after the commit.
-- Routes: auth before multer; multer must use `defParamCharset: "utf8"` (latin1 garbles Chinese
-  file names). Error codes in `endpoints.json` 1.11.0 and backend README.
-- Worker: every 30 s, `requeueProcessing` then claim 10; skips keys of live resumes. Relies on a
-  single backend instance.
-- Review fixes: PostgreSQL errors are detected with `instanceof DatabaseError` (a socket
-  `EPIPE` used to look like a SQLSTATE and skip the lookup); all 5xx except `PDF_BUSY` are logged.
-- Tests: in-memory fakes; route tests run a real Express server with Node's `fetch`.
-- Shared docs synced (Database Design v1.13, PRD ownership row). Not yet confirmed by Rongxin or Justin.
+### 2026-11-19: Phase 4 Stage 2 (live R2)
+Node 26.8.2, PostgreSQL 18.6: typecheck, `npm test` (102), `npm run test:db` (164), build and
+`R2_INTEGRATION_TEST=1 npm run test:r2` (1 passed, not skipped). Through `npm start` with real R2:
+4 uploads → list/metadata/byte-identical download → 4 deletes → 404 at once → jobs `done` →
+objects gone (HEAD) → SIGTERM exit 0. The V1/V2 link workflow against the PostgreSQL
+application repository also passed.
+
+| Sample | Result | Text order |
+|---|---|---|
+| [Word via Distiller](https://disability.mo.gov/gcd/files/sample_resume.pdf) | available (1,078) | Readable |
+| [Two-column LaTeX](../backend/tests/fixtures/resume-samples/latex-two-column.pdf) | available (479) | Name, left column, right column |
+| [Canva](https://cdn2.f-cdn.com/files/download/200475984/White%20Simple%20Student%20CV%20Resume.pdf) | available (513) | Spaced headings split into letters; some sections out of order |
+| [Raster scan](../backend/tests/fixtures/resume-samples/raster-scan.pdf) | unavailable, `extracted_text IS NULL` | — |
+
+## Next: team browser check (Chrome and Edge, mocks off)
+- [ ] Upload via the dialog, reload, preview/download, check link counts; the scan shows the
+  text-unavailable warning on upload and on selection.
+- [ ] Link V1 to two applications; an invalid replacement keeps both on V1; switch one to V2
+  with the full PUT payload; restore both, see count 2, delete V1: both links removed, both applications kept.
 
 ## Don't undo these
 Worker-thread isolation and the `busy` limit; `If-None-Match` on writes; never accepting a
