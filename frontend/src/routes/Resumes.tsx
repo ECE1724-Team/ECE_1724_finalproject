@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import ErrorAlert from "@/components/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card"
 import ResumeUploadForm from "@/components/ResumeUploadForm"
 import { fakeResumes } from "@/lib/testpayloads"
+import { responseError } from "@/lib/response-error"
 import type { Resume, ResumeList } from "@/types"
 import styles from "@/styles/Resumes.module.css"
 
@@ -43,10 +44,11 @@ export default function Resumes({ mock = false }: ResumesProps) {
         })
 
         if (!response.ok) {
-          throw new Error(
+          throw await responseError(
+            response,
             response.status === 401
               ? "Sign in to view your resumes."
-              : `Unable to load resumes (HTTP ${response.status}).`,
+              : "Unable to load resumes.",
           )
         }
 
@@ -79,10 +81,11 @@ export default function Resumes({ mock = false }: ResumesProps) {
         credentials: "include",
       })
       if (!response.ok) {
-        throw new Error(
+        throw await responseError(
+          response,
           response.status === 401
             ? "Sign in to download your resume."
-            : `Unable to download resume (HTTP ${response.status}).`,
+            : "Unable to download resume.",
         )
       }
 
@@ -115,22 +118,13 @@ export default function Resumes({ mock = false }: ResumesProps) {
           onCancel={() => setShowUploadCard(false)}
           onUploaded={(resume) => {
             setResumes((current) => [resume, ...current])
-            setError(null)
           }}
         />
       )}
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error && <ErrorAlert message={error} />}
 
-      {downloadError && (
-        <Alert variant="destructive" role="alert">
-          <AlertDescription>{downloadError}</AlertDescription>
-        </Alert>
-      )}
+      {downloadError && <ErrorAlert message={downloadError} />}
 
       {loading ? (
         <p role="status">Loading resumes...</p>

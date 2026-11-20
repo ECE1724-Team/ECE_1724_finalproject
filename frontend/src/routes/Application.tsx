@@ -6,7 +6,9 @@ import type {
     Application,
 } from "../types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import ErrorAlert from "@/components/ErrorAlert";
 import { fakeApplications } from "@/lib/testpayloads";
+import { responseError } from "@/lib/response-error";
 import styles from "@/styles/Application.module.css";
 
 
@@ -15,41 +17,44 @@ export default function Application({mock = false}) {
 
     const [application, setApplication] = useState<Application | null>(null);
     const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     useEffect(() => {
+        let active = true;
+        setApplication(null);
+        setLoadError(null);
+        setLoading(!!id);
+
         async function loadApplication() {
             try {
                 const response = await fetch(`/api/v1/applications/${id}`, {
                     credentials: "include",
                 });
-                if (response.status === 404) {
-                    return;
-                }
                 if (!response.ok) {
-                    throw new Error();
+                    throw await responseError(response, response.status === 404
+                        ? "Application not found."
+                        : "Error loading application.");
                 }
                 const data = await response.json() as Application;
-                setApplication(data);
-            } catch {
-                setLoadError(true);
+                if (active) setApplication(data);
+            } catch (error) {
+                if (active) setLoadError(error instanceof Error ? error.message : "Error loading application.");
             } finally {
-                setLoading(false);
+                if (active) setLoading(false);
             }
         }
 
         if (mock) {
             setApplication(fakeApplications.find((app) => app.id === id) || null);
             setLoading(false);
-            return;
-        }
-
-        if(id){
+        } else if (id) {
             loadApplication();
-        }else{
+        } else {
             setLoading(false);
         }
-    }, [id]);
+
+        return () => { active = false; };
+    }, [id, mock]);
 
     if (loading) return (
         <div className={styles.messageContainer}>
@@ -61,9 +66,7 @@ export default function Application({mock = false}) {
 
     if (loadError) return (
         <div className={styles.messageContainer}>
-            <Alert variant="destructive" className={`${styles.alert} ${styles.errorText}`}>
-                <AlertDescription>{"Error loading application"}</AlertDescription>
-            </Alert>
+            <ErrorAlert message={loadError} className={`${styles.alert} ${styles.errorText}`} />
         </div>
     );
 

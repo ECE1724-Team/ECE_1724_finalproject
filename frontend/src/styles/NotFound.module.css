@@ -1,4 +1,4 @@
-.not-found-page {
+.notFoundPage {
   display: grid;
   min-height: 60vh;
   max-width: 36rem;
@@ -9,7 +9,7 @@
   text-align: center;
 }
 
-.not-found-heading {
+.notFoundHeading {
   justify-self: center;
   text-align: center;
   font-size: 1.875rem;
@@ -17,6 +17,6 @@
   font-weight: 600;
 }
 
-.not-found-message {
+.notFoundMessage {
   text-align: center;
 }

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import ErrorAlert from "@/components/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -10,7 +11,8 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import type { ApiError, Resume } from "@/types"
+import type { Resume } from "@/types"
+import { responseError } from "@/lib/response-error"
 import styles from "@/styles/ResumeUploadForm.module.css"
 
 const MAX_RESUME_BYTES = 2_097_152
@@ -62,8 +64,7 @@ export default function ResumeUploadForm({
       })
 
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => null) as ApiError | null
-        throw new Error(errorBody?.error?.message ?? `Unable to upload resume (HTTP ${response.status}).`)
+        throw await responseError(response, "Unable to upload resume.")
       }
 
       const resume = await response.json() as Resume
@@ -139,9 +140,7 @@ export default function ResumeUploadForm({
           </div>
         </div>
         {uploadError && (
-          <Alert className={styles.feedback} variant="destructive">
-            <AlertDescription>{uploadError}</AlertDescription>
-          </Alert>
+          <ErrorAlert className={styles.feedback} message={uploadError} />
         )}
         {uploadSuccess && (
           <Alert className={styles.feedback}>

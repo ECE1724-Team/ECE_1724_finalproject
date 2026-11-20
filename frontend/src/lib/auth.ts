@@ -1,3 +1,5 @@
+import { responseError } from "@/lib/response-error"
+
 type AuthSession = {
   user: {
     id: string
@@ -21,14 +23,6 @@ function isAuthSession(value: unknown): value is AuthSession {
     isRecord(value.session) &&
     typeof value.session.id === "string"
   )
-}
-
-async function responseError(response: Response, fallback: string): Promise<Error> {
-  const body: unknown = await response.json()
-  if (isRecord(body) && typeof body.message === "string") {
-    return new Error(body.message)
-  }
-  return new Error(fallback)
 }
 
 export async function getSession(): Promise<AuthSession | null> {

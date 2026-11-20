@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import ErrorAlert from "@/components/ErrorAlert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,6 +11,7 @@ import {
 import { Link } from "react-router";
 import type { ApplicationList, ApplicationSummary } from "../types";
 import { fakeApplications } from "../lib/testpayloads";
+import { responseError } from "@/lib/response-error";
 import styles from "@/styles/Applications.module.css";
 
 const PAGE_SIZE = 20;
@@ -37,14 +38,14 @@ export default function Applications({ mock = false }) {
         );
 
         if (!response.ok) {
-          throw new Error();
+          throw await responseError(response, "Failed to load applications.");
         }
 
         const result = await response.json() as ApplicationList;
         setApplications(result.data);
         setTotal(result.counts.total);
-      } catch {
-        setError("Failed to load applications");
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : "Failed to load applications.");
       } finally {
         setLoading(false);
       }
@@ -74,11 +75,7 @@ export default function Applications({ mock = false }) {
         </Button>
       </header>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error && <ErrorAlert message={error} />}
 
       {loading ? (
         <p role="status">Loading applications...</p>

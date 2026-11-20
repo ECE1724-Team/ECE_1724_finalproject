@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import ErrorAlert from "@/components/ErrorAlert";
 import { Textarea } from "@/components/ui/textarea";
 import ResumeUploadForm from "@/components/ResumeUploadForm";
 import { Link } from "react-router";
@@ -17,11 +17,11 @@ import type {
   Application,
   ApplicationCreate,
   ApplicationStatus,
-  ApiError,
   Resume,
   ResumeList,
 } from "../types";
 import { fakeResumes } from "../lib/testpayloads";
+import { responseError } from "@/lib/response-error";
 import styles from "@/styles/ApplicationForm.module.css";
 
 type ApplicationFormProps = {
@@ -101,7 +101,8 @@ export default function ApplicationForm({
   );
 
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [resumesError, setResumesError] = useState<string | null>(null);
   const [resumes, setResumes] = useState<Resume[]>(mock ? fakeResumes : []);
   const [loadingResumes, setLoadingResumes] = useState(true);
   const [showResumeUpload, setShowResumeUpload] = useState(false);
@@ -115,13 +116,13 @@ export default function ApplicationForm({
         });
 
         if (!response.ok) {
-          throw new Error();
+          throw await responseError(response, "Failed to load resumes.");
         }
 
         const result = await response.json() as ResumeList;
         setResumes(result.data);
       } catch (loadError) {
-          setError("Failed to load resumes");
+          setResumesError(loadError instanceof Error ? loadError.message : "Failed to load resumes.");
       } finally {
           setLoadingResumes(false);
       }
@@ -148,12 +149,12 @@ export default function ApplicationForm({
     if (submitting || isViewMode) return;
 
     if (!form.companyName.trim()) {
-      setError("Company name is required");
+      setSubmissionError("Company name is required");
       return;
     }
 
     if (!form.jobTitle.trim()) {
-      setError("Job title is required");
+      setSubmissionError("Job title is required");
       return;
     }
 
@@ -172,7 +173,7 @@ export default function ApplicationForm({
       interviews: [],
     };
 
-    setError(null);
+    setSubmissionError(null);
     setSubmitting(true);
 
     try {
@@ -187,17 +188,14 @@ export default function ApplicationForm({
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => null) as
-          | ApiError
-          | null;
-        throw new Error(body?.error.message ?? "Failed to create application");
+        throw await responseError(response, "Failed to create application.");
       }
 
       setForm(emptyForm);
-    } catch (submissionError) {
-      setError(
-        submissionError instanceof Error
-          ? submissionError.message
+    } catch (failure) {
+      setSubmissionError(
+        failure instanceof Error
+          ? failure.message
           : "Failed to create application",
       );
     } finally {
@@ -221,11 +219,7 @@ export default function ApplicationForm({
       onSubmit={handleSubmit}
       className={styles.form}
     >
-      {error && (
-        <Alert variant="destructive" className={styles.errorAlert}>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {submissionError && <ErrorAlert message={submissionError} className={styles.errorAlert} />}
 
       <div className={styles.fieldGrid}>
         <div>
@@ -364,6 +358,7 @@ export default function ApplicationForm({
               </Button>
             )}
           </div>
+          {resumesError && <ErrorAlert message={resumesError} />}
           {isViewMode ? (
             <p className={styles.fieldValue}>
               {!form.resumeId
@@ -414,7 +409,6 @@ export default function ApplicationForm({
               onUploaded={(resume) => {
                 setResumes((current) => [resume, ...current])
                 updateField("resumeId", resume.id)
-                setError(null)
                 setShowResumeUpload(false)
               }}
             />

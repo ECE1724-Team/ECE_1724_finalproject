@@ -33,11 +33,11 @@ export default function NavBar({ currentLocation }: NavBarProps) {
     try {
       await signOut()
       setUnauthenticated()
+      navigate("/login")
     } catch (error) {
-      window.alert("Unable to sign out. Please try again.");
+      window.alert(error instanceof Error ? error.message : "Unable to sign out. Please try again.");
     } finally {
       setSigningOut(false)
-      navigate("/login")
     }
   }
 

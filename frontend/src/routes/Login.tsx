@@ -1,6 +1,7 @@
 import { useState, type SubmitEvent } from "react"
 import { useNavigate } from "react-router"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import ErrorAlert from "@/components/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -22,13 +23,15 @@ export default function Login() {
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  const [signInError, setSignInError] = useState<string | null>(null)
+  const [signUpError, setSignUpError] = useState<string | null>(null)
   const [registrationComplete, setRegistrationComplete] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     setSubmitting(true)
+    const setError = mode === "login" ? setSignInError : setSignUpError
     setError(null)
 
     try {
@@ -49,7 +52,6 @@ export default function Login() {
 
   function switchMode(nextMode: "login" | "register") {
     setMode(nextMode)
-    setError(null)
     setRegistrationComplete(false)
   }
 
@@ -106,11 +108,7 @@ export default function Login() {
                   onChange={(event) => setPassword(event.target.value)}
                 />
               </div>
-              {error && (
-                <Alert variant="destructive">
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
+              {signInError && <ErrorAlert message={signInError} />}
               <Button type="submit" disabled={submitting}>
                 {submitting ? "Signing in..." : "Login"}
               </Button>
@@ -171,11 +169,7 @@ export default function Login() {
                     onChange={(event) => setPassword(event.target.value)}
                   />
                 </div>
-                {error && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                )}
+                {signUpError && <ErrorAlert message={signUpError} />}
                 <Button type="submit" disabled={submitting}>
                   {submitting ? "Creating account..." : "Create account"}
                 </Button>

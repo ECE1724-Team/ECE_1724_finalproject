@@ -1,10 +1,9 @@
 import { Navigate, Outlet } from "react-router"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
+import ErrorAlert from "@/components/ErrorAlert"
 import { useAuth } from "@/components/AuthProvider"
 
 export default function RequireAuth() {
-  const { status, error, refreshSession } = useAuth()
+  const { status, error } = useAuth()
 
   if (status === "checking") {
     return <p role="status">Checking sign-in status...</p>
@@ -17,12 +16,7 @@ export default function RequireAuth() {
   if (status === "error") {
     return (
       <main className="mx-auto grid max-w-md gap-4 px-4 py-12">
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-        <Button type="button" onClick={() => void refreshSession()}>
-          Retry
-        </Button>
+        {error && <ErrorAlert message={error} />}
       </main>
     )
   }
