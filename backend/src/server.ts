@@ -1,11 +1,17 @@
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { Router } from "express";
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
 import { ConfigurationError } from "./config/errors.js";
 import { createPool } from "./db/pool.js";
 import { Database } from "./db/transaction.js";
 import { createSmtpEmailSender } from "./integrations/email/smtp.js";
+import { createR2Storage } from "./integrations/object-storage/r2.js";
+import { createPdfExtractor } from "./integrations/pdf/extractor.js";
 import { createAuthentication } from "./modules/auth/auth.js";
 import { assertAuthSchema } from "./modules/auth/schema.js";
+import { mountPostgresResumeRoutes } from "./modules/resumes/postgres-routes.js";
 
 async function main() {
   const environment = loadEnvironment();
@@ -27,16 +33,40 @@ async function main() {
   const authentication = createAuthentication({
     database, rateLimitPool, config: environment.auth, emailSender: createSmtpEmailSender(environment.smtp),
   });
-  const app = createApp({ authentication, database, environment });
-  const server = app.listen(environment.port, () => { console.log(`JobFlow API listening on port ${environment.port}`); });
+  const businessRouter = Router();
+  const storage = environment.r2 && createR2Storage(environment.r2);
+  const startResumeWorker = storage && mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
+  if (!storage) console.warn("R2 settings are empty. Resume routes and cleanup worker are disabled.");
 
+  const app = createApp({ authentication, database, environment, businessRouter });
+  const server = createServer(app);
+  try {
+    server.listen(environment.port);
+    await once(server, "listening");
+  } catch (error) {
+    storage?.close();
+    await closePools();
+    throw error;
+  }
+  const worker = startResumeWorker?.();
+  console.log(`JobFlow API listening on port ${environment.port}`);
+
+  const closeServices = async () => {
+    await worker?.stop();
+    storage?.close();
+    try {
+      await authentication.close();
+    } finally {
+      await closePools();
+    }
+  };
   let closing = false;
   const shutdown = () => {
     if (closing) return;
     closing = true;
-    // Stop accepting requests, let queued auth emails finish, then close the pools.
+    // Drain HTTP first so requests can finish using storage and enqueue cleanup work.
     server.close(() => {
-      void authentication.close().then(closePools).catch(() => {
+      void closeServices().catch(() => {
         console.error("Shutdown failed");
         process.exitCode = 1;
       });

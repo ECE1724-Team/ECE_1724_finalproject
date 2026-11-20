@@ -7,12 +7,12 @@ import { MAX_RESUME_BYTES } from "./pdf-policy.js";
 import type { ResumeRow } from "./repository.js";
 import { defaultLog, type Log, type ResumeService } from "./service.js";
 
-// /api/v1/resumes (endpoints.json "Resumes"). Mount with the verified-user middleware:
-//   app.use("/api/v1/resumes", createResumeRouter({ service, authenticate: requireVerifiedUser }))
+// /api/v1/resumes (endpoints.json "Resumes"). Startup mounts this under createApp's
+// business router, after the shared Origin and verified-session checks.
 
 export interface ResumeRouterOptions {
   service: ResumeService;
-  /** Must reject unauthenticated or unverified users and set res.locals.auth.userId. */
+  /** Checks the verified auth context established by createApp. */
   authenticate: RequestHandler;
   log?: Log;
 }

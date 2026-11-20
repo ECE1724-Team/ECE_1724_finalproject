@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createPdfExtractor } from "../../src/integrations/pdf/extractor.js";
 import { countNonWhitespace } from "../../src/integrations/pdf/types.js";
 import { MAX_RESUME_BYTES, validateResumePdf } from "../../src/modules/resumes/pdf-policy.js";
-import { makePdf, resumeLines, textPage } from "../fixtures/pdf.js";
+import { makePasswordProtectedPdf, makePdf, makeSplitThresholdPdf, resumeLines, textPage } from "../fixtures/pdf.js";
 
 const extractor = createPdfExtractor();
 const validate = (bytes: Uint8Array) => validateResumePdf(bytes, extractor);
@@ -58,6 +58,16 @@ test("blank and image-only pages are accepted without text, and no partial text 
     assert.equal(result.pageCount, pages.length);
     assert.equal("extraction" in result, false);
   }
+});
+
+test("99 characters on page one plus one on page two make usable text", async () => {
+  const { nonWhitespaceChars, pages } = await extractText(makeSplitThresholdPdf());
+  assert.equal(nonWhitespaceChars, 100);
+  assert.deepEqual(pages.map(page => page.nonWhitespaceChars), [99, 1]);
+});
+
+test("a PDF that requires an open password is rejected by the real parser", async () => {
+  await assert.rejects(validate(makePasswordProtectedPdf()), { code: "unreadable_encryption" });
 });
 
 test("reject three pages, damaged and renamed non-PDF input", async () => {

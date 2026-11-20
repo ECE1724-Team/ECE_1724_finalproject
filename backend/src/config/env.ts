@@ -22,7 +22,10 @@ export interface Environment {
   trustProxyHops: number;
   auth: AuthConfig;
   smtp: SmtpEmailConfig;
+  r2: R2Config | undefined;
 }
+
+const R2_SETTINGS = ["R2_ENDPOINT", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
 
 function integer(value: string | undefined, fallback: number, label: string, min = 1): number {
   const result = value === undefined || value === "" ? fallback : Number(value);
@@ -85,28 +88,24 @@ export function loadEnvironment(env: NodeJS.ProcessEnv = process.env): Environme
       from: required(env, "SMTP_FROM"),
       ...(env.SMTP_USER ? { user: env.SMTP_USER, password: required(env, "SMTP_PASSWORD", false) } : {}),
     },
+    r2: nodeEnv === "production" || R2_SETTINGS.some(key => env[key]?.trim()) ? readR2Config(env) : undefined,
   };
 }
 
-type EnvVars = Record<string, string | undefined>;
-
 // Read configuration explicitly at startup, never as an import side effect.
-export function readR2Config(env: EnvVars = process.env): R2Config {
-  const required = (name: string): string => {
-    const value = env[name]?.trim();
-    if (!value) throw new ConfigurationError(`${name} is required to initialize R2 storage.`);
-    return value;
-  };
-  const endpoint = required("R2_ENDPOINT");
-  // URL.canParse avoids echoing a malformed value (which may embed credentials) in the error.
-  const url = URL.canParse(endpoint) ? new URL(endpoint) : undefined;
-  if (url?.protocol !== "https:" || url.username || url.password) {
-    throw new ConfigurationError("R2_ENDPOINT must be an HTTPS URL without embedded credentials.");
+export function readR2Config(env: NodeJS.ProcessEnv = process.env): R2Config {
+  const [endpointKey, bucketKey, accessKey, secretKey] = R2_SETTINGS;
+  const endpoint = origin(required(env, endpointKey), endpointKey);
+  if (!endpoint.startsWith("https:")) {
+    throw new ConfigurationError("R2_ENDPOINT must use HTTPS");
+  }
+  const bucket = required(env, bucketKey);
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) {
+    throw new ConfigurationError("R2_BUCKET_NAME must be 3–63 lowercase letters, digits or hyphens, starting and ending with a letter or digit");
   }
   return {
-    endpoint,
-    bucket: required("R2_BUCKET_NAME"),
-    accessKeyId: required("R2_ACCESS_KEY_ID"),
-    secretAccessKey: required("R2_SECRET_ACCESS_KEY"),
+    endpoint, bucket,
+    accessKeyId: required(env, accessKey),
+    secretAccessKey: required(env, secretKey),
   };
 }

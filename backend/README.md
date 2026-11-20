@@ -87,7 +87,7 @@ mailpit
 | `SMTP_FROM` | `"JobFlow AI <no-reply@example.com>"` | Required |
 | `SMTP_USER` / `SMTP_PASSWORD` | empty | Set both or neither |
 | `TEST_DATABASE_URL` | empty | Empty: `npm run test:db` starts a disposable cluster. Never point it at `jobflow_dev`, because the tests create and drop databases |
-| `R2_*` | empty | Not read at startup until the resume routes are mounted; see [R2 setup](#r2-setup) |
+| `R2_*` | empty | Leaving all four blank disables resume routes and the cleanup worker in development and test. Production requires all four. See [R2 setup](#r2-setup). |
 
 In production, `BETTER_AUTH_URL` and every trusted origin must use HTTPS.
 
@@ -129,7 +129,7 @@ schema: [Database Design Appendices D–F](../docs/Database_Design.md#shared-ide
 
 `npm run test:db` loads `.env` if present and runs every compiled test one at a time: unit,
 contract, the auth integration tests and the `*.db.test.ts` repository and migration tests.
-The live R2 check (`r2.test.js`) is excluded; run it with `npm run test:r2`.
+Only the live R2 check (`tests/integration/r2.test.ts`) is excluded. Run it with `npm run test:r2`.
 
 - **`TEST_DATABASE_URL` set** (exported or in `.env`): the tests use that server. Point it at an
   isolated test server where the role may `CREATE DATABASE` (for example
@@ -264,14 +264,9 @@ Owner: Jianye Zhou (progress and plan: [JIANYE_DEV_PLAN.md](../docs/JIANYE_DEV_P
 File rules: [PRD §5.2](../docs/PRD.md). Upload and delete transactions:
 [Database Design §7.2–7.3](../docs/Database_Design.md).
 
-**Status:** `npm run test:db` exercises upload, owner isolation, download, unlinking,
-and worker cleanup through the mounted routes with real PostgreSQL and PDF parsing.
-The HTTP test supplies test middleware and fake object storage. Apply migration 006
-with `npm run migrate` before starting the module.
-[Resume HTTP integration test](tests/integration/resume-http.db.test.ts)
+**Status (2026-11-19).** The live R2 adapter test passed. The compiled server also passed upload, list, metadata, byte-identical PDF download, and deletion with a verified session, PostgreSQL and real R2. All four cleanup jobs reached `done`, R2 confirmed the objects were absent, and SIGTERM exited cleanly. Apply all migrations with `npm run migrate` before enabling the module. [Stage 2 results and samples](../docs/JIANYE_DEV_PLAN.md#phase-4-stage-2)
 
-The routes belong in `businessRouter` (see [Mounting](#mounting-from-server-startup));
-`server.ts` does not mount them yet.
+The resume HTTP test uses the startup router composition, real session cookies, migrated PostgreSQL, the PDF extractor and fake object storage. The workflow tests cover cleanup retries after restart and an insert that commits after a client timeout. [Resume HTTP test](tests/integration/resume-http.db.test.ts) · [Resume workflow tests](tests/integration/resume-workflow.db.test.ts)
 
 ### R2 setup
 
@@ -282,9 +277,15 @@ The routes belong in `businessRouter` (see [Mounting](#mounting-from-server-star
 
 Browsers never talk to R2 directly; PDFs are served through the authenticated backend.
 
-To test against real R2, point `.env` at a **development-only** bucket, set
-`R2_INTEGRATION_TEST=1` and run `npm run test:r2`. It writes, reads and deletes one
-random test object. Without that flag it is reported as skipped.
+**Startup behavior**
+
+| R2 settings | Expected behavior |
+|---|---|
+| All four empty in development or test | Start the other routes, warn once and skip the resume routes and worker. |
+| Partial or invalid settings in any environment, or empty in production | Fail startup with the setting name. Keep secret values out of logs. |
+| All four valid | Mount the routes and start one worker sharing the main database pool. Startup checks the endpoint and bucket name locally. Storage operations check connectivity and credentials. During an R2 outage, uploads and file reads return 503. Lists, metadata and deletion can still succeed while PostgreSQL is available. Cleanup retries later. |
+
+Use a single cleanup worker per database/bucket pair, including when developers share a dev environment. For the live adapter check, point the four settings at an isolated development bucket and run `R2_INTEGRATION_TEST=1 npm run test:r2`. Verify the test reports a pass. A missing flag or setting produces a skip.
 
 ### Files
 
@@ -296,7 +297,7 @@ random test object. Without that flag it is reported as skipped.
 | `src/modules/resumes/repository.ts` | `ResumeRepository` and `StorageCleanupRepository` interfaces |
 | `src/modules/resumes/postgres-repository.ts` | PostgreSQL implementations of both repositories |
 | `src/modules/resumes/postgres-module.ts` | `createPostgresResumeModule()` wires the service and worker to the same repositories |
-| `src/modules/resumes/postgres-routes.ts` | `mountPostgresResumeRoutes()` mounts on a bare Express app; with `createApp` use `createPostgresResumeModule()` instead (see Mounting) |
+| `src/modules/resumes/postgres-routes.ts` | `mountPostgresResumeRoutes()` mounts `/resumes` on the business router and returns the worker starter |
 | `src/modules/resumes/pdf-policy.ts` | `validateResumePdf()`: the PRD file rules |
 | `src/integrations/object-storage/r2.ts` | `createR2Storage()`, `createObjectKey()` |
 | `src/integrations/pdf/extractor.ts` | `createPdfExtractor()`: parses PDFs in a worker thread with a timeout and a concurrency limit |
@@ -307,32 +308,14 @@ the backend stays CommonJS, so don't convert the whole package to ESM for it.
 
 ### Mounting from server startup
 
-Mount the routes through `createApp({ businessRouter })`, so they sit behind the `/api/v1`
-origin check and `requireVerifiedUser`. In `src/server.ts`, where `environment`, `database`
-and `authentication` are already created:
+The enabled branch in `src/server.ts` uses the main pool, one R2 client and one PDF extractor. The mount helper checks the auth context established by `createApp` before parsing multipart data.
 
 ```ts
-const pool = createPool({ DATABASE_URL: environment.databaseUrl });
-const storage = createR2Storage(readR2Config());
-const pdf = createPdfExtractor();                       // ONE per process: it holds the parse limit
-const { service, startWorker } = createPostgresResumeModule({ pool, storage, pdf });
-
-const businessRouter = Router();
-businessRouter.use("/resumes", createResumeRouter({ service, authenticate: requireAuthContext }));
-const app = createApp({ authentication, database, environment, businessRouter });
-const worker = startWorker();
-// Shutdown: stop accepting requests → await worker.stop() → storage.close()
-//           → authentication.close() → pool.end()
+const storage = createR2Storage(r2Config);
+const startWorker = mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
 ```
 
-Do not use `mountPostgresResumeRoutes(app, …)` with `createApp`: it registers the routes
-after `createApp`'s final 404 handler (every resume request would get 404) and would skip the
-`/api/v1` origin check. See [Merge notes](#merge-notes).
-```
-
-`createApp` already runs the origin check and `requireVerifiedUser` for all of `/api/v1`, so
-`requireAuthContext` only confirms `res.locals.auth`. The router runs it before reading any
-upload body.
+Startup passes the business router to `createApp` and keeps the handle from `startWorker()`. On shutdown it drains HTTP requests, awaits `worker.stop()`, closes the storage client, drains authentication and closes both pools.
 
 ### File rules
 
@@ -374,16 +357,17 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 
 ### Known gaps
 
-- `server.ts` does not mount the resume routes and cleanup worker yet (see
-  [Mounting](#mounting-from-server-startup)).
 - Assumes one backend instance: the cleanup worker puts every `processing` job back to
   `pending` before each pass (Database Design §5.11). Running several instances needs the
   lease design in Database Design §5.7.
-- The live R2 check has not been run.
-- Text order follows the PDF's internal order. Unusual two-column layouts may come out
-  interleaved, so check a few real Word/LaTeX exports by hand.
-- Tests for encrypted PDFs and for 99 + 1 characters split across pages were dropped
-  because their fixtures failed; that behavior is untested.
+- Extracted text follows the PDF's internal order. The verified Word-source example and
+  two-column LaTeX export read in section order. The Canva sample had readable text,
+  but spaced headings appeared as separate letters and some text was out of visual order.
+- A crash between the R2 write and the insert can leave an object with no row; bucket
+  reconciliation is deferred (Database Design §7.2). Also deferred: per-user quotas and
+  streamed downloads (files are read whole, ≤ 2 MiB).
+- The team browser check is pending the reviewed application API and the connected resume dialog.
+  Sample PDFs for it: `tests/fixtures/resume-samples/` (two-column LaTeX, raster scan).
 
 <a id="merge-notes"></a>
 
@@ -502,6 +486,5 @@ With `createApp` this does not work:
 - In any order it bypasses the `/api/v1` origin (CSRF) check and reads the Session twice.
 
 `main`'s HTTP test does not catch this because it uses test middleware on a bare Express app.
-[Mounting](#mounting-from-server-startup) now uses `createPostgresResumeModule()` and
-`businessRouter`. To agree with Jianye and Rongxin: remove `mountPostgresResumeRoutes`, or make
-it take a `Router` and mount at `"/resumes"`.
+[Phase 4, Stage 1](../docs/JIANYE_DEV_PLAN.md#phase-4-stage-1) resolved this by making
+`mountPostgresResumeRoutes` take the business router and mount at `"/resumes"`.
