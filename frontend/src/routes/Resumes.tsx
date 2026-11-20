@@ -21,6 +21,7 @@ export default function Resumes({ mock = false }: ResumesProps) {
   const [resumes, setResumes] = useState<Resume[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const [showUploadCard, setShowUploadCard] = useState(false)
 
   useEffect(() => {
@@ -66,6 +67,38 @@ export default function Resumes({ mock = false }: ResumesProps) {
     }
   }, [mock])
 
+  async function downloadResume(resume: Resume) {
+    setDownloadError(null)
+    if (mock && fakeResumes.some((sample) => sample.id === resume.id)) {
+      setDownloadError("Sample resumes cannot be downloaded.")
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/v1/resumes/${encodeURIComponent(resume.id)}/file`, {
+        credentials: "include",
+      })
+      if (!response.ok) {
+        throw new Error(
+          response.status === 401
+            ? "Sign in to download your resume."
+            : `Unable to download resume (HTTP ${response.status}).`,
+        )
+      }
+
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement("a")
+      link.href = url
+      link.download = resume.fileName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (downloadFailure) {
+      setDownloadError(downloadFailure instanceof Error ? downloadFailure.message : "Unable to download resume.")
+    }
+  }
+
   return (
     <main className={styles.page}>
       <header className={styles.header}>
@@ -93,6 +126,12 @@ export default function Resumes({ mock = false }: ResumesProps) {
         </Alert>
       )}
 
+      {downloadError && (
+        <Alert variant="destructive" role="alert">
+          <AlertDescription>{downloadError}</AlertDescription>
+        </Alert>
+      )}
+
       {loading ? (
         <p role="status">Loading resumes...</p>
       ) : resumes.length === 0 && !error ? (
@@ -103,21 +142,33 @@ export default function Resumes({ mock = false }: ResumesProps) {
           className={styles.resumeGrid}
         >
           {resumes.map((resume) => (
-            <Card key={resume.id}>
-              <CardHeader>
-                <CardTitle>{resume.name}</CardTitle>
-                <CardDescription>{resume.fileName}</CardDescription>
-              </CardHeader>
-              <CardContent className={styles.cardContent}>
-                <p>
-                  Used for {resume.linkedApplicationCount}{" "}
-                  {resume.linkedApplicationCount === 1 ? "job" : "jobs"}
-                </p>
-                <p className={styles.mutedText}>
-                  Text extraction: {resume.textStatus}
-                </p>
-              </CardContent>
-            </Card>
+            <a
+              key={resume.id}
+              href={`/api/v1/resumes/${encodeURIComponent(resume.id)}/file`}
+              className={styles.resumeLink}
+              aria-label={`Download ${resume.name}`}
+              title="Download Resume"
+              onClick={(event) => {
+                event.preventDefault()
+                void downloadResume(resume)
+              }}
+            >
+              <Card>
+                <CardHeader>
+                  <CardTitle>{resume.name}</CardTitle>
+                  <CardDescription>{resume.fileName}</CardDescription>
+                </CardHeader>
+                <CardContent className={styles.cardContent}>
+                  <p>
+                    Used for {resume.linkedApplicationCount}{" "}
+                    {resume.linkedApplicationCount === 1 ? "job" : "jobs"}
+                  </p>
+                  <p className={styles.mutedText}>
+                    Text extraction: {resume.textStatus}
+                  </p>
+                </CardContent>
+              </Card>
+            </a>
           ))}
         </section>
       )}

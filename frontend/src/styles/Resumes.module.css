@@ -16,6 +16,14 @@
   @apply grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3;
 }
 
+.resumeLink {
+  @apply rounded-xl cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary;
+}
+
+.resumeLink:hover {
+  @apply opacity-80;
+}
+
 .cardContent {
   @apply grid gap-2;
 }

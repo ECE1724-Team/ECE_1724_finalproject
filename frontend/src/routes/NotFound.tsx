@@ -1,6 +1,5 @@
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router"
-import { Label } from "@/components/ui/label"
 import "@/styles/NotFound.css"
 
 export default function NotFound() {
