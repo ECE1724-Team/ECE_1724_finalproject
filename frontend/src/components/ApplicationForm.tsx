@@ -12,7 +12,7 @@ import {
 import ErrorAlert from "@/components/ErrorAlert";
 import { Textarea } from "@/components/ui/textarea";
 import ResumeUploadForm from "@/components/ResumeUploadForm";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type {
   Application,
   ApplicationCreate,
@@ -82,6 +82,7 @@ export default function ApplicationForm({
   application,
   mock = false,
 }: ApplicationFormProps) {
+  const navigate = useNavigate();
   const isViewMode = application ? true : false;
   const [form, setForm] = useState<ApplicationFormData>(
     application
@@ -177,7 +178,6 @@ export default function ApplicationForm({
     setSubmitting(true);
 
     try {
-      console.log(payload)
       const response = await fetch("/api/v1/applications", {
         method: "POST",
         headers: {
@@ -191,7 +191,8 @@ export default function ApplicationForm({
         throw await responseError(response, "Failed to create application.");
       }
 
-      setForm(emptyForm);
+      window.alert("Application created successfully.");
+      navigate("/applications");
     } catch (failure) {
       setSubmissionError(
         failure instanceof Error

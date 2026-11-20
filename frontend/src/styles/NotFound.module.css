@@ -1,22 +1,13 @@
+@reference "./global.css";
+
 .notFoundPage {
-  display: grid;
-  min-height: 60vh;
-  max-width: 36rem;
-  place-content: center;
-  gap: 1rem;
-  margin-inline: auto;
-  padding-inline: 1rem;
-  text-align: center;
+  @apply mx-auto grid min-h-[60vh] max-w-xl place-content-center gap-4 px-4 text-center;
 }
 
 .notFoundHeading {
-  justify-self: center;
-  text-align: center;
-  font-size: 1.875rem;
-  line-height: 2.25rem;
-  font-weight: 600;
+  @apply justify-self-center text-center text-3xl font-semibold;
 }
 
 .notFoundMessage {
-  text-align: center;
+  @apply text-center;
 }

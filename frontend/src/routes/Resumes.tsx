@@ -118,6 +118,7 @@ export default function Resumes({ mock = false }: ResumesProps) {
           onCancel={() => setShowUploadCard(false)}
           onUploaded={(resume) => {
             setResumes((current) => [resume, ...current])
+            setShowUploadCard(false)
           }}
         />
       )}

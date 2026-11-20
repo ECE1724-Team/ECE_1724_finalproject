@@ -1,5 +1,4 @@
-import { useRef, useState } from "react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useState } from "react"
 import ErrorAlert from "@/components/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import {
@@ -30,12 +29,9 @@ export default function ResumeUploadForm({
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null)
-  const fileInput = useRef<HTMLInputElement>(null)
 
   async function handleUpload() {
     setUploadError(null)
-    setUploadSuccess(null)
 
     const name = resumeName.trim()
     if (!name || !selectedFile) {
@@ -68,11 +64,8 @@ export default function ResumeUploadForm({
       }
 
       const resume = await response.json() as Resume
+      window.alert("Resume created successfully.")
       onUploaded(resume)
-      setResumeName("")
-      setSelectedFile(null)
-      if (fileInput.current) fileInput.current.value = ""
-      setUploadSuccess("Resume uploaded successfully.")
     } catch (uploadFailure) {
       setUploadError(
         uploadFailure instanceof Error
@@ -109,7 +102,6 @@ export default function ResumeUploadForm({
           <div className={styles.fieldGroup}>
             <Label htmlFor="resume-file">PDF file</Label>
             <Input
-              ref={fileInput}
               id="resume-file"
               name="file"
               type="file"
@@ -141,11 +133,6 @@ export default function ResumeUploadForm({
         </div>
         {uploadError && (
           <ErrorAlert className={styles.feedback} message={uploadError} />
-        )}
-        {uploadSuccess && (
-          <Alert className={styles.feedback}>
-            <AlertDescription>{uploadSuccess}</AlertDescription>
-          </Alert>
         )}
       </CardContent>
     </Card>
