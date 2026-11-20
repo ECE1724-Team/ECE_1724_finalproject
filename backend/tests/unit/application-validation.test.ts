@@ -46,6 +46,8 @@ test("old contract values and unsafe input are rejected with a field-specific me
   rejects(() => parseCreate({ ...base, appliedAt: "2026-11-07T14:00:00Z" }), 422, /appliedAt is not an application field\. Use appliedDate/);
   rejects(() => parseCreate({ ...base, location: "Toronto" }), 422, /location is not an application field/);
   rejects(() => parseCreate({ ...base, appliedDate: "2026-02-30" }), 422, /YYYY-MM-DD/);
+  rejects(() => parseCreate({ ...base, appliedDate: "2026-99-99" }), 422, /YYYY-MM-DD/);
+  rejects(() => parseCreate({ ...base, appliedDate: "0000-01-01" }), 422, /YYYY-MM-DD/);
   rejects(() => parseCreate({ ...base, appliedDate: "2026-11-07T00:00:00Z" }), 422, /YYYY-MM-DD/);
   rejects(() => parseCreate({ ...base, jobUrl: "javascript:alert(1)" }), 422, /jobUrl must be an http or https URL/);
   rejects(() => parseCreate({ ...base, companyWebsiteUrl: "https://user:pw@example.com" }), 422, /http or https URL/);

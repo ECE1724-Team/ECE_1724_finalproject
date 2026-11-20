@@ -153,8 +153,8 @@ createdb jobflow_dev
 DATABASE_URL=postgresql://localhost:5432/jobflow_dev npm run migrate
 ```
 
-The script loads `.env` and passes the validated PostgreSQL `DATABASE_URL` directly
-to `node-pg-migrate`. The URL must name the target database. An exported
+Both migration commands load `.env` and pass the validated PostgreSQL `DATABASE_URL`
+directly to `node-pg-migrate`. The URL must name the target database. An exported
 `DATABASE_URL` takes precedence over `.env`. The runner loads the CommonJS and TypeScript
 files from `migrations/` and records them together in `public.pgmigrations`. Running
 `npm run migrate` again applies only pending files. Use `npm run migrate -- --dry-run`
@@ -212,7 +212,9 @@ The caller supplies UUIDs when creating applications and interviews.
   use both the application and interview IDs. List order is `startsAt`, then `id`.
   Use `applications.updateWithInterviews` to update an application and save its
   interviews atomically. It updates the application and its resume link first.
-  Use the supplied transaction client for each interview write and throw if a write fails.
+  Use the supplied transaction client for each interview write and report whether anything
+  changed, or throw if a write fails. A combined save with changes advances the version once,
+  including when only the interviews changed.
 - `applications.delete(pool, userId, id)` returns `DELETED`, `NOT_FOUND`, or
   `GENERATION_ACTIVE`, which can map to HTTP 204, 404, or 409 respectively.
 
@@ -326,8 +328,8 @@ owner should update the contract:
 | No offer flag, timeline or version | `offerReceived` (FR-06), `statusHistory` (FR-24), `rowVersion` + 409 `VERSION_CONFLICT` |
 | — | `resumeName` for display; 422 for an unusable resume |
 
-Not yet built: the Dashboard read (`readDashboard()` exists; the route and its time-zone input
-still need agreement with Justin) and mounting the resume routes in `server.ts`.
+The Dashboard HTTP read is pending agreement with Justin on the route and its time-zone input.
+The Dashboard repository already provides `readDashboard()`.
 
 ## Resume storage and PDF parsing (R2 / PDF)
 
