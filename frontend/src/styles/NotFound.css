@@ -1,0 +1,22 @@
+.not-found-page {
+  display: grid;
+  min-height: 60vh;
+  max-width: 36rem;
+  place-content: center;
+  gap: 1rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+  text-align: center;
+}
+
+.not-found-heading {
+  justify-self: center;
+  text-align: center;
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+  font-weight: 600;
+}
+
+.not-found-message {
+  text-align: center;
+}

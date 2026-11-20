@@ -1,12 +1,9 @@
-import { useEffect, useState } from "react"
-import {
-  Menubar,
-  MenubarMenu,
-  MenubarTrigger,
-} from "@/components/ui/menubar"
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
 import { Link, useNavigate } from "react-router"
-import { getSession, signOut } from "@/lib/auth"
+import { signOut } from "@/lib/auth"
 import styles from "@/styles/NavBar.module.css"
+import { useAuth } from "@/components/AuthProvider"
 
 type NavBarProps = {
   currentLocation: string
@@ -14,29 +11,10 @@ type NavBarProps = {
 
 export default function NavBar({ currentLocation }: NavBarProps) {
   const navigate = useNavigate()
+  const { status, setUnauthenticated } = useAuth()
 
-  const [authStatus, setAuthStatus] = useState<boolean>(false)
   const [signingOut, setSigningOut] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    setAuthStatus(false)
-
-    getSession()
-      .then((session) => {
-        if (active) setAuthStatus(!!session)
-      })
-      .catch(() => {
-        if (active) {
-          setAuthStatus(false)
-          window.alert("Unable to sign out. Please try again.")
-        }
-      })
-
-    return () => {
-      active = false
-    }
-  }, [currentLocation])
+  const authStatus = status === "authenticated"
 
   const menuItemClass = (paths: string[]) => {
     const isActive = paths.some((path) =>
@@ -54,7 +32,7 @@ export default function NavBar({ currentLocation }: NavBarProps) {
 
     try {
       await signOut()
-      setAuthStatus(false)
+      setUnauthenticated()
     } catch (error) {
       window.alert("Unable to sign out. Please try again.");
     } finally {
@@ -73,46 +51,62 @@ export default function NavBar({ currentLocation }: NavBarProps) {
           JobFlo.AI
         </Link>
 
-        <div className={styles.actions}>
-          <Menubar className={styles.menubar}>
-            <MenubarMenu>
-              <MenubarTrigger className={menuItemClass(["/"])}>
-                <Link to="/">Dashboard</Link>
-              </MenubarTrigger>
-            </MenubarMenu>
-            <MenubarMenu>
-              <MenubarTrigger className={menuItemClass(["/applications", "/application"])}>
-                <Link to="/applications">Applications</Link>
-              </MenubarTrigger>
-            </MenubarMenu>
-            <MenubarMenu>
-              <MenubarTrigger className={menuItemClass(["/resumes"])}>
-                <Link to="/resumes">Resumes</Link>
-              </MenubarTrigger>
-            </MenubarMenu>
-            <MenubarMenu>
-              <MenubarTrigger className={menuItemClass(["/interview"])}>
-                <Link to="/interview">AI Prep</Link>
-              </MenubarTrigger>
-            </MenubarMenu>
-            <MenubarMenu>
-              <MenubarTrigger
+        <nav className={styles.actions} aria-label="Main navigation">
+          {!authStatus ? (
+            <Button
+              nativeButton={false}
+              render={<Link to="/login" />}
+              variant="ghost"
+              className={menuItemClass(["/login"])}
+            >
+              Login
+            </Button>
+          ) : (
+            <>
+              <Button
+                nativeButton={false}
+                render={<Link to="/dashboard" />}
+                variant="ghost"
+                className={menuItemClass(["/dashboard"])}
+              >
+                Dashboard
+              </Button>
+              <Button
+                nativeButton={false}
+                render={<Link to="/applications" />}
+                variant="ghost"
+                className={menuItemClass(["/applications", "/application"])}
+              >
+                Applications
+              </Button>
+              <Button
+                nativeButton={false}
+                render={<Link to="/resumes" />}
+                variant="ghost"
+                className={menuItemClass(["/resumes"])}
+              >
+                Resumes
+              </Button>
+              <Button
+                nativeButton={false}
+                render={<Link to="/interview" />}
+                variant="ghost"
+                className={menuItemClass(["/interview"])}
+              >
+                AI Prep
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
                 className={menuItemClass(["/login"])}
                 disabled={signingOut}
-                onClick={(event) => {
-                  if (authStatus) {
-                    event.preventDefault()
-                    void handleSignOut()
-                  }
-                }}
+                onClick={() => void handleSignOut()}
               >
-                {authStatus
-                  ? signingOut ? "Signing out..." : "Logout"
-                  : <Link to="/login">Login</Link>}
-              </MenubarTrigger>
-            </MenubarMenu>
-          </Menubar>
-        </div>
+                {signingOut ? "Signing out..." : "Logout"}
+              </Button>
+            </>
+          )}
+        </nav>
       </div>
     </div>
   )

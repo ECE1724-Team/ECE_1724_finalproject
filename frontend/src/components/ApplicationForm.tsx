@@ -263,9 +263,13 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          <Label htmlFor="status" className={styles.fieldLabel}>
-            Status
-          </Label>
+          {isViewMode ? (
+            <p className={styles.fieldLabel}>Status</p>
+          ) : (
+            <Label htmlFor="status" className={styles.fieldLabel}>
+              Status
+            </Label>
+          )}
           {isViewMode ? (
             <p className={styles.fieldValue}>{form.status}</p>
           ) : (
@@ -307,9 +311,13 @@ export default function ApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="jobUrl" className={styles.fieldLabel}>
-          Job URL
-        </Label>
+        {isViewMode ? (
+          <p className={styles.fieldLabel}>Job URL</p>
+        ) : (
+          <Label htmlFor="jobUrl" className={styles.fieldLabel}>
+            Job URL
+          </Label>
+        )}
         {isViewMode ? (
           jobUrlHref ? (
             <a
@@ -339,7 +347,11 @@ export default function ApplicationForm({
       <div className={styles.fieldGrid}>
         <div className={styles.resumeField}>
           <div className={styles.resumeHeader}>
-            <Label htmlFor="resumeId">Resume</Label>
+            {isViewMode ? (
+              <p className={styles.fieldLabel}>Resume</p>
+            ) : (
+              <Label htmlFor="resumeId">Resume</Label>
+            )}
             {!isViewMode && !showResumeUpload && !mock && (
               <Button
                 type="button"
@@ -428,9 +440,13 @@ export default function ApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="companyWebsiteUrl" className={styles.fieldLabel}>
-          Company website
-        </Label>
+        {isViewMode ? (
+          <p className={styles.fieldLabel}>Company website</p>
+        ) : (
+          <Label htmlFor="companyWebsiteUrl" className={styles.fieldLabel}>
+            Company website
+          </Label>
+        )}
         {isViewMode ? (
           companyWebsiteHref ? (
             <a

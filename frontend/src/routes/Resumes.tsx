@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
 import {
   Card,
   CardContent,
@@ -70,7 +69,7 @@ export default function Resumes({ mock = false }: ResumesProps) {
   return (
     <main className={styles.page}>
       <header className={styles.header}>
-        <Label className={styles.title}>Resumes</Label>
+        <h1 className={styles.title}>Resumes</h1>
         {!showUploadCard && (
           <Button type="button" onClick={() => setShowUploadCard(true)}>
             Upload a Resume

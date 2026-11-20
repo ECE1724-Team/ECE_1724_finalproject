@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label"
 import {
   Card,
   CardContent,
@@ -68,9 +67,8 @@ export default function Applications({ mock = false }) {
 
   return (
     <main className={styles.page}>
-      <Label className={styles.title}>Applications</Label>
       <header className={styles.header}>
-        <Label className={styles.title}>Applications</Label>
+        <h1 className={styles.title}>Applications</h1>
         <Button nativeButton={false} render={<Link to="/application" />}>
           New Application
         </Button>

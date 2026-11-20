@@ -13,9 +13,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { signIn, signUp } from "@/lib/auth"
 import styles from "@/styles/Login.module.css"
+import { useAuth } from "@/components/AuthProvider"
 
 export default function Login() {
   const navigate = useNavigate()
+  const { setAuthenticated } = useAuth()
   const [mode, setMode] = useState<"login" | "register">("login")
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
@@ -35,6 +37,7 @@ export default function Login() {
         setRegistrationComplete(true)
       } else {
         await signIn(email, password)
+        setAuthenticated()
         navigate("/")
       }
     } catch (error) {
