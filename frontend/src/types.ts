@@ -86,6 +86,26 @@ export type ApplicationList = {
   };
 };
 
+export type DashboardData = {
+  counts: ApplicationList["counts"];
+  offersEverReceived: number;
+  interviewSessions: number;
+  upcomingInterviews: {
+    timeZone: string;
+    start: string;
+    end: string;
+    items: {
+      id: string;
+      applicationId: string;
+      type: string;
+      scheduledAt: string;
+      companyName: string;
+      jobTitle: string;
+    }[];
+  };
+  recentApplications: ApplicationSummary[];
+};
+
 export type ResumeUpload = {
   name: string;
   file: Blob;

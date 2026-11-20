@@ -12,8 +12,12 @@
   @apply flex items-center justify-between gap-4;
 }
 
-.applicationGrid {
-  @apply grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5;
+.clearFilter {
+  @apply text-sm font-medium underline underline-offset-4;
+}
+
+.applicationList {
+  @apply flex flex-col gap-4;
 }
 
 .applicationLink {
@@ -21,7 +25,27 @@
 }
 
 .applicationCard {
-  @apply min-h-32 transition-colors hover:bg-muted/50;
+  @apply min-h-32 transition-colors hover:bg-muted/50 md:flex-row md:items-center;
+}
+
+.applicationCard > [data-slot="card-header"] {
+  @apply min-w-0 md:w-1/4;
+}
+
+.cardDetails {
+  @apply min-w-0 flex-1;
+}
+
+.details {
+  @apply grid grid-cols-2 gap-4 sm:grid-cols-4;
+}
+
+.details dt {
+  @apply text-xs text-muted-foreground;
+}
+
+.details dd {
+  @apply mt-1 break-words font-medium;
 }
 
 .status {
@@ -42,4 +66,12 @@
 
 .pageNumber {
   @apply text-sm;
+}
+
+.filter {
+  @apply grid max-w-xs gap-2 text-sm font-medium;
+}
+
+.filterSelect {
+  @apply w-full;
 }

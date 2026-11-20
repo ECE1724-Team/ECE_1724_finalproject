@@ -9,7 +9,7 @@
 }
 
 .brand {
-  @apply text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-slate-700;
+  @apply ml-4 text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-slate-700;
 }
 
 .actions {
