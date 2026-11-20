@@ -1,7 +1,8 @@
 import { MATERIAL_KINDS, materialKind, type Availability } from "./materials.js";
 
 // Assembles one model request in the fixed order of AI Design §4.2: behavior rules, materials with
-// version labels, a change notice, this conversation's history, then the current input once.
+// version labels, a change notice, this conversation's summary, its recent history, then the current
+// input once.
 
 export interface PromptMessage {
   role: "system" | "user" | "assistant";
@@ -33,6 +34,8 @@ export interface TurnContext {
   materials: FixedMaterial[];
   /** The materials behind the latest completed answer, or null before the first one. */
   baseline: Record<string, MaterialVersion> | null;
+  /** The latest internal summary of turns older than `history`, or null. */
+  summary?: string | null;
   history: HistoryEntry[];
   input: string;
 }
@@ -78,7 +81,12 @@ Rules:
 - You can only see this application's materials and this conversation. If asked about other users, applications or conversations, explain that you cannot access them.`;
 
 function escapeXml(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  return escapeText(text).replaceAll('"', "&quot;");
+}
+
+/** Escapes element text (not attributes), so quoted version names stay readable. */
+export function escapeText(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 /** A resume's upload-time name, or a short form of the fingerprint for other materials. */
@@ -86,7 +94,7 @@ export function versionLabel(version: MaterialVersion): string {
   return version.sourceLabel ?? version.fingerprint.slice(3, 11);
 }
 
-function describeVersion(version: MaterialVersion): string {
+export function describeVersion(version: MaterialVersion): string {
   if (version.sourceLabel !== null) {
     return `"${version.sourceLabel}"${version.availability === "available" ? "" : " (text unavailable)"}`;
   }
@@ -129,6 +137,13 @@ ${changes.join("\n")}
 </material_changes>`;
 }
 
+function renderSummary(summary: string): string {
+  return `<conversation_summary>
+Summary of earlier turns in this conversation; those messages are not shown below. Points tagged with a material version describe that version, which may not be current.
+${escapeText(summary)}
+</conversation_summary>`;
+}
+
 function annotate(entry: HistoryEntry, current: Map<string, FixedMaterial>): string {
   if (entry.role !== "assistant" || !entry.materials) return entry.text;
   const old = MATERIAL_KINDS.flatMap(({ kind, title }) => {
@@ -139,9 +154,10 @@ function annotate(entry: HistoryEntry, current: Map<string, FixedMaterial>): str
   return old.length ? `[based on earlier materials: ${old.join(", ")}]\n${entry.text}` : entry.text;
 }
 
-export function buildPrompt({ materials, baseline, history, input }: TurnContext): PromptMessage[] {
+export function buildPrompt({ materials, baseline, summary, history, input }: TurnContext): PromptMessage[] {
   const current = new Map(materials.map((material) => [material.kind, material]));
-  const context = [renderMaterials(materials), renderChanges(materials, baseline)].filter((part) => part !== null);
+  const context = [renderMaterials(materials), renderChanges(materials, baseline), summary ? renderSummary(summary) : null]
+    .filter((part) => part !== null);
   return [
     { role: "system", content: BEHAVIOR_RULES },
     { role: "system", content: context.join("\n\n") },

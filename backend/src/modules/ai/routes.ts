@@ -5,6 +5,7 @@ import type { ChatModel } from "../../integrations/llm/openai.js";
 import { isUuid } from "../../lib/uuid.js";
 import { createPostgresApplicationRepository } from "../applications/postgres-repository.js";
 import type { ApplicationStatus } from "../applications/repository.js";
+import type { HistoryLimits } from "./context/history.js";
 import { isDbUnavailable } from "../resumes/errors.js";
 import {
   createConversation, getConversation, getSnapshot, listConversations, listMessages,
@@ -21,11 +22,12 @@ export interface AiRouterOptions {
   pool: Pool;
   /** The reply model; without one, reads work and sends answer 503. */
   model?: ChatModel;
+  historyLimits?: HistoryLimits;
 }
 
 const STATUSES: readonly ApplicationStatus[] = ["saved", "applied", "oa", "interview", "offer", "rejected"];
 
-export function createAiRouter({ pool, model }: AiRouterOptions): Router {
+export function createAiRouter({ pool, model, historyLimits }: AiRouterOptions): Router {
   const router = Router();
   const applications = createPostgresApplicationRepository();
 
@@ -145,7 +147,7 @@ export function createAiRouter({ pool, model }: AiRouterOptions): Router {
     };
     const { generationId, inputMessage } = accepted;
     emit({ type: "generation.accepted", generationId, inputMessage });
-    await runTurn({ pool, model: model!, userId: userIdOf(res), conversationId, generationId, signal: controller.signal, emit });
+    await runTurn({ pool, model: model!, userId: userIdOf(res), conversationId, generationId, signal: controller.signal, emit, historyLimits });
     res.end();
   }
 

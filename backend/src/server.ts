@@ -42,7 +42,7 @@ async function main() {
   if (recovered) console.warn(`Marked ${recovered} unfinished AI generation(s) as interrupted.`);
   if (!environment.ai) console.warn("OPENAI_API_KEY is empty. AI replies are disabled; workspaces and history still work.");
   const model = environment.ai && createOpenAiChatModel(environment.ai);
-  businessRouter.use(createAiRouter({ pool, model }));
+  businessRouter.use(createAiRouter({ pool, model, historyLimits: environment.ai?.history }));
   const storage = environment.r2 && createR2Storage(environment.r2);
   const startResumeWorker = storage && mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
   if (!storage) console.warn("R2 settings are empty. Resume routes and cleanup worker are disabled.");

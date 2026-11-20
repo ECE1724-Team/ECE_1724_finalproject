@@ -1,4 +1,6 @@
+import type { Pool } from "pg";
 import type { Db } from "../../../db/pool.js";
+import { withTransaction } from "../../../db/transaction.js";
 import type { Availability } from "../context/materials.js";
 
 // Database Design §5.6, §5.8–5.9, §8.4. Ownership always resolves conversation -> workspace ->
@@ -160,4 +162,44 @@ export async function getSnapshot(db: Db, userId: string, conversationId: string
     WHERE a.user_id = $1 AND s.conversation_id = $2 AND s.id = $3
   `, [userId, conversationId, snapshotId]);
   return row ?? null;
+}
+
+export interface SummaryView {
+  id: string;
+  throughSequenceNo: number;
+  text: string;
+}
+
+/**
+ * The conversation's newest internal summary, or with `beforeSequenceNo` the newest one whose
+ * boundary precedes that message. Summaries are internal and never returned by the API.
+ */
+export async function latestSummary(db: Db, conversationId: string, beforeSequenceNo: number | null = null)
+  : Promise<SummaryView | null> {
+  const { rows: [row] } = await db.query<{ id: string; throughSequenceNo: string; text: string }>(`
+    SELECT id, through_sequence_no::text AS "throughSequenceNo", summary_text AS text
+    FROM public.conversation_summaries
+    WHERE conversation_id = $1 AND ($2::bigint IS NULL OR through_sequence_no < $2)
+    ORDER BY through_sequence_no DESC LIMIT 1
+  `, [conversationId, beforeSequenceNo]);
+  return row ? { ...row, throughSequenceNo: Number(row.throughSequenceNo) } : null;
+}
+
+/**
+ * Saves a summary generated outside any transaction. Under the conversation lock, the newest summary
+ * must still be the one it extended and the boundary must advance past it; otherwise nothing is
+ * saved and false is returned.
+ */
+export function saveSummary(pool: Pool, conversationId: string, previousSummaryId: string | null,
+  throughSequenceNo: number, text: string): Promise<boolean> {
+  return withTransaction(pool, async (client) => {
+    await client.query("SELECT id FROM public.conversations WHERE id = $1 FOR UPDATE", [conversationId]);
+    const latest = await latestSummary(client, conversationId);
+    if ((latest?.id ?? null) !== previousSummaryId || throughSequenceNo <= (latest?.throughSequenceNo ?? 0)) return false;
+    await client.query(`
+      INSERT INTO public.conversation_summaries (conversation_id, through_sequence_no, summary_text, previous_summary_id)
+      VALUES ($1, $2, $3, $4)
+    `, [conversationId, throughSequenceNo, text, previousSummaryId]);
+    return true;
+  });
 }

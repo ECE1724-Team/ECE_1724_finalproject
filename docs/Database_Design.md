@@ -1,8 +1,8 @@
 ---
 artifact: database-design
-version: "1.13"
+version: "1.14"
 created: 2026-11-09
-updated: 2026-11-17
+updated: 2026-11-20
 requirements_baseline: "PRD 1.8 / AI_Design.md (2026-11-11)"
 status: proposed-design-with-open-decisions
 ---
@@ -463,7 +463,7 @@ UNIQUE `(conversation_id, through_sequence_no)` and `(id, conversation_id)`; pre
 
 Capture the history prefix and predecessor identity before compression, generate the summary outside a database transaction, then validate and save the result in a short transaction. The new boundary must advance beyond its predecessor and cover only the captured complete prefix. Handle a competing summary for the same boundary without overwriting an existing summary. Compression failure leaves the last usable summary and its coverage unchanged; it must not advance a boundary without saved summary text. Choose a summary whose boundary precedes the current input and the intended recent-message window, including when retrying an earlier input.
 
-Current materials are assembled separately every turn and are never replaced by a summary. The summarization input includes the material versions behind each covered answer, so the summary can tag version-specific points (for example, "based on resume V1"). Summaries may retain historical discussion of materials but must identify superseded content as historical; they cannot overwrite current materials. Base materials still consume model context capacity. Compression thresholds, recent-message window, and oversized-base-material handling remain open; do not silently drop materials or uncovered history when context cannot fit.
+Current materials are assembled separately every turn and are never replaced by a summary. The summarization input includes the material versions behind each covered answer, so the summary can tag version-specific points (for example, "based on resume V1"). Summaries may retain historical discussion of materials but must identify superseded content as historical; they cannot overwrite current materials. Base materials still consume model context capacity. Values set 2026-11-20 (AI Design §4.3): compress when the completed turns after the latest boundary reach 64,000 estimated tokens or the request would exceed 128,000; keep up to 16,000 tokens of the newest complete turns verbatim; a summary has at most 800 output tokens. Do not silently drop materials or uncovered history: a request that cannot fit fails with `CONTEXT_CAPACITY_EXCEEDED`.
 
 ### 5.11 `storage_cleanup_jobs`
 
@@ -821,7 +821,7 @@ These are proposed checks to execute during implementation; none is claimed pass
 | Timeline | Actual status transitions retained | Extra event types; requester |
 | Account configuration | §5.1 flows; 900-second links; default seven-day Sessions; 60-second email cooldown and five requests per 900-second window; SMTP acceptance gates activation and failed sends preserve the old link | Actual SMTP provider and deployment configuration; any future durable-mail/recovery policy requires separate agreement; auth owner/requester |
 | AI failures/retries | Visible errors, retry, one active run per thread; committed material preparation is separate from answer completion, and only completion advances the baseline | Retry, duplicate-request, and partial-output rules confirmed 2026-11-14 (§5.7). Remaining: §7.4's proposed fail-and-retry refresh fallback; AI owner/requester |
-| Context sizing | Current materials outside history compression | Thresholds, recent window, oversized-material handling; AI owner/requester |
+| Context sizing | Current materials outside history compression; threshold, window, summary size and oversized-material handling set 2026-11-20 by the AI owner (§5.10, AI Design §4.3) | Requester review of those values |
 | Conversation controls | Persistent independent conversations | Rename/delete requirements; requester |
 | Validation/pagination | Company+position only required; literal substring search | Detailed limits, URL rules, pagination; requester/API owner |
 | Infrastructure and identity integration | PostgreSQL, private S3-compatible storage; `public.auth_user.id UUID`, UUID business owner FKs, trusted auth context and auth migration files in Appendices D–F | Actual providers/configuration and shared-environment migration verification; technical owners. Business owner FKs use `ON DELETE RESTRICT` (confirmed 2026-11-17) |
@@ -837,6 +837,8 @@ Version 1.1 aligned authentication with PRD 1.2/endpoints 1.2.0, separated auth-
 Version 1.13 records Jianye's ownership of the resume routes, the repository interfaces defined in the resume module, the cleanup job status values and `requeueProcessing` (§5.11), and `endpoints.json` 1.11.0.
 
 Version 1.13 adds the workspace lock to application deletion (§7.5 step 2): the lock order is application → workspace → conversations.
+
+Version 1.14 records the context-sizing values set on 2026-11-20 (§5.10, §12).
 
 Version 1.12 records the agreed database service contract (Appendix C.4): repository interfaces and transaction ownership, startup pool creation, backend-generated resume IDs, an unpaginated resume list with `linkedApplicationCount`, 404 for deleted resumes, and storage-cleanup reasons and ownership (§5.11).
 
@@ -945,7 +947,7 @@ Base materials never appear as tool messages; the core chat request defines no t
 
 The current OpenAPI already describes workspace/conversation/history/generation/provenance routes and stream events. Reconcile durable attempt state after disconnects; transport EOF is not durable completion, and automatic POST replay or stream resumption is not guaranteed. The retry route follows the confirmed §5.7 contract; `endpoints.json` 1.7.0 documents its eligibility rule and 409 codes.
 
-Database service inputs/outputs and transaction ownership are agreed in C.4. The retry, duplicate-request, and interruption contract in §5.7 is confirmed. The fail-and-retry refresh fallback remains a proposal; context thresholds/windows and oversized-material handling remain open. Compression captures a complete history prefix, runs outside a DB transaction and validates before saving; failed compression does not advance coverage or replace current base materials.
+Database service inputs/outputs and transaction ownership are agreed in C.4. The retry, duplicate-request, and interruption contract in §5.7 is confirmed. The fail-and-retry refresh fallback remains a proposal; context thresholds, window and oversized-material handling were set on 2026-11-20 (§5.10). Compression captures a complete history prefix, runs outside a DB transaction and validates before saving; failed compression does not advance coverage or replace current base materials.
 
 ### C.4 Agreed Database Service Contract (2026-11-17)
 

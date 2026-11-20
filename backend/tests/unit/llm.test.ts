@@ -9,7 +9,7 @@ const messages: ChatMessage[] = [
   { role: "system", content: "<materials></materials>" },
   { role: "user", content: "Hello" },
 ];
-const limits = { maxOutputTokens: 2_000, idleMs: 1_000, totalMs: 5_000 };
+const limits = { maxOutputTokens: 2_000, summaryOutputTokens: 800, idleMs: 1_000, totalMs: 5_000 };
 
 test("a reply streams its deltas and reports usage; the request has both system parts and no tools", async () => {
   const fake = new FakeLlm();
@@ -25,6 +25,15 @@ test("a reply streams its deltas and reports usage; the request has both system 
   assert.equal(stream.options.tools, undefined);
   assert.deepEqual(stream.options.prompt.map((m) => m.role), ["system", "system", "user"]);
   assert.equal(stream.lastUserText, "Hello");
+});
+
+test("a summary is the same call with the smaller output cap", async () => {
+  const fake = new FakeLlm();
+  fake.autoReply = "Summary";
+  const reply = await fake.chatModel(limits).summarize({ messages, signal: new AbortController().signal });
+  assert.equal(reply.text, "Summary");
+  assert.equal(fake.streams[0].options.maxOutputTokens, 800);
+  assert.equal(fake.streams[0].options.tools, undefined);
 });
 
 test("a model error, a caller abort and both timeouts reject the reply", async () => {

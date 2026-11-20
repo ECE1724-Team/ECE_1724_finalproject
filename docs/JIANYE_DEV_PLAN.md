@@ -6,13 +6,13 @@ errors, limits, known gaps), [PRD §5.2](PRD.md) (file rules),
 [Database Design §5.11, §7.2–7.3, C.4](Database_Design.md) (cleanup, upload/delete, repository
 contract), [AI Design](AI_Design.md) and [endpoints.json](endpoints.json).
 
-## Status (2026-11-19)
+## Status (2026-11-20)
 
 | Area | State |
 |---|---|
 | Resume backend | Done. Phase 4 Stages 1–2 passed, including live R2. |
 | Browser check | Pending (target Nov 25): needs application API [PR #11](https://github.com/ECE1724-Team/ECE_1724_finalproject/pull/11) reviewed and the resume dialog connected; the frontend still uses mocks. |
-| AI Copilot | Phases 1–3 done: workspace API, material snapshots, streaming replies with retry and recovery; live check passed (≈ US$0.0002). Phase 4 next. |
+| AI Copilot | Phases 1–4 done: workspace API, material snapshots, streaming replies with retry and recovery, sliding window with incremental summaries; live checks passed (≈ US$0.0012 in total). Phase 5 (frontend) next. |
 
 ## Progress log
 
@@ -191,15 +191,73 @@ Live check, `gpt-6-luna` through `runTurn` and a temporary database, fictional r
 Both completed (`stop`), 4 messages saved in order. Cost ≈ US$0.0002 at $0.10 / $0.50 per 1M
 input/output tokens; reasoning tokens did not crowd out the reply at the default effort.
 
-### Phase 4 · Add a sliding window and incremental history summaries
+### 2026-11-20: Phase 4 · Sliding window and incremental history summaries (done)
 
-**Implementation.** Put history selection, token budgeting, and compression triggers in `context/history.ts`. Read and write `conversation_summaries` in `conversations/postgres-repository.ts`, add a summary call to the model adapter, and pass the result to `context/prompt.ts` and `generations/service.ts`. Generate the summary during the turn that needs it.
+Built:
+- [`context/history.ts`](../backend/src/modules/ai/context/history.ts): `estimateTokens` (no tokenizer: one
+  token per non-ASCII code point and per three ASCII characters, plus 4 per message), `planContext`
+  and the summary request. Limits (estimated tokens): 128,000 per request, compress at 64,000 tokens
+  of completed turns after the summary boundary, keep up to 16,000 verbatim, reserve 800 for the new
+  summary. Turn count never triggers compression. The window keeps the newest complete turns and
+  shrinks by whole turns until the request with a full-size summary fits.
+- Summary request: the previous summary (or "None yet."), then each covered turn with the material
+  versions behind its answer (`[based on: resume "SWE_Resume_v1"; job description version …]`). The
+  rules ask it to keep shared experiences, interview progress, open follow-ups and agreed next steps,
+  to tag version-specific points and to add no facts. Text is escaped (`& < >`); quotes stay readable.
+- [`prompt.ts`](../backend/src/modules/ai/context/prompt.ts) adds `<conversation_summary>` after
+  `<material_changes>`; materials and the input are always sent in full.
+- [`conversations/postgres-repository.ts`](../backend/src/modules/ai/conversations/postgres-repository.ts):
+  `latestSummary` (newest boundary before the input, so a retry picks the right one) and
+  `saveSummary`. Under the conversation lock, the newest summary must still be the one extended and
+  the boundary must advance; otherwise nothing is saved. `loadHistory` now returns the summary,
+  completed turns after its boundary, and the input.
+- [`service.ts`](../backend/src/modules/ai/generations/service.ts) `assembleContext`: compress → save
+  the summary in its own short transaction → build the request from the new summary and the window.
+  If the summary fails, the last saved summary is kept and the reply goes ahead with all later
+  turns if they fit; otherwise `GENERATION_FAILED` (stage `context`, retryable). A client disconnect
+  during the summary call is `GENERATION_INTERRUPTED`. `CONTEXT_CAPACITY_EXCEEDED` (stage `context`)
+  names the largest parts to shorten when materials and input alone are too big, and suggests a new
+  conversation when history is the cause (including a summary request that cannot fit).
+- The adapter got `summarize` (same call, 800 output tokens). Completed runs store summary usage
+  separately as `model_metadata.summary`. `AI_COMPRESS_AT_TOKENS` and `AI_HISTORY_WINDOW_TOKENS`
+  (optional, in `.env.example`) lower the thresholds for the seeded demo.
 
-1. Count one completed question and answer as one turn. Start compression when unsummarized completed turns reach **64,000 tokens**, or sooner if the full answer request would exceed the project input limit. Turn count alone never triggers compression. Keep the newest complete turns verbatim up to a target of **16,000 history tokens** and summarize the older prefix. Reduce that window by complete turns if the full request still exceeds the limit. Keep the current input separate and reuse it on retry. Older inputs that never received a complete answer remain visible in the chat record.
-2. Give the summarizer the previous summary, the newly covered complete turns, and the material versions behind each answer. Ask it to retain experiences already discussed, interview progress, and open follow-up questions. Label version-specific points, for example “based on resume V1.” After the model returns, validate the previous summary and the new coverage boundary in a short transaction before saving `through_sequence_no`. Include only turns after that boundary alongside the summary. Keep the full original messages in the database.
-3. Include all six current materials in every answer request, independently of the window and summary. If compression fails, keep the last valid summary. Generate the reply if all history after its boundary still fits. Otherwise report the failure and allow retry. If the materials and current input alone exceed the budget, return `CONTEXT_CAPACITY_EXCEEDED` and identify what to shorten. If history is the cause, suggest a new conversation. Apply the input budget to the summary request itself and report a capacity error if it cannot fit in a single call.
+Tests: [`ai-history.test.ts`](../backend/tests/unit/ai-history.test.ts) covers the estimate, twenty
+turns sent verbatim, threshold and input-limit triggers, the window shrinking by whole turns, both
+capacity messages, summary placement and the summary request's V1/V2 tags.
+[`ai-history.db.test.ts`](../backend/tests/integration/ai-history.db.test.ts) uses small thresholds
+(52-token turns, compress at 300, window 110) through `runTurn` and PostgreSQL: twenty turns make no
+summary call; turn 7 adds exactly one (boundary 8), turn 11 adds a second that extends the first
+(boundary 16, `previous_summary_id` set). Each of turns 1–10 appears exactly once across the two
+summarized prefixes and the window, and all 22 messages stay readable. A failed summary keeps the
+boundary and the reply uses all later turns. A summary saved before a failed reply is reused on
+retry with no second call. When later turns cannot fit, a failed summary fails the turn and a
+retry compresses. Two conversations each use only their own summary. After a switch to V2 the
+summary tags V1 and the answer gets V2 with a change notice. Oversized materials fail with no
+model call. The fake model can now answer summary and reply calls differently.
 
-**Tests and acceptance.** Use small thresholds in `backend/tests/unit/ai-history.test.ts` to trigger compression predictably. Verify stored boundaries in `backend/tests/integration/ai-history.db.test.ts`. Twenty short turns below both token limits must make zero summary calls. Use a lower token threshold for the seeded demo. Crossing the threshold adds one summary call. Each incremental summary incorporates its predecessor, and each completed turn appears exactly once across the summarized prefix and verbatim window. A failed summary must leave the coverage boundary intact. Switching conversations must select only that conversation's summary. Run one live compression check on seeded fictional history. Compare the summary with the original questions, pending follow-ups, and V1 references. After switching to V2, verify that the interview continues naturally, current resume advice uses V2, and the full original history is readable after reload.
+Results (Node 26.8.2, PostgreSQL 18.6): typecheck, `npm test` (115), `npm run test:db` (192, with
+`TEST_DATABASE_URL` on a local loopback server) and build pass.
+
+Live check, `gpt-6-luna` through `runTurn` and a temporary database. Six seeded fictional turns of
+a behavioral mock interview (fake model) with V1 resume advice and an open item, then a switch to
+V2 and two live turns at compress 600 / window 250:
+| Call | Estimate | Input tokens | Output tokens | Time | Result |
+|---|---|---|---|---|---|
+| Summary (turns 1–5) | 1,402 | 989 | 518 | 5.6 s | Kept Q1–Q2 answers and feedback, the unanswered ambiguity question, the missing outcome and impact, the deferred idempotency design question; resume points tagged "based on resume SWE_Resume_v1" |
+| Reply 1 (compressing turn) | 2,948 | 1,901 | 321 | 3.6 s | Picked up the pending follow-up from the window; improved the top bullet using V2's 480 → 120 ms figures |
+| Reply 2 | 3,014 | 1,946 | 290 | 3.3 s | No new summary; continued with a new reliability question |
+
+All `stop`; 16 messages readable afterwards. Cost ≈ US$0.001 (4,836 input, 1,129 output tokens).
+Calibration: the estimate is 1.4–1.55× the real count for English, so the 64,000 threshold is
+about 42,000 real tokens. I kept the limits conservative.
+
+Open issues:
+- On a compressing turn `materials.synced` arrives after the summary call (about 5 s later).
+- A turn that summarizes and then fails keeps the summary but not its usage (`model_metadata` is
+  written only on completion).
+- The values above were copied into AI Design §4.3, Database Design §5.10/§12 (v1.14) and PRD
+  FR-17/§5/§11 (v1.10) on 2026-11-20. Database Design §12 still lists a requester review of them.
 
 ### Phase 5 · Build the frontend and verify the demo (not now)
 

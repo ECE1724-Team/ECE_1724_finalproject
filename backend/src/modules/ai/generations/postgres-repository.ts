@@ -2,9 +2,11 @@ import type { Pool } from "pg";
 import type { Db } from "../../../db/pool.js";
 import { withTransaction } from "../../../db/transaction.js";
 import { changedKinds, currentMaterials, readMaterialSource } from "../context/materials.js";
-import type { FixedMaterial, HistoryEntry, MaterialVersion } from "../context/prompt.js";
+import type { HistoryTurn } from "../context/history.js";
+import type { FixedMaterial, MaterialVersion } from "../context/prompt.js";
 import {
-  SNAPSHOT_REFERENCE_FIELDS, findConversation, readBaselines, type MaterialReference, type MessageView,
+  SNAPSHOT_REFERENCE_FIELDS, findConversation, latestSummary, readBaselines, type MaterialReference, type MessageView,
+  type SummaryView,
 } from "../conversations/postgres-repository.js";
 
 // The short turn transactions of Database Design §7.4. Each opens and commits its own transaction;
@@ -39,6 +41,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   GENERATION_FAILED: "The AI could not finish this reply. Try again.",
   GENERATION_INTERRUPTED: "The reply was interrupted before it finished. Try again.",
   MESSAGE_PERSISTENCE_FAILED: "The reply could not be saved. Try again.",
+  CONTEXT_CAPACITY_EXCEEDED: "The materials, message or conversation are too long for one AI request. "
+    + "Shorten the largest material or your message, or start a new conversation.",
 };
 
 export interface PreparedTurn {
@@ -188,19 +192,25 @@ export function prepareMaterials(pool: Pool, userId: string, conversationId: str
 }
 
 /**
- * The completed turns before the input (user inputs without a completed answer are left out) and
- * the input text. Each assistant reply carries the material versions its generation used.
+ * The history for one answer: the newest summary whose boundary precedes the input, the completed
+ * turns after that boundary (user inputs without a completed answer are left out), and the input
+ * text. Each turn carries the material versions its answer used.
  */
-export async function loadHistory(db: Db, conversationId: string, inputMessageId: string) {
-  const { rows } = await db.query<{ id: string; role: "user" | "assistant"; parts: { type: string; text?: string }[]; generationId: string | null }>(`
-    SELECT m.id, m.role, m.parts, m.generation_id AS "generationId"
+export async function loadHistory(db: Db, conversationId: string, inputMessageId: string)
+  : Promise<{ summary: SummaryView | null; turns: HistoryTurn[]; input: string }> {
+  const { rows: [input] } = await db.query<{ sequenceNo: string; parts: Part[] }>(`
+    SELECT sequence_no::text AS "sequenceNo", parts FROM public.messages WHERE id = $1 AND conversation_id = $2
+  `, [inputMessageId, conversationId]);
+  if (!input) throw new Error("Generation input message not found");
+  const summary = await latestSummary(db, conversationId, Number(input.sequenceNo));
+  const { rows } = await db.query<{ sequenceNo: string; role: "user" | "assistant"; parts: Part[]; generationId: string | null }>(`
+    SELECT m.sequence_no::text AS "sequenceNo", m.role, m.parts, m.generation_id AS "generationId"
     FROM public.messages m
-    WHERE m.conversation_id = $1
-      AND m.sequence_no <= (SELECT sequence_no FROM public.messages WHERE id = $2 AND conversation_id = $1)
-      AND (m.id = $2 OR m.role = 'assistant' OR EXISTS (
+    WHERE m.conversation_id = $1 AND m.sequence_no > $2 AND m.sequence_no < $3
+      AND (m.role = 'assistant' OR EXISTS (
         SELECT 1 FROM public.generation_runs g WHERE g.input_message_id = m.id AND g.status = 'completed'))
     ORDER BY m.sequence_no
-  `, [conversationId, inputMessageId]);
+  `, [conversationId, summary?.throughSequenceNo ?? 0, input.sequenceNo]);
   const generationIds = rows.flatMap((row) => row.generationId ?? []);
   const { rows: used } = await db.query<MaterialVersion & { generationId: string; kind: string }>(`
     SELECT gm.generation_id AS "generationId", s.kind, s.fingerprint, s.availability,
@@ -210,19 +220,25 @@ export async function loadHistory(db: Db, conversationId: string, inputMessageId
     WHERE gm.generation_id = ANY($1::uuid[])
   `, [generationIds]);
 
-  const text = (parts: { type: string; text?: string }[]) => parts.flatMap((part) => part.type === "text" ? part.text ?? "" : []).join("");
-  const input = rows.at(-1);
-  if (input?.id !== inputMessageId) throw new Error("Generation input message not found");
-  const history: HistoryEntry[] = rows.slice(0, -1).map((row) => {
-    if (row.role === "user") return { role: "user", text: text(row.parts) };
+  // One active run per conversation means each completed answer directly follows its input.
+  const turns: HistoryTurn[] = [];
+  let question = "";
+  for (const row of rows) {
+    if (row.role === "user") {
+      question = text(row.parts);
+      continue;
+    }
     const materials: Record<string, MaterialVersion> = {};
     for (const { generationId, kind, ...version } of used) {
       if (generationId === row.generationId) materials[kind] = version;
     }
-    return { role: "assistant", text: text(row.parts), materials };
-  });
-  return { history, input: text(input.parts) };
+    turns.push({ sequenceNo: Number(row.sequenceNo), user: question, assistant: text(row.parts), materials });
+  }
+  return { summary, turns, input: text(input.parts) };
 }
+
+type Part = { type: string; text?: string };
+const text = (parts: Part[]) => parts.flatMap((part) => part.type === "text" ? part.text ?? "" : []).join("");
 
 /**
  * Step 6: save the complete reply and mark the run completed together, which makes it the new

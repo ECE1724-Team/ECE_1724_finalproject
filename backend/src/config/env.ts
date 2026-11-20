@@ -1,6 +1,7 @@
 import { readDatabaseUrl } from "../db/database-url.mjs";
 import type { SmtpEmailConfig } from "../integrations/email/types.js";
 import type { R2Config } from "../integrations/object-storage/r2.js";
+import { DEFAULT_HISTORY_LIMITS, type HistoryLimits } from "../modules/ai/context/history.js";
 import { ConfigurationError } from "./errors.js";
 
 export interface AuthConfig {
@@ -24,7 +25,7 @@ export interface Environment {
   smtp: SmtpEmailConfig;
   r2: R2Config | undefined;
   /** OpenAI settings for AI replies; undefined when OPENAI_API_KEY is empty (sends then answer 503). */
-  ai: { apiKey: string; model: string } | undefined;
+  ai: { apiKey: string; model: string; history: HistoryLimits } | undefined;
 }
 
 const R2_SETTINGS = ["R2_ENDPOINT", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
@@ -91,7 +92,16 @@ export function loadEnvironment(env: NodeJS.ProcessEnv = process.env): Environme
       ...(env.SMTP_USER ? { user: env.SMTP_USER, password: required(env, "SMTP_PASSWORD", false) } : {}),
     },
     r2: nodeEnv === "production" || R2_SETTINGS.some(key => env[key]?.trim()) ? readR2Config(env) : undefined,
-    ai: env.OPENAI_API_KEY?.trim() ? { apiKey: env.OPENAI_API_KEY.trim(), model: env.AI_MODEL?.trim() || "gpt-6-luna" } : undefined,
+    ai: env.OPENAI_API_KEY?.trim() ? {
+      apiKey: env.OPENAI_API_KEY.trim(),
+      model: env.AI_MODEL?.trim() || "gpt-6-luna",
+      // Lower thresholds make a seeded demo compress early; leave them unset otherwise.
+      history: {
+        ...DEFAULT_HISTORY_LIMITS,
+        compressAtTokens: integer(env.AI_COMPRESS_AT_TOKENS, DEFAULT_HISTORY_LIMITS.compressAtTokens, "AI_COMPRESS_AT_TOKENS"),
+        windowTokens: integer(env.AI_HISTORY_WINDOW_TOKENS, DEFAULT_HISTORY_LIMITS.windowTokens, "AI_HISTORY_WINDOW_TOKENS"),
+      },
+    } : undefined,
   };
 }
 

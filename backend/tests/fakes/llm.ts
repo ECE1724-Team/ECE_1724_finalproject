@@ -15,11 +15,12 @@ export interface FakeStream {
 
 /**
  * A language model for tests, used through the real adapter (createChatModel). Each call waits
- * until the test feeds, fails or finishes it, unless `autoReply` is set.
+ * until the test feeds, fails or finishes it, unless `autoReply` gives its text (a function
+ * returning null leaves that call to the test).
  */
 export class FakeLlm {
   readonly streams: FakeStream[] = [];
-  autoReply: string | null = null;
+  autoReply: string | ((call: FakeStream) => string | null) | null = null;
   private pending: FakeStream[] = [];
   private waiters: ((stream: FakeStream) => void)[] = [];
 
@@ -60,8 +61,9 @@ export class FakeLlm {
         if (open) { open = false; controller.error(options.abortSignal!.reason); }
       }, { once: true });
       this.streams.push(handle);
-      if (this.autoReply !== null) {
-        handle.delta(this.autoReply);
+      const reply = typeof this.autoReply === "function" ? this.autoReply(handle) : this.autoReply;
+      if (reply !== null) {
+        handle.delta(reply);
         handle.finish();
       } else {
         const waiter = this.waiters.shift();
