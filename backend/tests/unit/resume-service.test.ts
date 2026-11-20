@@ -94,32 +94,19 @@ test("insert rejected by PostgreSQL: the object is deleted, or queued, or logged
   assert.deepEqual(logged.logs.entries.map((entry) => entry.details?.objectKey), [key]);
 });
 
-test("insert outcome unknown: a committed row is kept and returned", async () => {
-  const { upload, resumes, storage } = setup();
-  resumes.insertError = connectionLost();
-  resumes.insertCommitsBeforeError = true;
-  const row = await upload();
-  assert.equal(resumes.rows.has(row.id), true);
-  assert.equal(storage.objects.has(row.objectKey), true);
-  assert.equal(storage.calls.some((call) => call.startsWith("delete")), false);
-});
-
-test("a localized PostgreSQL shutdown error preserves a committed resume and its PDF", async () => {
-  const { service, upload, resumes, storage } = setup();
-  resumes.insertError = Object.assign(pgError("57P01"), { severity: "ВАЖНО" });
-  resumes.insertCommitsBeforeError = true;
-  const row = await upload();
-  assert.deepEqual((await service.download(USER, row.id))?.bytes, new Uint8Array(pdfBytes()));
-  assert.equal(storage.calls.some((call) => call.startsWith("delete ")), false);
-});
-
-test("a socket error is not a PostgreSQL answer, even with a five-letter code like EPIPE", async () => {
-  const { upload, resumes, storage } = setup();
-  resumes.insertError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
-  resumes.insertCommitsBeforeError = true;
-  const row = await upload();
-  assert.equal(resumes.rows.has(row.id), true, "found by the lookup instead of being rolled back");
-  assert.equal(storage.objects.has(row.objectKey), true);
+test("insert outcome unknown: the lookup finds the committed row and keeps its PDF", async () => {
+  for (const error of [
+    connectionLost(),
+    Object.assign(pgError("57P01"), { severity: "ВАЖНО" }), // localized shutdown message
+    Object.assign(new Error("write EPIPE"), { code: "EPIPE" }), // five letters, but not a SQLSTATE
+  ]) {
+    const { service, upload, resumes, storage } = setup();
+    resumes.insertError = error;
+    resumes.insertCommitsBeforeError = true;
+    const row = await upload();
+    assert.deepEqual((await service.download(USER, row.id))?.bytes, new Uint8Array(pdfBytes()));
+    assert.equal(storage.calls.some((call) => call.startsWith("delete")), false);
+  }
 });
 
 test("an empty recovery lookup preserves the object when insert completion is unknown", async () => {

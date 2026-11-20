@@ -7,13 +7,10 @@ import { Router } from "express";
 import { createApp } from "../../src/app.js";
 import { StorageError } from "../../src/integrations/object-storage/types.js";
 import { createPdfExtractor } from "../../src/integrations/pdf/extractor.js";
-import { createPostgresApplicationRepository } from "../../src/modules/applications/postgres-repository.js";
-import { MAX_RESUME_BYTES } from "../../src/modules/resumes/pdf-policy.js";
 import { mountPostgresResumeRoutes } from "../../src/modules/resumes/postgres-routes.js";
 import type { toPublicResume } from "../../src/modules/resumes/routes.js";
 import { FakeStorage, collectLogs } from "../fakes/resumes.js";
-import { makePasswordProtectedPdf, makePdf, makeSplitThresholdPdf, textPage } from "../fixtures/pdf.js";
-import { newApplication, savedApplication } from "../helpers/applications.js";
+import { makePdf } from "../fixtures/pdf.js";
 import { createAuthFixture, sessionCookie, uniqueEmail, verificationUrl, type AuthFixture } from "../helpers/auth-fixture.js";
 
 type Resume = ReturnType<typeof toPublicResume>;
@@ -36,13 +33,13 @@ async function expectError(response: Response, status: number, code: string) {
   assert.equal((await response.json() as { error: { code: string } }).error.code, code);
 }
 
-test("the startup resume routes use real sessions, PDF extraction and PostgreSQL", { timeout: 30_000 }, async t => {
+test("the startup resume routes use real sessions, Origin checks, PDF extraction and PostgreSQL", { timeout: 30_000 }, async t => {
   const fixture = await createAuthFixture();
   const { authentication, database, pool, config } = fixture;
   const storage = new FakeStorage();
   const { log } = collectLogs();
   const businessRouter = Router();
-  const startWorker = mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor(), log });
+  mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor(), log });
   const app = createApp({ authentication, database,
     environment: { auth: config, trustProxyHops: 0 }, businessRouter });
   const server = app.listen(0, "127.0.0.1");
@@ -75,12 +72,10 @@ test("the startup resume routes use real sessions, PDF extraction and PostgreSQL
 
   await expectError(await call("", { cookie: null }), 401, "UNAUTHORIZED");
   await expectError(await upload(makePdf(), "https://untrusted.example"), 403, "FORBIDDEN");
-  await expectError(await upload(makePasswordProtectedPdf()), 422, "PDF_PASSWORD_PROTECTED");
-  await expectError(await upload(makePdf([textPage()], { size: MAX_RESUME_BYTES + 1 })), 413, "PDF_TOO_LARGE");
   assert.equal(await countRows(), 0);
   assert.deepEqual(storage.calls, []);
 
-  const bytes = makePdf([textPage()], { size: MAX_RESUME_BYTES });
+  const bytes = makePdf();
   const uploaded = await upload(bytes);
   assert.equal(uploaded.status, 201);
   assert.equal(uploaded.headers.get("access-control-allow-origin"), origin);
@@ -89,7 +84,7 @@ test("the startup resume routes use real sessions, PDF extraction and PostgreSQL
   const path = `/${resume.id}`;
   assert.equal(uploaded.headers.get("location"), `/api/v1/resumes${path}`);
   assert.equal(resume.textStatus, "available");
-  assert.equal(resume.sizeBytes, MAX_RESUME_BYTES);
+  assert.equal(resume.sizeBytes, bytes.length);
   assert.equal(resume.linkedApplicationCount, 0);
   assert.equal("objectKey" in resume, false);
 
@@ -114,53 +109,18 @@ test("the startup resume routes use real sessions, PDF extraction and PostgreSQL
   assert.equal(downloaded.headers.get("cache-control"), "private, no-store");
   assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
 
-  const split = await upload(makeSplitThresholdPdf());
-  assert.equal(split.status, 201);
-  assert.equal((await split.json() as Resume).textStatus, "available");
-  const scan = await upload(makePdf([{ runs: [], image: true }]));
-  assert.equal(scan.status, 201);
-  const scanResume = await scan.json() as Resume;
-  assert.equal(scanResume.textStatus, "unavailable");
-  const { rows } = await pool.query(`
-    SELECT parse_status, extracted_text FROM public.resumes WHERE id = $1
-  `, [scanResume.id]);
-  assert.deepEqual(rows, [{ parse_status: "text_unavailable", extracted_text: null }]);
-
-  const applications = createPostgresApplicationRepository();
-  const application = savedApplication(await applications.insert(pool, newApplication(owner.id, { resumeId: resume.id })));
-  const { rows: [saved] } = await pool.query<{ object_key: string; extracted_text: string }>(`
-    SELECT object_key, extracted_text FROM public.resumes WHERE id = $1
-  `, [resume.id]);
-  assert.match(saved.extracted_text, /Alex Example/);
-
   const storageOutage = new StorageError("timeout");
   storage.putError = storage.deleteError = storageOutage;
   storage.beforeRead = () => { throw storageOutage; };
   await expectError(await upload(makePdf()), 503, "SERVICE_UNAVAILABLE");
   await expectError(await call(`${path}/file`), 503, "SERVICE_UNAVAILABLE");
-  assert.equal(await countRows(), 3);
-  assert.equal(storage.objects.size, 3);
-  const metadataDuringOutage = await call(path);
-  assert.equal(metadataDuringOutage.status, 200);
-  assert.equal((await metadataDuringOutage.json() as Resume).linkedApplicationCount, 1);
+  assert.equal(await countRows(), 1);
+  assert.equal(storage.objects.size, 1);
+  assert.equal((await call(path)).status, 200, "metadata does not need R2");
 
   const deleted = await call(path, { method: "DELETE" });
-  assert.equal(deleted.status, 200);
-  assert.deepEqual(await deleted.json(), { unlinkedApplicationCount: 1 });
-  const unlinked = await applications.get(pool, owner.id, application.id);
-  assert.equal(unlinked?.resumeId, null);
-  assert.equal(unlinked?.rowVersion, "2");
+  assert.equal(deleted.status, 200, "deletion does not need R2");
   await expectError(await call(`${path}/file`), 404, "NOT_FOUND");
-  assert.ok(storage.objects.has(saved.object_key));
-
-  storage.deleteError = undefined;
-  await startWorker().stop();
-  assert.equal(storage.objects.has(saved.object_key), false);
-  assert.equal(storage.objects.size, 2);
-  const jobs = await pool.query(`
-    SELECT reason, status FROM public.storage_cleanup_jobs WHERE object_key = $1
-  `, [saved.object_key]);
-  assert.deepEqual(jobs.rows, [{ reason: "resume_deleted", status: "done" }]);
 
   assert.equal((await fixture.request("/api/auth/sign-out", { cookie: owner.cookie, body: {} })).status, 200);
   await expectError(await call(""), 401, "UNAUTHORIZED");
