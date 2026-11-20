@@ -11,8 +11,8 @@
     "test": "tsc -p tsconfig.test.json && node --test dist/tests/tests/unit/*.test.js dist/tests/tests/contract/*.test.js",
     "test:db": "tsc -p tsconfig.test.json && node --env-file-if-exists=.env scripts/test-with-postgres.mjs",
     "test:r2": "tsc -p tsconfig.test.json && node --env-file-if-exists=.env --test dist/tests/tests/integration/r2.test.js",
-    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
-    "migrate:down": "node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js down --migrations-dir migrations"
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs up",
+    "migrate:down": "node --env-file-if-exists=.env scripts/migrate.mjs down"
   },
   "engines": {
     "node": ">=26.0.0 <27"

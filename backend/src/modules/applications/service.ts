@@ -103,23 +103,32 @@ export function createApplicationService({ pool, applications, interviews, histo
    * still listed: listed with an id → updated if changed; without an id → added; not listed → deleted.
    * Runs inside the update transaction, after the application row is locked.
    */
-  async function syncInterviews(client: PoolClient, userId: string, applicationId: string, submitted: InterviewInput[]): Promise<void> {
+  async function syncInterviews(client: PoolClient, userId: string, applicationId: string, submitted: InterviewInput[]): Promise<boolean> {
     const existing = new Map((await interviews.list(client, userId, applicationId)).map((row) => [row.id, row]));
     submitted.forEach((interview, index) => {
       if (interview.id && !existing.has(interview.id)) throw invalid(`interviews[${index}].id is not an interview of this application.`);
     });
     const kept = new Set(submitted.flatMap((interview) => (interview.id ? [interview.id] : [])));
+    let changed = false;
     for (const id of existing.keys()) {
-      if (!kept.has(id)) await interviews.delete(client, userId, applicationId, id);
+      if (kept.has(id)) continue;
+      if (!await interviews.delete(client, userId, applicationId, id)) throw new Error("Interview disappeared during save");
+      changed = true;
     }
     for (const interview of submitted) {
       const current = interview.id ? existing.get(interview.id) : undefined;
       if (!current) {
         await insertInterview(client, userId, applicationId, interview);
+        changed = true;
       } else if (current.interviewName !== interview.type || current.startsAt.getTime() !== interview.scheduledAt.getTime()) {
-        await interviews.update(client, userId, applicationId, current.id, { interviewName: interview.type, startsAt: interview.scheduledAt });
+        const updated = await interviews.update(client, userId, applicationId, current.id, {
+          interviewName: interview.type, startsAt: interview.scheduledAt,
+        });
+        if (!updated) throw new Error("Interview disappeared during save");
+        changed = true;
       }
     }
+    return changed;
   }
 
   return {

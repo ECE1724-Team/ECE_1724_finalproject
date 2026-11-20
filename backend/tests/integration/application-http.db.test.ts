@@ -4,12 +4,18 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { Router } from "express";
 import { createApp } from "../../src/app.js";
+import { createPdfExtractor } from "../../src/integrations/pdf/extractor.js";
 import { createPostgresApplicationService } from "../../src/modules/applications/postgres-module.js";
 import { createApplicationRouter } from "../../src/modules/applications/routes.js";
 import type { ApplicationListResource, ApplicationResource } from "../../src/modules/applications/types.js";
+import { mountPostgresResumeRoutes } from "../../src/modules/resumes/postgres-routes.js";
+import type { toPublicResume } from "../../src/modules/resumes/routes.js";
+import { FakeStorage } from "../fakes/resumes.js";
+import { makePdf } from "../fixtures/pdf.js";
 import { insertResume } from "../helpers/applications.js";
 import { createAuthFixture, sessionCookie, uniqueEmail, verificationUrl, type AuthFixture } from "../helpers/auth-fixture.js";
 import { insertConversation, insertGeneration, insertWorkspace } from "../helpers/conversations.js";
+import { waitForBlockedQuery, withLockHolder } from "../helpers/lock-race.js";
 
 const ORIGIN = "http://localhost:5173";
 
@@ -27,6 +33,8 @@ async function serve(t: test.TestContext) {
   const fixture = await createAuthFixture();
   const businessRouter = Router();
   businessRouter.use("/applications", createApplicationRouter({ service: createPostgresApplicationService(fixture.pool) }));
+  const storage = new FakeStorage();
+  const startResumeWorker = mountPostgresResumeRoutes(businessRouter, { pool: fixture.pool, storage, pdf: createPdfExtractor() });
   const app = createApp({ authentication: fixture.authentication, database: fixture.database,
     environment: { auth: fixture.config, trustProxyHops: 0 }, businessRouter });
   const server = app.listen(0, "127.0.0.1");
@@ -36,7 +44,8 @@ async function serve(t: test.TestContext) {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await fixture.close();
   });
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/applications`;
+  const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
+  const base = `${root}/applications`;
   const client = (cookie: string) => ({
     call: (method: string, path = "", body?: unknown, origin = ORIGIN) => fetch(base + path, {
       method,
@@ -44,7 +53,7 @@ async function serve(t: test.TestContext) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }),
   });
-  return { fixture, base, client };
+  return { fixture, root, base, client, startResumeWorker, storage };
 }
 
 async function json<T>(response: Response, status: number): Promise<T> {
@@ -105,6 +114,8 @@ test("create, read and list applications with search, filters, sort and complete
 
   // Validation and resume ownership.
   assert.equal(await errorCode(await api("POST", "", { companyName: "Acme" }), 422), "VALIDATION_ERROR");
+  assert.equal(await errorCode(await api("POST", "", { companyName: "Acme", jobTitle: "X", appliedDate: "2026-99-99" }), 422),
+    "VALIDATION_ERROR");
   assert.equal(await errorCode(await api("POST", "", { companyName: "Acme", jobTitle: "X", location: "Toronto" }), 422), "VALIDATION_ERROR");
   const bad = await fetch(base, { method: "POST", headers: { cookie: owner.cookie, origin: ORIGIN, "content-type": "application/json" }, body: "{oops" });
   assert.equal(await errorCode(bad, 400), "BAD_REQUEST");
@@ -202,4 +213,89 @@ test("DELETE hard-deletes owned applications, refuses during an active AI genera
   assert.equal(await errorCode(await api("DELETE", `/${created.id}`), 404), "NOT_FOUND");
   const left = await fixture.pool.query("SELECT (SELECT count(*) FROM interviews)::int AS interviews, (SELECT count(*) FROM ai_workspaces)::int AS workspaces");
   assert.deepEqual(left.rows[0], { interviews: 0, workspaces: 0 }, "children and the AI workspace are gone");
+});
+
+test("concurrent interview-only saves cannot both use the same application version", { timeout: 30_000 }, async (t) => {
+  const { fixture, client } = await serve(t);
+  const api = client((await verifiedUser(fixture)).cookie).call;
+  const created = await json<ApplicationResource>(await api("POST", "", {
+    companyName: "Acme", jobTitle: "Engineer", interviews: [{ type: "Screen", scheduledAt: "2026-11-20T15:00:00Z" }],
+  }), 201);
+  const path = `/${created.id}`;
+  const [first, second] = await Promise.all(["Technical", "Final"].map((type) => api("PUT", path, {
+    ...created, interviews: [{ ...created.interviews[0]!, type }],
+  })));
+  assert.deepEqual([first.status, second.status].sort(), [200, 409]);
+  const saved = await json<ApplicationResource>(first.status === 200 ? first : second, 200);
+  assert.equal(await errorCode(first.status === 409 ? first : second, 409), "VERSION_CONFLICT");
+  assert.equal(saved.rowVersion, "2");
+  assert.deepEqual(saved.statusHistory, []);
+  assert.deepEqual(await json(await api("GET", path), 200), saved);
+  assert.deepEqual(await json(await api("PUT", path, saved), 200), saved);
+});
+
+test("resumes can be uploaded, replaced and unlinked across the authenticated business routes", { timeout: 30_000 }, async (t) => {
+  const { fixture, root, client, startResumeWorker, storage } = await serve(t);
+  const { cookie } = await verifiedUser(fixture);
+  const api = client(cookie).call;
+  const resume = (path: string, init?: RequestInit) => fetch(`${root}/resumes${path}`, {
+    ...init, headers: { cookie, origin: ORIGIN },
+  });
+  const upload = (name: string, bytes: Buffer) => {
+    const form = new FormData();
+    form.append("name", name);
+    form.append("file", new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), "cv.pdf");
+    return resume("", { method: "POST", body: form });
+  };
+  type Resume = ReturnType<typeof toPublicResume>;
+  const v1 = await json<Resume>(await upload("V1", makePdf()), 201);
+  const scan = makePdf([{ runs: [], image: true }]);
+  const v2 = await json<Resume>(await upload("V2", scan), 201);
+  assert.equal(v2.textStatus, "unavailable");
+  const create = async (jobTitle: string) => json<ApplicationResource>(await api("POST", "", {
+    companyName: "North Labs", jobTitle, resumeId: v1.id,
+  }), 201);
+  const first = await create("Engineer");
+  const second = await create("Developer");
+  const getApplication = async (id: string) => json<ApplicationResource>(await api("GET", `/${id}`), 200);
+  const getResume = async (id: string) => json<Resume>(await resume(`/${id}`), 200);
+  assert.equal((await getResume(v1.id)).linkedApplicationCount, 2);
+
+  assert.equal(await errorCode(await upload("Rejected replacement", Buffer.from("not a PDF")), 422), "PDF_INVALID");
+  assert.deepEqual(await getApplication(first.id), first);
+  assert.deepEqual(await getApplication(second.id), second);
+  const saved = await json<ApplicationResource>(await api("PUT", `/${first.id}`, { ...first, resumeId: v2.id }), 200);
+  assert.equal(saved.resumeName, v2.name);
+  assert.equal((await getResume(v1.id)).linkedApplicationCount, 1);
+  assert.equal((await getResume(v2.id)).linkedApplicationCount, 1);
+  assert.deepEqual(await getApplication(second.id), second);
+
+  const restored = await json<ApplicationResource>(await api("PUT", `/${first.id}`, { ...saved, resumeId: v1.id }), 200);
+  // Let deletion lock V1 first and stop on its first application before a combined PUT starts.
+  const [blockerId, targetId] = [restored.id, second.id].sort();
+  const target = targetId === restored.id ? restored : second;
+  const { deletion, replacement } = await withLockHolder(fixture.pool, async (holder, pid, start) => {
+    await holder.query("SELECT id FROM public.applications WHERE id = $1 FOR UPDATE", [blockerId]);
+    const deletion = start(resume(`/${v1.id}`, { method: "DELETE" }));
+    const deleter = await waitForBlockedQuery(fixture.pool, pid, "FROM public.applications");
+    const replacement = start(api("PUT", `/${targetId}`, {
+      ...target, resumeId: v2.id, interviews: [{ type: "Screen", scheduledAt: "2026-11-20T15:00:00Z" }],
+    }));
+    await waitForBlockedQuery(fixture.pool, deleter, "FROM public.resumes");
+    return { deletion, replacement };
+  });
+  assert.deepEqual(await json(await deletion, 200), { unlinkedApplicationCount: 2 });
+  assert.equal(await errorCode(await replacement, 409), "VERSION_CONFLICT");
+  assert.equal(await errorCode(await resume(`/${v1.id}/file`), 404), "NOT_FOUND");
+  for (const original of [restored, second]) {
+    const { updatedAt, ...application } = await getApplication(original.id);
+    assert.deepEqual({ ...application, updatedAt: original.updatedAt }, {
+      ...original, resumeId: null, resumeName: null, rowVersion: String(BigInt(original.rowVersion) + 1n),
+    });
+  }
+  await startResumeWorker().stop();
+  assert.equal(storage.objects.size, 1);
+  const download = await resume(`/${v2.id}/file`);
+  assert.equal(download.status, 200);
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), scan);
 });

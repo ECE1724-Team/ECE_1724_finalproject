@@ -74,9 +74,9 @@ function status(value: unknown, field = "status"): ApplicationStatus {
 
 function appliedDate(value: unknown): string | null {
   if (value === undefined || value === null || value === "") return null;
-  const match = typeof value === "string" ? DATE.exec(value) : null;
+  const date = typeof value === "string" && DATE.test(value) ? new Date(`${value}T00:00:00Z`) : null;
   // The round trip rejects impossible dates such as 2026-02-30.
-  if (!match || new Date(`${value as string}T00:00:00Z`).toISOString().slice(0, 10) !== value) {
+  if (!date || !Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.toISOString().slice(0, 10) !== value) {
     throw invalid("appliedDate must be a calendar date in YYYY-MM-DD format, or null.");
   }
   return value as string;
