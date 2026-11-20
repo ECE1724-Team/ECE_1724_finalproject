@@ -1,29 +1,33 @@
 @reference "./global.css";
 
 .container {
-  @apply flex w-full flex-col gap-2;
+  @apply flex w-full flex-col gap-2 border-b border-border bg-card;
 }
 
 .row {
-  @apply flex w-full items-center justify-between gap-4;
+  @apply flex w-full flex-wrap items-center justify-between gap-4;
 }
 
 .brand {
-  @apply ml-4 text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-slate-700;
+  @apply ml-4 text-lg font-semibold tracking-tight text-foreground transition-colors hover:text-primary;
 }
 
 .actions {
-  @apply flex items-center gap-2;
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.themeToggle {
+  @apply mr-4 text-muted-foreground;
 }
 
 .menuItem {
-  @apply rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-slate-100 hover:text-slate-950 focus:bg-slate-100 focus:text-slate-950;
+  @apply rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground;
 }
 
 .activeMenuItem {
-  @apply bg-slate-100 text-slate-950;
+  @apply bg-accent text-primary;
 }
 
 .inactiveMenuItem {
-  @apply text-slate-700;
+  @apply text-muted-foreground;
 }

@@ -2,6 +2,9 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
+The navigation bar includes a light/dark mode toggle. The selected mode is saved in browser local
+storage; light mode is used by default. Both palettes are defined in `src/styles/global.css`.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)

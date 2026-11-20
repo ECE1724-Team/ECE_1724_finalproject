@@ -1,7 +1,7 @@
 @reference "./global.css";
 
 .form {
-  @apply mx-auto grid max-w-2xl gap-5 rounded-lg border border-slate-200 p-6;
+  @apply mx-auto grid max-w-2xl gap-5 rounded-lg border border-border bg-card p-6;
 }
 
 .errorAlert {

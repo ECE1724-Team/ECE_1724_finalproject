@@ -1,6 +1,7 @@
-import { useState } from "react"
+import { useLayoutEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Link, useNavigate } from "react-router"
+import { Moon, Sun } from "lucide-react"
 import { signOut } from "@/lib/auth"
 import styles from "@/styles/NavBar.module.css"
 import { useAuth } from "@/components/AuthProvider"
@@ -9,12 +10,38 @@ type NavBarProps = {
   currentLocation: string
 }
 
+const THEME_KEY = "jobflo-theme"
+
+function initialDarkMode() {
+  try {
+    return localStorage.getItem(THEME_KEY) === "dark"
+  } catch (error) {
+    console.warn("Unable to read the saved theme preference.", error)
+    return false
+  }
+}
+
 export default function NavBar({ currentLocation }: NavBarProps) {
   const navigate = useNavigate()
   const { status, setUnauthenticated } = useAuth()
 
   const [signingOut, setSigningOut] = useState(false)
+  const [darkMode, setDarkMode] = useState(initialDarkMode)
   const authStatus = status === "authenticated"
+
+  useLayoutEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode)
+  }, [darkMode])
+
+  function toggleTheme() {
+    const next = !darkMode
+    setDarkMode(next)
+    try {
+      localStorage.setItem(THEME_KEY, next ? "dark" : "light")
+    } catch (error) {
+      console.warn("Unable to save the theme preference.", error)
+    }
+  }
 
   const menuItemClass = (paths: string[]) => {
     const isActive = paths.some((path) =>
@@ -106,6 +133,17 @@ export default function NavBar({ currentLocation }: NavBarProps) {
               </Button>
             </>
           )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={styles.themeToggle}
+            aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+            title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={toggleTheme}
+          >
+            {darkMode ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+          </Button>
         </nav>
       </div>
     </div>

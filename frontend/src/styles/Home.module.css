@@ -5,7 +5,7 @@
 }
 
 .hero {
-  @apply grid justify-items-start gap-5 rounded-2xl bg-muted/60 px-6 py-12 sm:px-12 sm:py-16;
+  @apply grid justify-items-start gap-5 rounded-2xl bg-card px-6 py-12 sm:px-12 sm:py-16;
 }
 
 .eyebrow {

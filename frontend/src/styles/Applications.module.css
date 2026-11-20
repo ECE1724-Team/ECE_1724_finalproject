@@ -73,5 +73,5 @@
 }
 
 .filterSelect {
-  @apply w-full;
+  @apply w-full bg-card;
 }
