@@ -31,7 +31,7 @@ export interface ChatModelLimits {
   totalMs: number;
 }
 
-export const DEFAULT_LIMITS: ChatModelLimits = { maxOutputTokens: 2_000, idleMs: 30_000, totalMs: 120_000 };
+export const DEFAULT_LIMITS: ChatModelLimits = { maxOutputTokens: 4_000, idleMs: 30_000, totalMs: 120_000 };
 
 export class ModelTimeoutError extends Error {
   constructor() {

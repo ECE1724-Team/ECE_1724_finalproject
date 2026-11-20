@@ -73,7 +73,7 @@ Use the existing Express, PostgreSQL, and Vercel AI SDK design. The two AI migra
 
 - Use `gpt-6-luna` for both replies and internal summaries. An ordinary turn makes one model call. A turn that needs compression makes one additional call. Inject a fake model during development and CI. Reserve live calls for a few integration checks, the rehearsal, and the demo. [Model details and pricing](https://developers.openai.com/api/docs/models/gpt-6-luna)
 - **The total budget for live testing and the demo is US$5.** Set aside US$2 for the demo. Before each live test session, check project usage and estimate the cost from the input and output caps at the current rates. Stop if the estimate exceeds the remaining budget. Use fictional resumes, record the model and token usage separately for replies and summaries, and keep credentials, resume text, and chat content out of logs.
-- Start with a project limit of 128,000 input tokens per model request, 2,000 output tokens per reply, and 800 output tokens per internal summary. Count the entire request, including system instructions and materials, with a compatible tokenizer or a conservative upper bound. Cancel the call if the stream makes no progress for 30 seconds or the turn reaches 120 seconds, and expose the resulting state so the client can recover. Calibrate the window and compression thresholds with fixtures in Phase 4.
+- Start with a project limit of 128,000 input tokens per model request, 4,000 output tokens per reply (raised from 2,000 on 2026-11-19: a Chinese question set with answers hit 2,000), and 800 output tokens per internal summary. Count the entire request, including system instructions and materials, with a compatible tokenizer or a conservative upper bound. Cancel the call if the stream makes no progress for 30 seconds or the turn reaches 120 seconds, and expose the resulting state so the client can recover. Calibrate the window and compression thresholds with fixtures in Phase 4.
 
 ### 2026-11-19: Phase 1 · Open a workspace from an application (done)
 
@@ -150,7 +150,7 @@ pass. No live model calls.
 Built:
 - [`integrations/llm/openai.ts`](../backend/src/integrations/llm/openai.ts) on `ai@7.0.162` and
   `@ai-sdk/openai@4.0.108` (pinned; latest releases at least two weeks old). Requests carry no tools,
-  have 2,000 output tokens and stop after 30 s without text or 120 s in all. The SDK's default
+  have 4,000 output tokens (was 2,000) and stop after 30 s without text or 120 s in all. The SDK's default
   `onError` is switched off because it logs the request body; our logs record only the error type.
 - `OPENAI_API_KEY` and `AI_MODEL` (default `gpt-6-luna`) in `env.ts` and `.env.example`. Without a
   key the server warns, reads work and a send or retry answers 503 `AI_SERVICE_UNAVAILABLE` without
