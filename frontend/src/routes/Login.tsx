@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { signIn, signUp } from "@/lib/auth"
+import styles from "@/styles/Login.module.css"
 
 export default function Login() {
   const navigate = useNavigate()
@@ -50,8 +51,8 @@ export default function Login() {
   }
 
   return (
-    <main className="mx-auto grid max-w-md gap-6 px-4 py-12">
-      <div className="flex justify-center gap-2" role="group" aria-label="Choose login or registration">
+    <main className={styles.page}>
+      <div className={styles.modeSwitch} role="group" aria-label="Choose login or registration">
         <Button
           type="button"
           variant={mode === "login" ? "default" : "outline"}
@@ -77,8 +78,8 @@ export default function Login() {
             <CardDescription>Sign in to your JobFlo.AI account.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="grid gap-4" onSubmit={handleSubmit}>
-              <div className="grid gap-2">
+            <form className={styles.form} onSubmit={handleSubmit}>
+              <div className={styles.fieldGroup}>
                 <Label htmlFor="login-email">Email</Label>
                 <Input
                   autoComplete="email"
@@ -90,7 +91,7 @@ export default function Login() {
                   onChange={(event) => setEmail(event.target.value)}
                 />
               </div>
-              <div className="grid gap-2">
+              <div className={styles.fieldGroup}>
                 <Label htmlFor="login-password">Password</Label>
                 <Input
                   autoComplete="current-password"
@@ -129,8 +130,8 @@ export default function Login() {
                 </AlertDescription>
               </Alert>
             ) : (
-              <form className="grid gap-4" onSubmit={handleSubmit}>
-                <div className="grid gap-2">
+              <form className={styles.form} onSubmit={handleSubmit}>
+                <div className={styles.fieldGroup}>
                   <Label htmlFor="register-name">Name</Label>
                   <Input
                     autoComplete="name"
@@ -141,7 +142,7 @@ export default function Login() {
                     onChange={(event) => setName(event.target.value)}
                   />
                 </div>
-                <div className="grid gap-2">
+                <div className={styles.fieldGroup}>
                   <Label htmlFor="register-email">Email</Label>
                   <Input
                     autoComplete="email"
@@ -153,7 +154,7 @@ export default function Login() {
                     onChange={(event) => setEmail(event.target.value)}
                   />
                 </div>
-                <div className="grid gap-2">
+                <div className={styles.fieldGroup}>
                   <Label htmlFor="register-password">Password</Label>
                   <Input
                     autoComplete="new-password"

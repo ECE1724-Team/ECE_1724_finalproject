@@ -1,0 +1,33 @@
+@reference "./global.css";
+
+.container {
+  @apply flex w-full flex-col gap-2;
+}
+
+.row {
+  @apply flex w-full items-center justify-between gap-4;
+}
+
+.brand {
+  @apply text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-slate-700;
+}
+
+.actions {
+  @apply flex items-center gap-2;
+}
+
+.menubar {
+  @apply border-none bg-transparent p-0;
+}
+
+.menuItem {
+  @apply rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-slate-100 hover:text-slate-950 focus:bg-slate-100 focus:text-slate-950 data-[state=open]:bg-slate-100;
+}
+
+.activeMenuItem {
+  @apply bg-slate-100 text-slate-950;
+}
+
+.inactiveMenuItem {
+  @apply text-slate-700;
+}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label"
 import {
   Card,
   CardContent,
@@ -11,6 +12,7 @@ import {
 import { Link } from "react-router";
 import type { ApplicationList, ApplicationSummary } from "../types";
 import { fakeApplications } from "../lib/testpayloads";
+import styles from "@/styles/Applications.module.css";
 
 const PAGE_SIZE = 20;
 
@@ -43,17 +45,17 @@ export default function Applications({ mock = false }) {
         setApplications(result.data);
         setTotal(result.counts.total);
       } catch {
-          setError("Failed to load applications");
+        setError("Failed to load applications");
       } finally {
-          setLoading(false);
+        setLoading(false);
       }
     }
 
-    if(mock) {
-        setApplications(fakeApplications);
-        setTotal(fakeApplications.length);
-        setLoading(false);
-        return;
+    if (mock) {
+      setApplications(fakeApplications);
+      setTotal(fakeApplications.length);
+      setLoading(false);
+      return;
     }
 
     loadApplications();
@@ -65,9 +67,13 @@ export default function Applications({ mock = false }) {
   const visibleApplications = applications.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-8">
-      <header>
-        <h1 className="text-2xl font-semibold">Applications</h1>
+    <main className={styles.page}>
+      <Label className={styles.title}>Applications</Label>
+      <header className={styles.header}>
+        <Label className={styles.title}>Applications</Label>
+        <Button nativeButton={false} render={<Link to="/application" />}>
+          New Application
+        </Button>
       </header>
 
       {error && (
@@ -83,15 +89,15 @@ export default function Applications({ mock = false }) {
       ) : (
         <section
           aria-label="Applications"
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
+          className={styles.applicationGrid}
         >
           {visibleApplications.map((application) => (
             <Link
               key={application.id}
               to={`/application/${application.id}`}
-              className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className={styles.applicationLink}
             >
-              <Card className="min-h-32 transition-colors hover:bg-muted/50">
+              <Card className={styles.applicationCard}>
                 <CardHeader>
                   <CardTitle>{application.companyName}</CardTitle>
                   <CardDescription>
@@ -99,7 +105,7 @@ export default function Applications({ mock = false }) {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <p className="capitalize">{application.status}</p>
+                  <p className={styles.status}>{application.status}</p>
                 </CardContent>
               </Card>
             </Link>
@@ -107,11 +113,11 @@ export default function Applications({ mock = false }) {
         </section>
       )}
 
-      <footer className="flex items-center justify-between gap-4">
-        <p className="text-sm text-muted-foreground">
+      <footer className={styles.footer}>
+        <p className={styles.count}>
           Showing {firstItem}-{lastItem} of {total}
         </p>
-        <div className="flex items-center gap-2">
+        <div className={styles.pagination}>
           <Button
             type="button"
             variant="outline"
@@ -120,7 +126,7 @@ export default function Applications({ mock = false }) {
           >
             Previous
           </Button>
-          <span className="text-sm">
+          <span className={styles.pageNumber}>
             Page {page} of {totalPages}
           </span>
           <Button

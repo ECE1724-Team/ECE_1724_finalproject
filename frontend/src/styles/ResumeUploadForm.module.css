@@ -1,0 +1,25 @@
+@reference "./global.css";
+
+.description {
+  @apply mb-4;
+}
+
+.fields {
+  @apply grid gap-4 sm:grid-cols-2;
+}
+
+.fieldGroup {
+  @apply grid gap-2;
+}
+
+.actionsColumn {
+  @apply sm:col-span-2;
+}
+
+.actions {
+  @apply flex justify-end gap-2;
+}
+
+.feedback {
+  @apply mt-4;
+}

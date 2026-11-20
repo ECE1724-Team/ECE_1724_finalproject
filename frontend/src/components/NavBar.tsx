@@ -4,14 +4,16 @@ import {
   MenubarMenu,
   MenubarTrigger,
 } from "@/components/ui/menubar"
-import { Link } from "react-router"
+import { Link, useNavigate } from "react-router"
 import { getSession, signOut } from "@/lib/auth"
+import styles from "@/styles/NavBar.module.css"
 
 type NavBarProps = {
   currentLocation: string
 }
 
 export default function NavBar({ currentLocation }: NavBarProps) {
+  const navigate = useNavigate()
 
   const [authStatus, setAuthStatus] = useState<boolean>(false)
   const [signingOut, setSigningOut] = useState(false)
@@ -41,8 +43,7 @@ export default function NavBar({ currentLocation }: NavBarProps) {
       path === "/" ? currentLocation === path : currentLocation.startsWith(path),
     );
 
-    return `rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-slate-100 hover:text-slate-950 focus:bg-slate-100 focus:text-slate-950 data-[state=open]:bg-slate-100 ${isActive ? "bg-slate-100 text-slate-950" : "text-slate-700"
-      }`;
+    return `${styles.menuItem} ${isActive ? styles.activeMenuItem : styles.inactiveMenuItem}`;
   };
 
   async function handleSignOut() {
@@ -58,21 +59,22 @@ export default function NavBar({ currentLocation }: NavBarProps) {
       window.alert("Unable to sign out. Please try again.");
     } finally {
       setSigningOut(false)
+      navigate("/login")
     }
   }
 
   return (
-    <div className="flex w-full flex-col gap-2">
-      <div className="flex w-full items-center justify-between gap-4">
+    <div className={styles.container}>
+      <div className={styles.row}>
         <Link
           to="/"
-          className="text-lg font-semibold tracking-tight text-slate-900 transition-colors hover:text-slate-700"
+          className={styles.brand}
         >
           JobFlo.AI
         </Link>
 
-        <div className="flex items-center gap-2">
-          <Menubar className="border-none bg-transparent p-0">
+        <div className={styles.actions}>
+          <Menubar className={styles.menubar}>
             <MenubarMenu>
               <MenubarTrigger className={menuItemClass(["/"])}>
                 <Link to="/">Dashboard</Link>
@@ -81,6 +83,11 @@ export default function NavBar({ currentLocation }: NavBarProps) {
             <MenubarMenu>
               <MenubarTrigger className={menuItemClass(["/applications", "/application"])}>
                 <Link to="/applications">Applications</Link>
+              </MenubarTrigger>
+            </MenubarMenu>
+            <MenubarMenu>
+              <MenubarTrigger className={menuItemClass(["/resumes"])}>
+                <Link to="/resumes">Resumes</Link>
               </MenubarTrigger>
             </MenubarMenu>
             <MenubarMenu>

@@ -1,0 +1,45 @@
+@reference "./global.css";
+
+.page {
+  @apply mx-auto grid max-w-7xl gap-6 px-4 py-8;
+}
+
+.title {
+  @apply text-2xl font-semibold;
+}
+
+.header {
+  @apply flex items-center justify-between gap-4;
+}
+
+.applicationGrid {
+  @apply grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5;
+}
+
+.applicationLink {
+  @apply block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+}
+
+.applicationCard {
+  @apply min-h-32 transition-colors hover:bg-muted/50;
+}
+
+.status {
+  @apply capitalize;
+}
+
+.footer {
+  @apply flex items-center justify-between gap-4;
+}
+
+.count {
+  @apply text-sm text-muted-foreground;
+}
+
+.pagination {
+  @apply flex items-center gap-2;
+}
+
+.pageNumber {
+  @apply text-sm;
+}

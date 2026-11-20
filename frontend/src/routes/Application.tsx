@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { fakeApplications } from "@/lib/testpayloads";
+import styles from "@/styles/Application.module.css";
 
 
 export default function Application({mock = false}) {
@@ -51,16 +52,16 @@ export default function Application({mock = false}) {
     }, [id]);
 
     if (loading) return (
-        <div className="mx-auto grid max-w-2xl gap-5 rounded-lg p-6">
-            <Alert className="rounded-md py-2">
+        <div className={styles.messageContainer}>
+            <Alert className={styles.alert}>
                 <AlertDescription>{"Loading application details..."}</AlertDescription>
             </Alert>
         </div>
     );
 
     if (loadError) return (
-        <div className="mx-auto grid max-w-2xl gap-5 rounded-lg p-6">
-            <Alert variant="destructive" className="rounded-md py-2 text-red-700">
+        <div className={styles.messageContainer}>
+            <Alert variant="destructive" className={`${styles.alert} ${styles.errorText}`}>
                 <AlertDescription>{"Error loading application"}</AlertDescription>
             </Alert>
         </div>
@@ -68,8 +69,8 @@ export default function Application({mock = false}) {
 
 
     if (id && !application) return (
-        <div className="mx-auto grid max-w-2xl gap-5 rounded-lg p-6">
-            <Alert className="rounded-md py-2">
+        <div className={styles.messageContainer}>
+            <Alert className={styles.alert}>
                 <AlertDescription>{"Application not found"}</AlertDescription>
             </Alert>
         </div>

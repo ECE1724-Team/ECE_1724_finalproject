@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
+import ResumeUploadForm from "@/components/ResumeUploadForm";
+import { Link } from "react-router";
 import type {
   Application,
   ApplicationCreate,
@@ -20,6 +22,7 @@ import type {
   ResumeList,
 } from "../types";
 import { fakeResumes } from "../lib/testpayloads";
+import styles from "@/styles/ApplicationForm.module.css";
 
 type ApplicationFormProps = {
   application?: Application;
@@ -64,11 +67,22 @@ const statuses: ApplicationStatus[] = [
 
 const NO_RESUME = "No Resumes Found";
 
+function getExternalUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!URL.canParse(trimmed)) return null;
+
+  const url = new URL(trimmed);
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+    return null;
+  }
+  return url.href;
+}
+
 export default function ApplicationForm({
   application,
   mock = false,
 }: ApplicationFormProps) {
-  const isReadOnly = application ? true : false;
+  const isViewMode = application ? true : false;
   const [form, setForm] = useState<ApplicationFormData>(
     application
       ? {
@@ -90,6 +104,7 @@ export default function ApplicationForm({
   const [error, setError] = useState<string | null>(null);
   const [resumes, setResumes] = useState<Resume[]>(mock ? fakeResumes : []);
   const [loadingResumes, setLoadingResumes] = useState(true);
+  const [showResumeUpload, setShowResumeUpload] = useState(false);
 
   useEffect(() => {
 
@@ -130,7 +145,7 @@ export default function ApplicationForm({
 
   async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting || isReadOnly) return;
+    if (submitting || isViewMode) return;
 
     if (!form.companyName.trim()) {
       setError("Company name is required");
@@ -151,7 +166,7 @@ export default function ApplicationForm({
       appliedDate: form.appliedDate || null,
       resumeId: form.resumeId.trim() || null,
       notes: form.notes.trim() || undefined,
-      companyWebsiteUrl: form.companyWebsiteUrl.trim() || null,
+      companyWebsiteUrl: form.companyWebsiteUrl.trim() || undefined,
       companyNotes: form.companyNotes.trim() || null,
       offerReceived: false,
       interviews: [],
@@ -161,8 +176,7 @@ export default function ApplicationForm({
     setSubmitting(true);
 
     try {
-      //await new Promise<void>((resolve) => setTimeout(resolve, 5000));
-
+      console.log(payload)
       const response = await fetch("/api/v1/applications", {
         method: "POST",
         headers: {
@@ -191,29 +205,31 @@ export default function ApplicationForm({
     }
   }
 
-  const disabled = submitting || isReadOnly;
-  const fieldClass = isReadOnly
-    ? "border-transparent bg-transparent px-0 text-foreground shadow-none disabled:pointer-events-none disabled:cursor-default disabled:bg-transparent disabled:opacity-100 focus-visible:ring-0"
-    : "disabled:cursor-default disabled:opacity-60";
-  const textareaClass = isReadOnly
-    ? "min-h-0 resize-none rounded-none border-0 bg-transparent px-0 py-0 text-foreground shadow-none disabled:pointer-events-none disabled:cursor-default disabled:bg-transparent disabled:opacity-100 focus-visible:ring-0"
-    : "disabled:cursor-default disabled:opacity-60";
+  const disabled = submitting || isViewMode;
+  const fieldClass = isViewMode
+    ? styles.fieldView
+    : styles.fieldEdit;
+  const textareaClass = isViewMode
+    ? styles.textareaView
+    : styles.fieldEdit;
+  const jobUrlHref = isViewMode ? getExternalUrl(form.jobUrl) : null;
+  const companyWebsiteHref = isViewMode ? getExternalUrl(form.companyWebsiteUrl) : null;
 
   return (
     <form
       noValidate
       onSubmit={handleSubmit}
-      className="mx-auto grid max-w-2xl gap-5 rounded-lg border border-slate-200 p-6"
+      className={styles.form}
     >
       {error && (
-        <Alert variant="destructive" className="rounded-md py-2 text-red-700">
+        <Alert variant="destructive" className={styles.errorAlert}>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      <div className="grid gap-5 sm:grid-cols-2">
+      <div className={styles.fieldGrid}>
         <div>
-          <Label htmlFor="companyName" className="mb-1 block">
+          <Label htmlFor="companyName" className={styles.fieldLabel}>
             Company name
           </Label>
           <Input
@@ -231,7 +247,7 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          <Label htmlFor="jobTitle" className="mb-1 block">
+          <Label htmlFor="jobTitle" className={styles.fieldLabel}>
             Job title
           </Label>
           <Input
@@ -247,11 +263,11 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          <Label htmlFor="status" className="mb-1 block">
+          <Label htmlFor="status" className={styles.fieldLabel}>
             Status
           </Label>
-          {isReadOnly ? (
-            <p className="py-1 text-sm">{form.status}</p>
+          {isViewMode ? (
+            <p className={styles.fieldValue}>{form.status}</p>
           ) : (
             <Select
               value={form.status}
@@ -275,7 +291,7 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          <Label htmlFor="appliedDate" className="mb-1 block">
+          <Label htmlFor="appliedDate" className={styles.fieldLabel}>
             Applied date
           </Label>
           <Input
@@ -291,27 +307,53 @@ export default function ApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="jobUrl" className="mb-1 block">
+        <Label htmlFor="jobUrl" className={styles.fieldLabel}>
           Job URL
         </Label>
-        <Input
-          id="jobUrl"
-          name="jobUrl"
-          type="url"
-          value={form.jobUrl}
-          disabled={disabled}
-          className={fieldClass}
-          onChange={(event) => updateField("jobUrl", event.target.value)}
-        />
+        {isViewMode ? (
+          jobUrlHref ? (
+            <a
+              href={jobUrlHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.externalLink}
+            >
+              {form.jobUrl}
+            </a>
+          ) : (
+            <p className={styles.fieldValue}>{form.jobUrl || "Not provided"}</p>
+          )
+        ) : (
+          <Input
+            id="jobUrl"
+            name="jobUrl"
+            type="url"
+            value={form.jobUrl}
+            disabled={disabled}
+            className={fieldClass}
+            onChange={(event) => updateField("jobUrl", event.target.value)}
+          />
+        )}
       </div>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <Label htmlFor="resumeId" className="mb-1 block">
-            Resume
-          </Label>
-          {isReadOnly ? (
-            <p className="py-1 text-sm">
+      <div className={styles.fieldGrid}>
+        <div className={styles.resumeField}>
+          <div className={styles.resumeHeader}>
+            <Label htmlFor="resumeId">Resume</Label>
+            {!isViewMode && !showResumeUpload && !mock && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => setShowResumeUpload(true)}
+              >
+                {"Upload New Resume"}
+              </Button>
+            )}
+          </div>
+          {isViewMode ? (
+            <p className={styles.fieldValue}>
               {!form.resumeId
                 ? "No resume selected"
                 : loadingResumes
@@ -330,7 +372,7 @@ export default function ApplicationForm({
                 )
               }
             >
-              <SelectTrigger id="resumeId" className={fieldClass}>
+              <SelectTrigger id="resumeId" className={`${fieldClass} ${styles.fullWidth}`}>
                 <SelectValue
                   placeholder={loadingResumes ? "Loading resumes..." : "Select a resume"}
                 >
@@ -342,7 +384,7 @@ export default function ApplicationForm({
                       : "No resume"}
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent className="w-max min-w-(--anchor-width)">
+              <SelectContent className={styles.selectContent}>
                 <SelectItem value={NO_RESUME}>No resume</SelectItem>
                 {resumes.map((resume) => (
                   <SelectItem key={resume.id} value={resume.id}>
@@ -353,10 +395,23 @@ export default function ApplicationForm({
             </Select>
           )}
         </div>
+        {showResumeUpload && !isViewMode && (
+          <div className={styles.uploadCard}>
+            <ResumeUploadForm
+              onCancel={() => setShowResumeUpload(false)}
+              onUploaded={(resume) => {
+                setResumes((current) => [resume, ...current])
+                updateField("resumeId", resume.id)
+                setError(null)
+                setShowResumeUpload(false)
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div>
-        <Label htmlFor="jobDescription" className="mb-1 block">
+        <Label htmlFor="jobDescription" className={styles.fieldLabel}>
           Job description
         </Label>
         <Textarea
@@ -373,24 +428,39 @@ export default function ApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="companyWebsiteUrl" className="mb-1 block">
+        <Label htmlFor="companyWebsiteUrl" className={styles.fieldLabel}>
           Company website
         </Label>
-        <Input
-          id="companyWebsiteUrl"
-          name="companyWebsiteUrl"
-          type="url"
-          value={form.companyWebsiteUrl}
-          disabled={disabled}
-          className={fieldClass}
-          onChange={(event) =>
-            updateField("companyWebsiteUrl", event.target.value)
-          }
-        />
+        {isViewMode ? (
+          companyWebsiteHref ? (
+            <a
+              href={companyWebsiteHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.externalLink}
+            >
+              {form.companyWebsiteUrl}
+            </a>
+          ) : (
+            <p className={styles.fieldValue}>{form.companyWebsiteUrl || "Not provided"}</p>
+          )
+        ) : (
+          <Input
+            id="companyWebsiteUrl"
+            name="companyWebsiteUrl"
+            type="url"
+            value={form.companyWebsiteUrl}
+            disabled={disabled}
+            className={fieldClass}
+            onChange={(event) =>
+              updateField("companyWebsiteUrl", event.target.value)
+            }
+          />
+        )}
       </div>
 
       <div>
-        <Label htmlFor="companyNotes" className="mb-1 block">
+        <Label htmlFor="companyNotes" className={styles.fieldLabel}>
           Company notes
         </Label>
         <Textarea
@@ -405,7 +475,7 @@ export default function ApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="notes" className="mb-1 block">
+        <Label htmlFor="notes" className={styles.fieldLabel}>
           Personal notes
         </Label>
         <Textarea
@@ -419,15 +489,25 @@ export default function ApplicationForm({
         />
       </div>
 
-      {!isReadOnly && (
+      <div className={styles.formActions}>
         <Button
-          type="submit"
-          disabled={disabled}
-          className="disabled:cursor-default disabled:opacity-60"
+          nativeButton={false}
+          render={<Link to="/applications" />}
+          variant={isViewMode ? "default" : "outline"}
+          className={isViewMode ? styles.backButtonView : styles.actionButton}
         >
-          {submitting ? "Creating..." : "Create application"}
+          Back to all applications
         </Button>
-      )}
+        {!isViewMode && (
+          <Button
+            type="submit"
+            disabled={disabled}
+            className={styles.submitButton}
+          >
+            {submitting ? "Creating..." : "Create application"}
+          </Button>
+        )}
+      </div>
     </form>
   );
 }
