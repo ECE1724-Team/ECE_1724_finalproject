@@ -9,6 +9,7 @@ import { Database } from "./db/transaction.js";
 import { createSmtpEmailSender } from "./integrations/email/smtp.js";
 import { createR2Storage } from "./integrations/object-storage/r2.js";
 import { createPdfExtractor } from "./integrations/pdf/extractor.js";
+import { createAiRouter } from "./modules/ai/routes.js";
 import { createAuthentication } from "./modules/auth/auth.js";
 import { assertAuthSchema } from "./modules/auth/schema.js";
 import { mountPostgresResumeRoutes } from "./modules/resumes/postgres-routes.js";
@@ -34,6 +35,7 @@ async function main() {
     database, rateLimitPool, config: environment.auth, emailSender: createSmtpEmailSender(environment.smtp),
   });
   const businessRouter = Router();
+  businessRouter.use(createAiRouter({ pool }));
   const storage = environment.r2 && createR2Storage(environment.r2);
   const startResumeWorker = storage && mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
   if (!storage) console.warn("R2 settings are empty. Resume routes and cleanup worker are disabled.");
