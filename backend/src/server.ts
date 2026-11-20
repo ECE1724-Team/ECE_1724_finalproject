@@ -7,6 +7,8 @@ import { ConfigurationError } from "./config/errors.js";
 import { createPool } from "./db/pool.js";
 import { Database } from "./db/transaction.js";
 import { createSmtpEmailSender } from "./integrations/email/smtp.js";
+import { createPostgresApplicationService } from "./modules/applications/postgres-module.js";
+import { createApplicationRouter } from "./modules/applications/routes.js";
 import { createR2Storage } from "./integrations/object-storage/r2.js";
 import { createPdfExtractor } from "./integrations/pdf/extractor.js";
 import { createAuthentication } from "./modules/auth/auth.js";
@@ -33,7 +35,10 @@ async function main() {
   const authentication = createAuthentication({
     database, rateLimitPool, config: environment.auth, emailSender: createSmtpEmailSender(environment.smtp),
   });
+
+  // Business routes sit behind createApp's /api/v1 origin check and requireVerifiedUser.
   const businessRouter = Router();
+  businessRouter.use("/applications", createApplicationRouter({ service: createPostgresApplicationService(pool) }));
   const storage = environment.r2 && createR2Storage(environment.r2);
   const startResumeWorker = storage && mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
   if (!storage) console.warn("R2 settings are empty. Resume routes and cleanup worker are disabled.");
