@@ -214,3 +214,15 @@ export async function createAuthFixture(options: AuthFixtureOptions = {}): Promi
 export function uniqueEmail(): string {
   return `student-${randomUUID()}@example.test`;
 }
+
+/** Registers and verifies a user through the real auth routes; returns its ID and session cookie. */
+export async function verifiedUser(fixture: AuthFixture): Promise<{ id: string; cookie: string }> {
+  const registered = await fixture.request("/api/auth/sign-up/email", {
+    body: { name: "Test owner", email: uniqueEmail(), password: "a-strong-password-123" },
+  });
+  if (registered.status !== 200) throw new Error(`Sign-up failed with ${registered.status}`);
+  const { user } = await registered.json() as { user: { id: string } };
+  const cookie = sessionCookie(await fixture.request(verificationUrl(fixture.emails.at(-1)!, { callbackURL: null })));
+  if (!cookie) throw new Error("Verification did not return a session cookie");
+  return { id: user.id, cookie };
+}

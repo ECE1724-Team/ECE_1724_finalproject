@@ -12,7 +12,7 @@ contract), [AI Design](AI_Design.md) and [endpoints.json](endpoints.json).
 |---|---|
 | Resume backend | Done. Phase 4 Stages 1–2 passed, including live R2. |
 | Browser check | Pending (target Nov 25): needs application API [PR #11](https://github.com/ECE1724-Team/ECE_1724_finalproject/pull/11) reviewed and the resume dialog connected; the frontend still uses mocks. |
-| AI Copilot | Scope agreed. Implementation will follow the five phases below. |
+| AI Copilot | Phases 1–3 done: workspace API, material snapshots, streaming replies with retry and recovery; live check passed (≈ US$0.0002). Phase 4 next. |
 
 ## Progress log
 
@@ -75,33 +75,121 @@ Use the existing Express, PostgreSQL, and Vercel AI SDK design. The two AI migra
 - **The total budget for live testing and the demo is US$5.** Set aside US$2 for the demo. Before each live test session, check project usage and estimate the cost from the input and output caps at the current rates. Stop if the estimate exceeds the remaining budget. Use fictional resumes, record the model and token usage separately for replies and summaries, and keep credentials, resume text, and chat content out of logs.
 - Start with a project limit of 128,000 input tokens per model request, 2,000 output tokens per reply, and 800 output tokens per internal summary. Count the entire request, including system instructions and materials, with a compatible tokenizer or a conservative upper bound. Cancel the call if the stream makes no progress for 30 seconds or the turn reaches 120 seconds, and expose the resulting state so the client can recover. Calibrate the window and compression thresholds with fixtures in Phase 4.
 
-### Phase 1 · Open a workspace from an application
+### 2026-11-19: Phase 1 · Open a workspace from an application (done)
 
-**Implementation.** Define the shared AI router in `backend/src/modules/ai/routes.ts`. Implement workspace and conversation reads and writes in `workspaces/postgres-repository.ts` and `conversations/postgres-repository.ts`. These module paths are relative to `backend/src/modules/ai/`. Mount the router on the existing protected business router in `backend/src/server.ts`. Reuse the application repository's search and six status values for the position selector. Map `positionTitle` to the API's `jobTitle` and take the user identity from the verified session.
+Built: [`ai/routes.ts`](../backend/src/modules/ai/routes.ts) with the seven Phase 1 operations
+(`listAiApplications`, `ensureAiWorkspace`, `getAiWorkspace`, list/create conversations,
+`getAiConversation`, `listAiMessages`), mounted on the business router in `server.ts` for every
+environment (no R2 or model settings needed). SQL lives in
+[`workspaces/postgres-repository.ts`](../backend/src/modules/ai/workspaces/postgres-repository.ts) and
+[`conversations/postgres-repository.ts`](../backend/src/modules/ai/conversations/postgres-repository.ts);
+every query scopes by conversation → workspace → application → user from the session.
+- Position search reuses the application repository's `list` (literal `ILIKE`, newest first) and maps
+  `positionTitle` to `jobTitle`. A bad `status` or a repeated `q` is 400 `BAD_REQUEST`.
+- PUT workspace is `INSERT … ON CONFLICT (application_id) DO NOTHING` then a read, so repeats and
+  races return the same row with 200. Conversations are created only by POST (201, `title: null`).
+- The workspace's `materials` come from the same reader as turn preparation (Phase 2);
+  `linkedResume` lists any live linked resume, including a text-unavailable one, whose state shows
+  in `materials.resume`. No text is returned.
+- `materialState` is the baseline (§8.4), computed for a whole list in one query; messages come
+  back in numeric `sequence_no` order as decimal strings.
+- Missing, malformed and other users' IDs are 404. A database outage on these routes is 503
+  `AI_SERVICE_UNAVAILABLE` (endpoints.json), not the shared `SERVICE_UNAVAILABLE`.
 
-**Endpoints.** List the user's applications, create or reuse an application's workspace with PUT, read the workspace, list or create conversations, and read a conversation and its messages. The workspace exposes material metadata using the same material reader that Phase 2 uses to prepare a generation. Create a conversation only when the user chooses “New conversation.” Its initial title is `null`. Return messages in ascending numeric `sequenceNo` order and encode that value as a decimal string in the API.
+Tests: [`ai-workspace.db.test.ts`](../backend/tests/integration/ai-workspace.db.test.ts) over real HTTP,
+sessions and PostgreSQL: 401/403/404 (another user, malformed ID); search + status filters
+together, `%` as a literal, empty results; the same workspace twice; two conversations with their
+own histories in order 2, 9, 10; and zero generations, snapshots, messages and summaries after
+browsing, entering and creating conversations.
 
-**Tests and acceptance.** Add `backend/tests/integration/ai-workspace.db.test.ts` using the verified-account and application fixtures. Check that search and status filters work together on the user's applications, including an empty result. Opening an application twice must return the same workspace, and two conversations must retain independent histories. Expect 401 for anonymous access, 403 for an unverified account, and 404 for another user's resource. Browsing positions, entering a workspace, and creating an empty conversation must produce zero generations, material snapshots, or model calls. Once the Phase 2 reader is available, verify that the workspace and generation paths produce the same fingerprints for the same materials.
+### 2026-11-19: Phase 2 · Fix the materials for each turn and assemble the model input (done)
 
-### Phase 2 · Fix the materials for each turn and assemble the model input
+Built:
+- [`context/materials.ts`](../backend/src/modules/ai/context/materials.ts): the registry of six kinds
+  (`resume`, `jd`, `company`, `position`, `company_website_url`, `company_notes`), one reader
+  query (personal notes are not selected), and fingerprints `v1:` + SHA-256 of
+  `JSON.stringify([kind, availability, reasonCode, sourceResumeId, contentText])`.
+  Absence reasons: `RESUME_NOT_LINKED`, `RESUME_TEXT_UNAVAILABLE` (keeps the resume ID and name),
+  `FIELD_MISSING` (null or blank). `changedKinds` includes kinds the baseline lacks, so a first
+  turn reports all six.
+- [`context/prompt.ts`](../backend/src/modules/ai/context/prompt.ts): system rules, then
+  `<materials>` (XML-escaped text, `version` = resume name or the first 8 hex of the fingerprint),
+  then `<material_changes>` only when a baseline exists and differs, then history, then the input
+  once. Replies whose materials differ from the current ones get `[based on earlier materials: …]`.
+- [`generations/postgres-repository.ts`](../backend/src/modules/ai/generations/postgres-repository.ts):
+  `acceptInput` (conversation lock, active-run check → `GENERATION_ACTIVE` with nothing saved,
+  sequence allocation, title from the first sentence up to 80 characters) and `prepareMaterials`
+  (REPEATABLE READ; conversation then run lock; reuse a snapshot by `(conversation, kind,
+  fingerprint)` or insert one; one `generation_materials` row per kind; baseline ID;
+  `streaming`). `loadHistory` sends only completed turns; an input that never got an answer stays
+  in the chat record but not in the prompt. `completeGeneration` and `endGeneration` were added
+  early so tests can advance or skip the baseline; Phase 3 uses them as they are.
+- [`generations/service.ts`](../backend/src/modules/ai/generations/service.ts) `prepareTurn`: on a
+  preparation error it records `MATERIAL_REFRESH_FAILED` in a separate transaction and rethrows, so
+  the caller never reaches the model. Phase 3 added the model call in the same file.
+- `getSnapshot` (conversation repository) reads a snapshot only through its own conversation;
+  Phase 3 added its HTTP route.
 
-**Implementation.** Define the six material kinds, source fields, version labels, and reasons for missing content in `context/materials.ts`. Assemble the request in `context/prompt.ts`. In `generations/postgres-repository.ts`, use the existing pool and `withTransaction` for two short transactions. The first locks the conversation and saves the user message and its `preparing` attempt. Derive the title from the opening sentence of the first accepted message. The second reads the current application, linked resume, and materials behind the most recent completed reply from one consistent database snapshot.
+Tests: [`ai-context.test.ts`](../backend/tests/unit/ai-context.test.ts) checks the exact roles and
+text of first-turn and V1→V2 requests, escaping, notices for unlinked/scanned/removed materials and
+fingerprint rules. [`ai-materials.db.test.ts`](../backend/tests/integration/ai-materials.db.test.ts)
+covers an edit reverted before the next turn (same snapshots), two resumes with identical text,
+missing JD and scanned resume as distinct absences, unlink, relink reusing V1's snapshot, deletion
+with V1 text still readable only through its conversation, a switch during generation (that turn
+keeps V1, the next sees V2), independent refresh of two conversations, a failed attempt repeating
+the notice and reusing its snapshot, a concurrent send rejected without saving input, and injected
+snapshot-write and material-read failures (run `failed`/`MATERIAL_REFRESH_FAILED`, input kept,
+no snapshots, zero model calls). Workspace and preparation fingerprints match.
 
-- Load the resume, JD, company, position, company website URL, and company notes. Read saved resume text from PostgreSQL and exclude personal notes from the prompt. Record a missing resume link, a linked resume marked `text_unavailable`, and a missing JD as distinct cases. Chat can continue with the available materials. If a database read or snapshot write fails, roll back preparation, record `MATERIAL_REFRESH_FAILED`, and retain the accepted input for retry.
-- Serialize the kind, availability, reason, source ID, and exact text in a stable order. Prefix the SHA-256 digest with `v1:`. Within each conversation, reuse snapshots with matching fingerprints. Link one snapshot per material kind to the generation and save the comparison baseline before entering `streaming`. Only a **completed** generation advances the baseline.
-- Assemble behavior rules, fixed materials and version labels, any change notice, this conversation's history, and the current input in that order. Include the current input once. Annotate older replies that relied on superseded materials. Start reporting changes only after a baseline exists. The prompt treats materials as data, grounds advice in known facts, and explains limitations when information is missing. Support resume advice, HR, technical, and behavioral interviews, one-question-at-a-time follow-ups, and feedback. Save feedback as an ordinary reply.
+Results at the end of Phase 2 (Node 26.8.2, PostgreSQL 18.6): typecheck, `npm test` (104),
+`npm run test:db` (170, run with `TEST_DATABASE_URL` on a local loopback server) and build all
+pass. No live model calls.
 
-**Tests and acceptance.** Inspect the exact roles and text sent to the model in `backend/tests/unit/ai-context.test.ts`, and inspect persisted snapshots in `backend/tests/integration/ai-materials.db.test.ts`. Cover switching from V1 to V2, two resume IDs with identical text, an edit reverted before the next turn, a missing JD, a scanned resume, unlinking or deletion, and an injected material-read failure. A resume switch during generation must affect only later turns. Each conversation must refresh on its own next turn. Historical snapshots must remain readable through their original conversation after resume deletion. A database failure during preparation must result in zero model calls.
+### 2026-11-19: Phase 3 · Stream and save replies, then handle disconnects and retries (done)
 
-### Phase 3 · Stream and save replies, then handle disconnects and retries
+Built:
+- [`integrations/llm/openai.ts`](../backend/src/integrations/llm/openai.ts) on `ai@7.0.162` and
+  `@ai-sdk/openai@4.0.108` (pinned; latest releases at least two weeks old). Requests carry no tools,
+  have 2,000 output tokens and stop after 30 s without text or 120 s in all. The SDK's default
+  `onError` is switched off because it logs the request body; our logs record only the error type.
+- `OPENAI_API_KEY` and `AI_MODEL` (default `gpt-6-luna`) in `env.ts` and `.env.example`. Without a
+  key the server warns, reads work and a send or retry answers 503 `AI_SERVICE_UNAVAILABLE` without
+  saving input.
+- Routes for send, retry, list/read generations and read a snapshot (without `sourceLabel`, which
+  is not in `AiMaterialSnapshot`). The body must be exactly `{ content }` with non-blank text.
+  JSON errors before the stream opens (400, 404, 409 `GENERATION_ACTIVE` / `RETRY_CONFLICT`, 503);
+  after it, SSE events in contract order with `Cache-Control: no-store`.
+- [`generations/service.ts`](../backend/src/modules/ai/generations/service.ts) `runTurn`: prepare →
+  `materials.synced` → stream deltas → save the reply and complete the run in one transaction →
+  `generation.completed`. Each failure ends the run and sends `generation.error` with its stage:
+  preparation `MATERIAL_REFRESH_FAILED`, context or model `GENERATION_FAILED` (timeouts too), client
+  gone `GENERATION_INTERRUPTED`, save failure `MESSAGE_PERSISTENCE_FAILED`. An uncertain commit is
+  checked by run ID first. Partial text is never saved.
+- `acceptRetry` checks eligibility under the conversation lock (latest user message, its most
+  recent attempt, `failed`/`interrupted`) and adds a new attempt on the same input. `server.ts` runs
+  `recoverAbandonedGenerations` before listening. `generation_runs.model_metadata` stores provider,
+  model, input/output tokens and finish reason.
 
-**Implementation.** Wrap SDK text streaming, cancellation, and usage reporting in `backend/src/integrations/llm/openai.ts`. Update `backend/package.json`, its lockfile, `backend/src/config/env.ts`, and `backend/.env.example`. Read credentials from the server environment. In development, workspace and history reads should work without model configuration, and a send should report that generation is unavailable. Coordinate preparation, the model call, and the final write in `generations/service.ts`. Extend the generation repository, shared router, and `server.ts` accordingly.
+Tests: [`fakes/llm.ts`](../backend/tests/fakes/llm.ts) is a `MockLanguageModelV4` the test can feed,
+fail or finish, driven through the real adapter. [`ai-generation.db.test.ts`](../backend/tests/integration/ai-generation.db.test.ts)
+(real HTTP, SSE, PostgreSQL) covers event order, no saved deltas, recovery of a missed completion
+from reads, 409 without saving input, two conversations at once, the deletion guard, failure then
+retry (one user message, failed attempt kept, `RETRY_CONFLICT` for ineligible attempts),
+preparation failure with no model call, client disconnect (interrupted, nothing saved), restart
+recovery and the no-key 503. [`llm.test.ts`](../backend/tests/unit/llm.test.ts) covers usage,
+model error, abort and both timeouts.
 
-- Complete the OpenAPI operations for listing generations, reading an attempt, sending a message, retrying by generation ID, and reading a snapshot within its conversation. Accept only `{ content }` for a new send. Check both conversation membership and user ownership for generation and snapshot reads.
-- Emit `generation.accepted` after the input commits, `materials.synced` after preparation commits, and `text.delta` as text arrives. In a final short transaction, save the complete reply and mark the run completed together. Emit `generation.completed` only after that commit. Return HTTP errors before streaming starts and use `generation.error` once the stream is open. If the commit outcome is uncertain, look up the generation by ID. Keep model waits and network writes outside database transactions.
-- Use the existing conversation lock and unique index to return 409 for a concurrent send in the same conversation without saving a second input. When the stream breaks or the client disconnects, cancel the model call, mark the run interrupted, and discard partial output. Allow explicit retry only for the latest user message when its most recent attempt failed or was interrupted. Reuse the original input and reread current materials. Before the single instance starts listening, mark abandoned active runs interrupted so their conversations can accept input again.
+Results (Node 26.8.2, PostgreSQL 18.6): typecheck, `npm test` (106), `npm run test:db` (176, with
+`TEST_DATABASE_URL` on a local loopback server) and build pass.
 
-**Tests and acceptance.** Add a text stream that can pause, fail, or finish on demand in `backend/tests/fakes/llm.ts`. In `backend/tests/integration/ai-generation.db.test.ts`, use real HTTP and PostgreSQL to check SSE ordering, database commits, disconnects, and restart recovery. Two conversations can generate at once. A concurrent send in the same conversation returns 409, and the existing deletion guard protects an application during generation. After a retry there is one original user message, and the failed attempt remains available for inspection. If the client misses the completion event, a status read must recover the saved reply. Finish with one live two-turn conversation using a fictional resume to verify streaming, follow-up, and persistence. Record the usage.
+Live check, `gpt-6-luna` through `runTurn` and a temporary database, fictional resume, two turns:
+| Turn | Input tokens | Output tokens | First text / total | Result |
+|---|---|---|---|---|
+| Ask one behavioral question | 522 | 22 | 1.8 s / 2.3 s | One on-call question |
+| Answer, ask for feedback | 574 | 103 | 1.5 s / 2.3 s | Feedback plus a follow-up that noted the answer did not address the on-call question |
+
+Both completed (`stop`), 4 messages saved in order. Cost ≈ US$0.0002 at $0.10 / $0.50 per 1M
+input/output tokens; reasoning tokens did not crowd out the reply at the default effort.
 
 ### Phase 4 · Add a sliding window and incremental history summaries
 
@@ -113,7 +201,7 @@ Use the existing Express, PostgreSQL, and Vercel AI SDK design. The two AI migra
 
 **Tests and acceptance.** Use small thresholds in `backend/tests/unit/ai-history.test.ts` to trigger compression predictably. Verify stored boundaries in `backend/tests/integration/ai-history.db.test.ts`. Twenty short turns below both token limits must make zero summary calls. Use a lower token threshold for the seeded demo. Crossing the threshold adds one summary call. Each incremental summary incorporates its predecessor, and each completed turn appears exactly once across the summarized prefix and verbatim window. A failed summary must leave the coverage boundary intact. Switching conversations must select only that conversation's summary. Run one live compression check on seeded fictional history. Compare the summary with the original questions, pending follow-ups, and V1 references. After switching to V2, verify that the interview continues naturally, current resume advice uses V2, and the full original history is readable after reload.
 
-### Phase 5 · Build the frontend and verify the demo
+### Phase 5 · Build the frontend and verify the demo (not now)
 
 Use the existing `/interview` entry point, `routes/`, `components/`, `lib/`, and shared `types.ts`. Create the frontend files in this final phase as shown below.
 

@@ -9,22 +9,10 @@ import { createAiRouter } from "../../src/modules/ai/routes.js";
 import { createPostgresApplicationRepository } from "../../src/modules/applications/postgres-repository.js";
 import type { NewApplication } from "../../src/modules/applications/repository.js";
 import { insertResume, newApplication, savedApplication } from "../helpers/applications.js";
-import { createAuthFixture, sessionCookie, uniqueEmail, verificationUrl, type AuthFixture } from "../helpers/auth-fixture.js";
+import { createAuthFixture, verifiedUser, type AuthFixture } from "../helpers/auth-fixture.js";
 
 const applications = createPostgresApplicationRepository();
 const origin = "http://localhost:5173";
-
-async function verifiedUser(fixture: AuthFixture) {
-  const registered = await fixture.request("/api/auth/sign-up/email", {
-    body: { name: "AI owner", email: uniqueEmail(), password: "a-strong-password-123" },
-  });
-  assert.equal(registered.status, 200);
-  const { user } = await registered.json() as { user: { id: string } };
-  const verified = await fixture.request(verificationUrl(fixture.emails.at(-1)!, { callbackURL: null }));
-  const cookie = sessionCookie(verified);
-  assert.ok(cookie);
-  return { id: user.id, cookie };
-}
 
 async function startServer(t: { after: (fn: () => Promise<void>) => void }) {
   const fixture = await createAuthFixture();

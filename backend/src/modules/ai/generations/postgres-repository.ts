@@ -3,7 +3,9 @@ import type { Db } from "../../../db/pool.js";
 import { withTransaction } from "../../../db/transaction.js";
 import { changedKinds, currentMaterials, readMaterialSource } from "../context/materials.js";
 import type { FixedMaterial, HistoryEntry, MaterialVersion } from "../context/prompt.js";
-import { findConversation, readBaselines, type MessageView } from "../conversations/postgres-repository.js";
+import {
+  SNAPSHOT_REFERENCE_FIELDS, findConversation, readBaselines, type MaterialReference, type MessageView,
+} from "../conversations/postgres-repository.js";
 
 // The short turn transactions of Database Design §7.4. Each opens and commits its own transaction;
 // model calls and network writes happen between them, never inside. Any transaction that needs
@@ -11,7 +13,33 @@ import { findConversation, readBaselines, type MessageView } from "../conversati
 
 export type AcceptResult =
   | { outcome: "ACCEPTED"; generationId: string; inputMessage: MessageView }
-  | { outcome: "NOT_FOUND" | "GENERATION_ACTIVE" };
+  | { outcome: "NOT_FOUND" | "GENERATION_ACTIVE" | "RETRY_CONFLICT" };
+
+export type GenerationStatus = "preparing" | "streaming" | "completed" | "failed" | "interrupted";
+
+/** A generation attempt as the API returns it (endpoints.json AiGeneration). */
+export interface GenerationView {
+  id: string;
+  conversationId: string;
+  inputMessageId: string;
+  status: GenerationStatus;
+  materials: Record<string, MaterialReference> | null;
+  snapshotAt: Date | null;
+  baselineGenerationId: string | null;
+  changedKinds: string[] | null;
+  assistantMessageId: string | null;
+  error: { code: string; message: string } | null;
+  startedAt: Date;
+  completedAt: Date | null;
+}
+
+/** User-facing text for each saved failure code. */
+export const ERROR_MESSAGES: Record<string, string> = {
+  MATERIAL_REFRESH_FAILED: "The materials could not be refreshed. Your message was saved; try again.",
+  GENERATION_FAILED: "The AI could not finish this reply. Try again.",
+  GENERATION_INTERRUPTED: "The reply was interrupted before it finished. Try again.",
+  MESSAGE_PERSISTENCE_FAILED: "The reply could not be saved. Try again.",
+};
 
 export interface PreparedTurn {
   generationId: string;
@@ -53,10 +81,7 @@ async function allocateSequence(db: Db, conversationId: string, title: string | 
 export function acceptInput(pool: Pool, userId: string, conversationId: string, content: string): Promise<AcceptResult> {
   return withTransaction(pool, async (client) => {
     if (!(await findConversation(client, userId, conversationId, true))) return { outcome: "NOT_FOUND" };
-    const { rows: [active] } = await client.query(`
-      SELECT 1 FROM public.generation_runs WHERE conversation_id = $1 AND status IN ('preparing', 'streaming')
-    `, [conversationId]);
-    if (active) return { outcome: "GENERATION_ACTIVE" };
+    if (await hasActiveRun(client, conversationId)) return { outcome: "GENERATION_ACTIVE" };
 
     const sequenceNo = await allocateSequence(client, conversationId, deriveTitle(content));
     const { rows: [inputMessage] } = await client.query<MessageView>(`
@@ -67,6 +92,43 @@ export function acceptInput(pool: Pool, userId: string, conversationId: string, 
       INSERT INTO public.generation_runs (conversation_id, input_message_id) VALUES ($1, $2) RETURNING id
     `, [conversationId, inputMessage.id]);
     return { outcome: "ACCEPTED", generationId: run.id, inputMessage };
+  });
+}
+
+async function hasActiveRun(db: Db, conversationId: string): Promise<boolean> {
+  const { rows } = await db.query(`
+    SELECT 1 FROM public.generation_runs WHERE conversation_id = $1 AND status IN ('preparing', 'streaming')
+  `, [conversationId]);
+  return rows.length > 0;
+}
+
+/**
+ * Explicit retry (Database Design §5.7): only the most recent attempt of the conversation's latest
+ * user message, and only when it failed or was interrupted. Creates a new attempt on the same input.
+ */
+export function acceptRetry(pool: Pool, userId: string, conversationId: string, generationId: string): Promise<AcceptResult> {
+  return withTransaction(pool, async (client) => {
+    if (!(await findConversation(client, userId, conversationId, true))) return { outcome: "NOT_FOUND" };
+    const { rows: [run] } = await client.query<{ status: GenerationStatus; latestInput: boolean; latestAttempt: boolean; inputMessageId: string }>(`
+      SELECT g.status, g.input_message_id AS "inputMessageId",
+        g.input_message_id = (SELECT id FROM public.messages WHERE conversation_id = g.conversation_id AND role = 'user'
+                              ORDER BY sequence_no DESC LIMIT 1) AS "latestInput",
+        g.id = (SELECT id FROM public.generation_runs WHERE input_message_id = g.input_message_id
+                ORDER BY started_at DESC, id DESC LIMIT 1) AS "latestAttempt"
+      FROM public.generation_runs g WHERE g.id = $1 AND g.conversation_id = $2
+    `, [generationId, conversationId]);
+    if (!run) return { outcome: "NOT_FOUND" };
+    if (await hasActiveRun(client, conversationId)) return { outcome: "GENERATION_ACTIVE" };
+    if (!["failed", "interrupted"].includes(run.status) || !run.latestInput || !run.latestAttempt) return { outcome: "RETRY_CONFLICT" };
+
+    await client.query("UPDATE public.conversations SET updated_at = statement_timestamp() WHERE id = $1", [conversationId]);
+    const { rows: [retry] } = await client.query<{ id: string }>(`
+      INSERT INTO public.generation_runs (conversation_id, input_message_id) VALUES ($1, $2) RETURNING id
+    `, [conversationId, run.inputMessageId]);
+    const { rows: [inputMessage] } = await client.query<MessageView>(`
+      SELECT ${MESSAGE_FIELDS} FROM public.messages WHERE id = $1
+    `, [run.inputMessageId]);
+    return { outcome: "ACCEPTED", generationId: retry.id, inputMessage };
   });
 }
 
@@ -198,4 +260,59 @@ export function endGeneration(pool: Pool, conversationId: string, generationId: 
     `, [generationId, conversationId, status, errorCode]);
     return rowCount === 1;
   });
+}
+
+/**
+ * The conversation's attempts, newest first, or one attempt when `generationId` is given. null when
+ * the conversation is not the user's. changedKinds is derived from the run's and its baseline's
+ * snapshot associations.
+ */
+export async function listGenerations(db: Db, userId: string, conversationId: string, generationId: string | null = null)
+  : Promise<GenerationView[] | null> {
+  if (!(await findConversation(db, userId, conversationId))) return null;
+  const { rows: runs } = await db.query<Omit<GenerationView, "materials" | "changedKinds" | "error"> & { errorCode: string | null }>(`
+    SELECT g.id, g.conversation_id AS "conversationId", g.input_message_id AS "inputMessageId", g.status,
+           g.snapshot_at AS "snapshotAt", g.baseline_generation_id AS "baselineGenerationId", g.error_code AS "errorCode",
+           g.started_at AS "startedAt", g.completed_at AS "completedAt",
+           (SELECT m.id FROM public.messages m WHERE m.generation_id = g.id AND m.role = 'assistant') AS "assistantMessageId"
+    FROM public.generation_runs g
+    WHERE g.conversation_id = $1 AND ($2::uuid IS NULL OR g.id = $2)
+    ORDER BY g.started_at DESC, g.id DESC
+  `, [conversationId, generationId]);
+  const ids = [...new Set(runs.flatMap((run) => run.baselineGenerationId ? [run.id, run.baselineGenerationId] : [run.id]))];
+  const { rows: references } = await db.query<MaterialReference & { generationId: string }>(`
+    SELECT gm.generation_id AS "generationId", ${SNAPSHOT_REFERENCE_FIELDS}
+    FROM public.generation_materials gm
+    JOIN public.material_snapshots s ON s.id = gm.snapshot_id AND s.conversation_id = gm.conversation_id AND s.kind = gm.kind
+    WHERE gm.generation_id = ANY($1::uuid[])
+  `, [ids]);
+  const materialsOf = (id: string) => {
+    const materials: Record<string, MaterialReference> = {};
+    for (const { generationId: owner, ...reference } of references) if (owner === id) materials[reference.kind] = reference;
+    return materials;
+  };
+
+  return runs.map(({ errorCode, ...run }) => {
+    const materials = run.snapshotAt ? materialsOf(run.id) : null;
+    return {
+      ...run,
+      materials,
+      changedKinds: materials && changedKinds(Object.values(materials),
+        run.baselineGenerationId ? materialsOf(run.baselineGenerationId) : null),
+      error: errorCode ? { code: errorCode, message: ERROR_MESSAGES[errorCode] ?? "The reply did not finish." } : null,
+    };
+  });
+}
+
+/**
+ * Startup recovery for the single backend instance (Database Design §5.7): before the server
+ * accepts requests, every run left preparing or streaming by a previous process is interrupted.
+ */
+export async function recoverAbandonedGenerations(db: Db): Promise<number> {
+  const { rowCount } = await db.query(`
+    UPDATE public.generation_runs
+    SET status = 'interrupted', error_code = 'GENERATION_INTERRUPTED', completed_at = statement_timestamp()
+    WHERE status IN ('preparing', 'streaming')
+  `);
+  return rowCount ?? 0;
 }

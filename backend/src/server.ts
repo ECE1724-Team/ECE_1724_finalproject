@@ -9,6 +9,8 @@ import { Database } from "./db/transaction.js";
 import { createSmtpEmailSender } from "./integrations/email/smtp.js";
 import { createR2Storage } from "./integrations/object-storage/r2.js";
 import { createPdfExtractor } from "./integrations/pdf/extractor.js";
+import { createOpenAiChatModel } from "./integrations/llm/openai.js";
+import { recoverAbandonedGenerations } from "./modules/ai/generations/postgres-repository.js";
 import { createAiRouter } from "./modules/ai/routes.js";
 import { createAuthentication } from "./modules/auth/auth.js";
 import { assertAuthSchema } from "./modules/auth/schema.js";
@@ -35,7 +37,12 @@ async function main() {
     database, rateLimitPool, config: environment.auth, emailSender: createSmtpEmailSender(environment.smtp),
   });
   const businessRouter = Router();
-  businessRouter.use(createAiRouter({ pool }));
+  // Before listening: runs left active by a previous process would block their conversations.
+  const recovered = await recoverAbandonedGenerations(pool);
+  if (recovered) console.warn(`Marked ${recovered} unfinished AI generation(s) as interrupted.`);
+  if (!environment.ai) console.warn("OPENAI_API_KEY is empty. AI replies are disabled; workspaces and history still work.");
+  const model = environment.ai && createOpenAiChatModel(environment.ai);
+  businessRouter.use(createAiRouter({ pool, model }));
   const storage = environment.r2 && createR2Storage(environment.r2);
   const startResumeWorker = storage && mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
   if (!storage) console.warn("R2 settings are empty. Resume routes and cleanup worker are disabled.");
