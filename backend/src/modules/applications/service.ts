@@ -49,7 +49,8 @@ function toResource(row: ApplicationDetailRow, interviews: InterviewRow[], histo
   };
 }
 
-function toSummary(row: ApplicationListRow): ApplicationSummaryResource {
+/** A list row in API field names. Also used for the Dashboard's recent applications. */
+export function toSummary(row: ApplicationListRow): ApplicationSummaryResource {
   return {
     id: row.id,
     companyName: row.companyName,
