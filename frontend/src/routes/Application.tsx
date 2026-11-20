@@ -19,7 +19,9 @@ export default function Application({mock = false}) {
     useEffect(() => {
         async function loadApplication() {
             try {
-                const response = await fetch(`/api/applications/${id}`);
+                const response = await fetch(`/api/v1/applications/${id}`, {
+                    credentials: "include",
+                });
                 if (response.status === 404) {
                     return;
                 }

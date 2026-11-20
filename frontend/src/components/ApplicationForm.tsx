@@ -33,8 +33,7 @@ type ApplicationFormData = {
   status: ApplicationStatus;
   jobUrl: string;
   jobDescription: string;
-  location: string;
-  appliedAt: string;
+  appliedDate: string;
   resumeId: string;
   notes: string;
   companyWebsiteUrl: string;
@@ -47,8 +46,7 @@ const emptyForm: ApplicationFormData = {
   status: "saved",
   jobUrl: "",
   jobDescription: "",
-  location: "",
-  appliedAt: "",
+  appliedDate: "",
   resumeId: "",
   notes: "",
   companyWebsiteUrl: "",
@@ -58,11 +56,10 @@ const emptyForm: ApplicationFormData = {
 const statuses: ApplicationStatus[] = [
   "saved",
   "applied",
-  "interviewing",
-  "offered",
+  "oa",
+  "interview",
+  "offer",
   "rejected",
-  "withdrawn",
-  "accepted",
 ];
 
 const NO_RESUME = "No Resumes Found";
@@ -80,8 +77,7 @@ export default function ApplicationForm({
         status: application.status,
         jobUrl: application.jobUrl ?? "",
         jobDescription: application.jobDescription ?? "",
-        location: application.location ?? "",
-        appliedAt: application.appliedAt ?? "",
+        appliedDate: application.appliedDate ?? "",
         resumeId: application.resumeId ?? "",
         notes: application.notes ?? "",
         companyWebsiteUrl: application.companyWebsiteUrl ?? "",
@@ -152,14 +148,13 @@ export default function ApplicationForm({
       status: form.status,
       jobUrl: form.jobUrl.trim() || undefined,
       jobDescription: form.jobDescription.trim() || undefined,
-      location: form.location.trim() || undefined,
-      appliedAt: form.appliedAt
-        ? new Date(form.appliedAt).toISOString()
-        : null,
+      appliedDate: form.appliedDate || null,
       resumeId: form.resumeId.trim() || null,
       notes: form.notes.trim() || undefined,
       companyWebsiteUrl: form.companyWebsiteUrl.trim() || null,
       companyNotes: form.companyNotes.trim() || null,
+      offerReceived: false,
+      interviews: [],
     };
 
     setError(null);
@@ -280,17 +275,17 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          <Label htmlFor="appliedAt" className="mb-1 block">
-            Applied at
+          <Label htmlFor="appliedDate" className="mb-1 block">
+            Applied date
           </Label>
           <Input
-            id="appliedAt"
-            name="appliedAt"
-            type="datetime-local"
-            value={form.appliedAt}
+            id="appliedDate"
+            name="appliedDate"
+            type="date"
+            value={form.appliedDate}
             disabled={disabled}
             className={fieldClass}
-            onChange={(event) => updateField("appliedAt", event.target.value)}
+            onChange={(event) => updateField("appliedDate", event.target.value)}
           />
         </div>
       </div>
@@ -311,21 +306,6 @@ export default function ApplicationForm({
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <Label htmlFor="location" className="mb-1 block">
-            Location
-          </Label>
-          <Input
-            id="location"
-            name="location"
-            type="text"
-            value={form.location}
-            disabled={disabled}
-            className={fieldClass}
-            onChange={(event) => updateField("location", event.target.value)}
-          />
-        </div>
-
         <div>
           <Label htmlFor="resumeId" className="mb-1 block">
             Resume

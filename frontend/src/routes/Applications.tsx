@@ -9,13 +9,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Link } from "react-router";
-import type { Application, ApplicationList } from "../types";
+import type { ApplicationList, ApplicationSummary } from "../types";
 import { fakeApplications } from "../lib/testpayloads";
 
 const PAGE_SIZE = 20;
 
 export default function Applications({ mock = false }) {
-  const [applications, setApplications] = useState<Application[]>([]);
+  const [applications, setApplications] = useState<ApplicationSummary[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -29,7 +29,7 @@ export default function Applications({ mock = false }) {
 
       try {
         const response = await fetch(
-          `/api/v1/applications?page=${page}&limit=${PAGE_SIZE}`,
+          "/api/v1/applications?sort=newest",
           {
             credentials: "include",
           },
@@ -41,7 +41,7 @@ export default function Applications({ mock = false }) {
 
         const result = await response.json() as ApplicationList;
         setApplications(result.data);
-        setTotal(result.pagination.total);
+        setTotal(result.counts.total);
       } catch {
           setError("Failed to load applications");
       } finally {
@@ -50,18 +50,19 @@ export default function Applications({ mock = false }) {
     }
 
     if(mock) {
-        setApplications(fakeApplications.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE));
+        setApplications(fakeApplications);
         setTotal(fakeApplications.length);
         setLoading(false);
         return;
     }
 
     loadApplications();
-  }, [page]);
+  }, [mock]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const firstItem = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastItem = Math.min(page * PAGE_SIZE, total);
+  const visibleApplications = applications.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <main className="mx-auto grid max-w-7xl gap-6 px-4 py-8">
@@ -84,7 +85,7 @@ export default function Applications({ mock = false }) {
           aria-label="Applications"
           className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
         >
-          {applications.map((application) => (
+          {visibleApplications.map((application) => (
             <Link
               key={application.id}
               to={`/application/${application.id}`}
