@@ -6,7 +6,6 @@ import Dashboard from './routes/Dashboard'
 import Applications from './routes/Applications'
 import Interview from './routes/Interview';
 import Application from './routes/Application';
-import ApplicationForm from './components/ApplicationForm';
 import App from './App';
 
 const MOCK = true;

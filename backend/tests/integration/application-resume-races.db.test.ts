@@ -94,7 +94,10 @@ test("combined save holds the resume lock through the interview write", () => wi
   const { save, deletion } = await withLockHolder(pool, async (holder, pid, start) => {
     await holder.query("LOCK TABLE public.interviews IN SHARE MODE");
     const save = start(applications.updateWithInterviews(pool, userId, application.id, application.rowVersion,
-      { resumeId: resume.id }, async (client) => { assert.ok(await interviews.insert(client, interview)); }));
+      { resumeId: resume.id }, async (client) => {
+        assert.ok(await interviews.insert(client, interview));
+        return true;
+      }));
     const saver = await waitForBlockedQuery(pool, pid, "INSERT INTO public.interviews");
     const deletion = start(resumes.deleteAndUnlink(pool, userId, resume.id));
     await waitForBlockedQuery(pool, saver, "FROM public.resumes");
@@ -129,7 +132,10 @@ test("combined save returns a version conflict when resume deletion locks first"
     const deletion = start(resumes.deleteAndUnlink(pool, userId, old.id));
     const deleter = await waitForBlockedQuery(pool, pid, "FROM public.applications");
     const save = start(applications.updateWithInterviews(pool, userId, applicationId, application.rowVersion,
-      { resumeId: replacement.id }, async (client) => { assert.ok(await interviews.insert(client, interview)); }));
+      { resumeId: replacement.id }, async (client) => {
+        assert.ok(await interviews.insert(client, interview));
+        return true;
+      }));
     await waitForBlockedQuery(pool, deleter, "FROM public.resumes");
     return { save, deletion };
   });
