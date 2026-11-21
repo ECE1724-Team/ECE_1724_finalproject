@@ -4,6 +4,8 @@ This document summarizes the confirmed design. The final section contains additi
 
 **Revision 2026-11-11:** Base materials are no longer retrieved through model function calling. The backend loads them deterministically on every turn and assembles them into a fixed context structure (Section 4). Function calling is reserved for the optional company website reading extension (Section 5). Historical text of a deleted resume is retained for history display only (Section 7).
 
+**Revision 2026-11-20 (context sizing):** The compression threshold, recent-message window, summary size and handling of oversized materials are set by the AI owner from the Phase 4 implementation (Section 4.3).
+
 **Revision 2026-11-11 (material fingerprints):** A material's version is identified by a fingerprint of its identity and exact content, computed by the backend at the start of each turn, instead of by version counters maintained when materials are edited (Section 3.1). The list of materials is defined in one backend registry (Section 4.2).
 
 ## 1. One Workspace per Application, with Multiple Independent Conversations
@@ -105,7 +107,16 @@ messages Recent history, then the current user input exactly once
 
 ### 4.3 History Compression
 
-Compression is a separate model call made by the backend, not a tool. When history exceeds the agreed threshold, the backend summarizes a fully persisted prefix of the conversation together with the material versions behind each covered answer. The summary must tag version-specific points, for example "(based on resume V1) suggested adding project metrics," so that later turns do not treat them as describing the current resume.
+Compression is a separate model call made by the backend, not a tool. When history exceeds the threshold below, the backend summarizes a fully persisted prefix of the conversation together with the material versions behind each covered answer. The summary must tag version-specific points, for example "(based on resume V1) suggested adding project metrics," so that later turns do not treat them as describing the current resume.
+
+**Values (set 2026-11-20):**
+
+- Sizes are estimated without a tokenizer: one token per non-ASCII character and per three ASCII characters, plus 4 per message. For English this is about 1.4–1.55× the provider's count, so the limits are conservative.
+- One model request may hold 128,000 tokens, counting rules, materials, summary, history and input.
+- Compression starts when the completed turns after the latest summary reach 64,000 tokens, or sooner if the full request would exceed 128,000. Turn count alone never triggers it.
+- The newest complete turns, up to 16,000 tokens, stay verbatim, and fewer if the request would still not fit. The older turns are merged with the previous summary in one call of at most 800 output tokens.
+- If the summary call fails, the last saved summary is kept and the answer goes ahead when all later turns fit. Otherwise the turn fails and can be retried.
+- If the materials and current input alone exceed the limit, the turn fails with `CONTEXT_CAPACITY_EXCEEDED` and names the largest parts to shorten. When history is the cause, including a summary request that cannot fit in one call, the user is told to start a new conversation. Materials and uncovered history are never silently dropped.
 
 ## 5. Web Search and Company Website Reading (Optional Future Extensions)
 

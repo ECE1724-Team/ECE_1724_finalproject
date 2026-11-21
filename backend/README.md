@@ -88,6 +88,8 @@ mailpit
 | `SMTP_USER` / `SMTP_PASSWORD` | empty | Set both or neither |
 | `TEST_DATABASE_URL` | empty | Empty: `npm run test:db` starts a disposable cluster. Never point it at `jobflow_dev`, because the tests create and drop databases |
 | `R2_*` | empty | Leaving all four blank disables resume routes and the cleanup worker in development and test. Production requires all four. See [R2 setup](#r2-setup). |
+| `OPENAI_API_KEY` / `AI_MODEL` | empty / `gpt-6-luna` | Empty key: AI reads still work, sending a message answers 503. See [AI Copilot](#ai-copilot) |
+| `AI_COMPRESS_AT_TOKENS` / `AI_HISTORY_WINDOW_TOKENS` | empty (`64000` / `16000`) | Lower both only for a seeded compression demo |
 
 In production, `BETTER_AUTH_URL` and every trusted origin must use HTTPS.
 
@@ -483,8 +485,44 @@ Limits are constants in code: R2 timeout 30 s (`r2.ts`); PDF parse timeout 15 s,
 - A crash between the R2 write and the insert can leave an object with no row; bucket
   reconciliation is deferred (Database Design §7.2). Also deferred: per-user quotas and
   streamed downloads (files are read whole, ≤ 2 MiB).
-- The team browser check is pending the reviewed application API and the connected resume dialog.
-  Sample PDFs for it: `tests/fixtures/resume-samples/` (two-column LaTeX, raster scan).
+- The team browser check is still pending. Sample PDFs for it: `tests/fixtures/resume-samples/`
+  (two-column LaTeX, raster scan).
+
+<a id="ai-copilot"></a>
+
+## AI Copilot (`/api/v1/ai/...`)
+
+Owner: Jianye Zhou ([progress](../docs/JIANYE_DEV_PLAN.md)). Design: [AI Design](../docs/AI_Design.md),
+[Database Design §5.6–5.10, §7.4](../docs/Database_Design.md); contract: `endpoints.json`, tag "AI Copilot".
+Code: `src/modules/ai/` (`routes.ts`; `context/` builds the prompt and history; the
+`postgres-repository.ts` files hold the SQL; `generations/service.ts` runs a turn) and
+`src/integrations/llm/openai.ts`.
+
+| Route | Result |
+|---|---|
+| `GET /ai/applications?q=&status=` | Applications for the position picker (same query rules as the application list) |
+| `PUT /applications/{id}/ai-workspace` | Creates or reuses the application's workspace, with its current materials |
+| `GET /ai/workspaces/{id}`; `GET`/`POST /ai/workspaces/{id}/conversations` | Workspace; list conversations, or create an empty one (201) |
+| `GET /ai/conversations/{id}` and `…/messages`, `…/generations[/{gid}]`, `…/material-snapshots/{sid}` | State, full history, attempts, and the material text an answer used |
+| `POST /ai/conversations/{id}/generations` with `{ content }`; `POST …/generations/{gid}/retry` | SSE: `generation.accepted`, `materials.synced`, `text.delta`…, then `generation.completed` or `generation.error` |
+
+Before the stream opens, errors are JSON: 400, 404 (missing, malformed or another user's ID), 409
+`GENERATION_ACTIVE` / `RETRY_CONFLICT`, 503 `AI_SERVICE_UNAVAILABLE` (database down or no API key).
+After it opens they arrive as `generation.error` with a stage and one of `MATERIAL_REFRESH_FAILED`,
+`CONTEXT_CAPACITY_EXCEEDED`, `GENERATION_FAILED`, `GENERATION_INTERRUPTED`,
+`MESSAGE_PERSISTENCE_FAILED`. The input is always kept, partial replies never are, and only the
+latest input's failed or interrupted attempt can be retried.
+
+- Every turn sends all six current materials (resume text, JD, company, position, website URL,
+  company notes; never personal notes) and snapshots them. Replies based on older versions are tagged.
+- Sizes are estimated tokens: 128,000 per request. Older turns are summarized once the unsummarized
+  history reaches 64,000, keeping up to 16,000 verbatim ([AI Design §4.3](../docs/AI_Design.md)).
+  Each model call stops after 30 s without text or 120 s in all. Replies have at most 4,000
+  output tokens, summaries 800.
+- A conversation's title is the first sentence of its first message, up to 80 characters.
+- On a turn that compresses history, `materials.synced` arrives after the summary call (about 5 s).
+- Single instance: at startup, runs left `preparing` or `streaming` are marked interrupted.
+- Tests use a fake model (`tests/fakes/llm.ts`); none call OpenAI.
 
 <a id="merge-notes"></a>
 

@@ -11,6 +11,9 @@ import { createPostgresApplicationService } from "./modules/applications/postgre
 import { createApplicationRouter } from "./modules/applications/routes.js";
 import { createR2Storage } from "./integrations/object-storage/r2.js";
 import { createPdfExtractor } from "./integrations/pdf/extractor.js";
+import { createOpenAiChatModel } from "./integrations/llm/openai.js";
+import { recoverAbandonedGenerations } from "./modules/ai/generations/postgres-repository.js";
+import { createAiRouter } from "./modules/ai/routes.js";
 import { createAuthentication } from "./modules/auth/auth.js";
 import { assertAuthSchema } from "./modules/auth/schema.js";
 import { readDashboard } from "./modules/dashboard/postgres-repository.js";
@@ -42,6 +45,12 @@ async function main() {
   const businessRouter = Router();
   businessRouter.use("/applications", createApplicationRouter({ service: createPostgresApplicationService(pool) }));
   businessRouter.use("/dashboard", createDashboardRouter({ read: (userId, options) => readDashboard(pool, userId, options) }));
+  // Before listening: runs left active by a previous process would block their conversations.
+  const recovered = await recoverAbandonedGenerations(pool);
+  if (recovered) console.warn(`Marked ${recovered} unfinished AI generation(s) as interrupted.`);
+  if (!environment.ai) console.warn("OPENAI_API_KEY is empty. AI replies are disabled; workspaces and history still work.");
+  const model = environment.ai && createOpenAiChatModel(environment.ai);
+  businessRouter.use(createAiRouter({ pool, model, historyLimits: environment.ai?.history }));
   const storage = environment.r2 && createR2Storage(environment.r2);
   const startResumeWorker = storage && mountPostgresResumeRoutes(businessRouter, { pool, storage, pdf: createPdfExtractor() });
   if (!storage) console.warn("R2 settings are empty. Resume routes and cleanup worker are disabled.");

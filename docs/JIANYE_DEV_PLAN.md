@@ -6,13 +6,13 @@ errors, limits, known gaps), [PRD §5.2](PRD.md) (file rules),
 [Database Design §5.11, §7.2–7.3, C.4](Database_Design.md) (cleanup, upload/delete, repository
 contract), [AI Design](AI_Design.md) and [endpoints.json](endpoints.json).
 
-## Status (2026-11-19)
+## Status (2026-11-21)
 
 | Area | State |
 |---|---|
 | Resume backend | Done. Phase 4 Stages 1–2 passed, including live R2. |
-| Browser check | Pending (target Nov 25): needs application API [PR #11](https://github.com/ECE1724-Team/ECE_1724_finalproject/pull/11) reviewed and the resume dialog connected; the frontend still uses mocks. |
-| AI Copilot | Not started. |
+| Browser check | Pending (target Nov 25). The application API is merged and the frontend now calls the resume and application APIs; some pages still import test data. |
+| AI Copilot | Backend Phases 1–4 done ([PR #15](https://github.com/ECE1724-Team/ECE_1724_finalproject/pull/15)); live checks passed (≈ US$0.0012). Phase 5 (frontend) next. |
 
 ## Progress log
 
@@ -63,9 +63,81 @@ deleted resumes are removed only by the cleanup worker after the DB commit; auth
 reading the upload body; finishing the insert after the R2 write even if the client left;
 retaining the object while an insert outcome is unclear; the worker's live-resume check.
 
-## AI Copilot (later)
-- AI reads saved text from the resume row via the application's current `resumeId`; it
-  never re-downloads or re-parses the PDF.
-- `text_unavailable` linked resume → tell the user it's linked but unreadable (PRD FR-30).
-- Prepare test data: V1/V2 resumes, two resumes with identical text, deleted and
-  text-unavailable cases. A DB read failure must not look like "no resume".
+## AI Copilot development plan
+
+Jianye owns the AI frontend, backend, routes, SQL, migrations and acceptance testing. A user picks
+an application, gets advice based on its current resume and job description (JD), practices an
+interview and returns to the same conversation later; long histories are windowed and summarized.
+Web search and company website reading are deferred (the website URL is only a saved field).
+Routes, errors and limits: [backend README → AI Copilot](../backend/README.md#ai-copilot). Design:
+[AI Design](AI_Design.md), [Database Design §5.6–5.10, §7.4](Database_Design.md),
+[endpoints.json](endpoints.json).
+
+### Model and budget
+
+- `gpt-6-luna` for replies and summaries ([model and pricing](https://developers.openai.com/api/docs/models/gpt-6-luna)):
+  one call per turn, plus one when history is compressed. Development and CI use a fake model.
+- **Budget for live tests and the demo: US$5, with US$2 kept for the demo.** Spent so far ≈ US$0.0012.
+  Before each live session, check project usage and estimate the cost from the input and output
+  caps; stop if it exceeds what is left. Use fictional resumes. Keep credentials, resume text and
+  chat content out of logs.
+- Caps: 128,000 estimated input tokens per request, 4,000 output tokens per reply (raised from
+  2,000 after a Chinese question set hit it), 800 per summary. Each model call stops after 30 s
+  without text or 120 s in all, so a compressing turn can take up to about 240 s.
+
+### 2026-11-19 → 11-21: Phases 1–4 (backend, done)
+
+- **1 · Workspaces and conversations.** Seven read/create routes. Every query checks ownership
+  through conversation → workspace → application → user; browsing and creating conversations write
+  no messages, snapshots or generations. [Tests](../backend/tests/integration/ai-workspace.db.test.ts)
+- **2 · Materials and prompt.** Six material kinds are read on every turn, fingerprinted and
+  snapshotted per conversation (a reverted edit reuses its snapshot). The prompt adds a change
+  notice and tags replies based on old versions. A preparation failure is recorded and makes no
+  model call. [Unit](../backend/tests/unit/ai-context.test.ts) · [DB](../backend/tests/integration/ai-materials.db.test.ts)
+- **3 · Streaming, disconnects and retries.** SSE send and retry. The reply is saved in the same
+  transaction that completes the run; partial text never is. A disconnect marks the run
+  interrupted, and startup does the same for runs left over by a crash.
+  [DB](../backend/tests/integration/ai-generation.db.test.ts) · [Adapter](../backend/tests/unit/llm.test.ts)
+- **4 · Sliding window and summaries.** Values in [AI Design §4.3](AI_Design.md). Each summary
+  extends the previous one and is saved only if its boundary is still valid; a failed summary keeps
+  the last one. With small thresholds the tests check: no summary over twenty short turns, every
+  turn covered exactly once, V1 tags after a switch to V2, one summary per conversation, and
+  failure then retry. [Unit](../backend/tests/unit/ai-history.test.ts) · [DB](../backend/tests/integration/ai-history.db.test.ts)
+
+After merging `main` (2026-11-21): typecheck, `npm test` (125), `npm run test:db` (208) and build pass.
+
+Live checks (`gpt-6-luna`, fictional data, temporary database):
+
+| Date | Check | Tokens in / out | Result |
+|---|---|---|---|
+| 11-19 | Two mock-interview turns | 1,096 / 125 | One question at a time; the feedback noticed an off-topic answer |
+| 11-20 | Six seeded turns, switch to V2, two live turns (compress at 600, window 250) | 4,836 / 1,129, of which the summary 989 / 518 | The summary kept answers, the unanswered question, open items and V1-tagged advice; replies used V2 and continued the interview |
+
+Open issues:
+- A turn that summarizes and then fails keeps the summary but not its token usage.
+- Database Design §12 still lists a requester review of the context-sizing values.
+
+Don't undo these: the SDK's `onError` is silenced because its default logs the prompt; partial
+replies are never saved; current materials are sent in full every turn and never summarized; a
+summary is saved in its own short transaction only if its predecessor and boundary are unchanged.
+
+### Phase 5 · Build the frontend and verify the demo (not now)
+
+Use the existing `/interview` entry point, `routes/`, `components/`, `lib/`, and shared `types.ts`. Create the frontend files in this final phase as shown below.
+
+```text
+frontend/src/
+  main.tsx                            Register /interview and its workspace and conversation routes
+  routes/Interview.tsx                Replace the placeholder with position search, status filters, and empty states
+  routes/InterviewWorkspace.tsx       Display the workspace and restore the selected conversation on reload
+  components/ai/ConversationList.tsx  Create and select conversations, show titles and recent conversations
+  components/ai/ChatPanel.tsx         Display messages, input, shortcuts, sync status, retries, and historical materials
+  lib/ai.ts                           Call workspace and history APIs, send POST with cookies, adapt SSE events
+  types.ts                            Reuse Ai* types and align the snapshot detail id with OpenAPI
+```
+
+**Implementation and interaction.** Reuse the existing navigation and UI components. Connect `@ai-sdk/react` through the project's SSE adapter, and update `frontend/package.json` and its lockfile. The standalone entry lists real applications. Selecting one creates or reuses its workspace, where the user can continue a conversation or choose “New conversation” in an empty workspace. Wire the application-detail entry through `routes/Application.tsx` and `components/ApplicationForm.tsx`. Save pending edits before opening the workspace and stay on the detail page if saving fails. While the application form still uses mocks, exercise the standalone entry against the real backend with test applications.
+
+Show the company, position, linked resume, and resume text availability in the chat view. Shortcuts prefill editable input. Disable sending while a generation is active. If the stream closes before a terminal event arrives, read the durable status and either restore the saved reply or show the interruption and retry action. Let users expand old replies to inspect the materials they used. Display conversation titles derived from the first input. The first release supports creating, switching, and resuming conversations. Renaming, individual deletion, and pagination are deferred.
+
+**Tests and acceptance.** Run `npm run typecheck`, `npm test`, `npm run test:db`, and `npm run build` in the backend. Run `npm run build` and `npm run lint` in the frontend. Exercise both entries in Chrome and Edge with verified accounts, real session cookies, and fictional materials. For the demo, select a position, start a conversation, request resume advice, practice one interview question at a time, switch to V2, and continue. Reload and inspect the materials behind an earlier reply. Use seeded turns to demonstrate one compression. Also verify the scanned-resume notice, isolation between two accounts, and retry after a disconnect. Record the date, test results, model usage, and open issues here before updating the status table.
