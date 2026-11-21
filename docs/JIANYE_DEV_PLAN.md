@@ -121,23 +121,41 @@ Don't undo these: the SDK's `onError` is silenced because its default logs the p
 replies are never saved; current materials are sent in full every turn and never summarized; a
 summary is saved in its own short transaction only if its predecessor and boundary are unchanged.
 
-### Phase 5 · Build the frontend and verify the demo (not now)
+### Phase 5 · Build the frontend and verify the demo (in progress)
 
-Use the existing `/interview` entry point, `routes/`, `components/`, `lib/`, and shared `types.ts`. Create the frontend files in this final phase as shown below.
+**2026-11-21: skeleton.** The files below exist and `npm run build` and `npm run lint` pass. The
+pages are placeholders with `TODO(Phase 5)` notes; `lib/ai.ts` already has the JSON calls, while
+`streamGeneration` is still a stub. It follows the current frontend's conventions: one CSS module
+per page or component in `styles/`, `fetch` with `credentials: "include"` and `responseError`.
 
 ```text
 frontend/src/
-  main.tsx                            Register /interview and its workspace and conversation routes
-  routes/Interview.tsx                Replace the placeholder with position search, status filters, and empty states
-  routes/InterviewWorkspace.tsx       Display the workspace and restore the selected conversation on reload
-  components/ai/ConversationList.tsx  Create and select conversations, show titles and recent conversations
-  components/ai/ChatPanel.tsx         Display messages, input, shortcuts, sync status, retries, and historical materials
-  lib/ai.ts                           Call workspace and history APIs, send POST with cookies, adapt SSE events
-  types.ts                            Reuse Ai* types and align the snapshot detail id with OpenAPI
+  main.tsx                            /interview and /interview/:workspaceId/:conversationId?
+  routes/Interview.tsx                Position search, status filter, empty states
+  routes/InterviewWorkspace.tsx       Workspace header (company, position, resume and its text status)
+  components/ai/ConversationList.tsx  Create and switch conversations; titles from the first message
+  components/ai/ChatPanel.tsx         Messages, input, shortcuts, sync status, retry, materials of old replies
+  lib/ai.ts                           API calls and the SSE reader for send and retry
+  styles/Interview.module.css, InterviewWorkspace.module.css, ConversationList.module.css, ChatPanel.module.css
+  types.ts                            AiMaterialSnapshot fixed: it has `id`, not `snapshotId`
 ```
 
-**Implementation and interaction.** Reuse the existing navigation and UI components. Connect `@ai-sdk/react` through the project's SSE adapter, and update `frontend/package.json` and its lockfile. The standalone entry lists real applications. Selecting one creates or reuses its workspace, where the user can continue a conversation or choose “New conversation” in an empty workspace. Wire the application-detail entry through `routes/Application.tsx` and `components/ApplicationForm.tsx`. Save pending edits before opening the workspace and stay on the detail page if saving fails. While the application form still uses mocks, exercise the standalone entry against the real backend with test applications.
+Changes from the earlier plan: no `@ai-sdk/react`. Its `useChat` expects the AI SDK's own stream
+protocol, our events are the custom ones in endpoints.json, and `EventSource` cannot send a POST, so
+`lib/ai.ts` reads the response body itself. The application form already uses the real API, so no
+mock workaround is needed.
 
-Show the company, position, linked resume, and resume text availability in the chat view. Shortcuts prefill editable input. Disable sending while a generation is active. If the stream closes before a terminal event arrives, read the durable status and either restore the saved reply or show the interruption and retry action. Let users expand old replies to inspect the materials they used. Display conversation titles derived from the first input. The first release supports creating, switching, and resuming conversations. Renaming, individual deletion, and pagination are deferred.
+**Behavior.** Selecting an application opens (or creates) its workspace. The conversation ID stays
+in the URL, so a reload restores it. Shortcuts prefill editable input. Sending is disabled while a
+generation is active. If the stream ends without a terminal event, read the generation to restore
+the saved reply or offer a retry. Old replies can be expanded to show the materials they used. On a
+compressing turn, `materials.synced` arrives about 5 s late. Renaming, deleting and pagination of
+conversations are deferred. The entry from the application detail page comes last: it saves pending
+edits first and stays on the page if saving fails.
 
-**Tests and acceptance.** Run `npm run typecheck`, `npm test`, `npm run test:db`, and `npm run build` in the backend. Run `npm run build` and `npm run lint` in the frontend. Exercise both entries in Chrome and Edge with verified accounts, real session cookies, and fictional materials. For the demo, select a position, start a conversation, request resume advice, practice one interview question at a time, switch to V2, and continue. Reload and inspect the materials behind an earlier reply. Use seeded turns to demonstrate one compression. Also verify the scanned-resume notice, isolation between two accounts, and retry after a disconnect. Record the date, test results, model usage, and open issues here before updating the status table.
+**Acceptance.** Backend: `npm run typecheck`, `npm test`, `npm run test:db`, `npm run build`.
+Frontend: `npm run build`, `npm run lint`. In Chrome and Edge, with verified accounts and fictional
+materials: pick a position, ask for resume advice, practice one question at a time, switch to V2 and
+continue, reload and inspect an earlier reply's materials, show one compression on seeded turns, and
+check the scanned-resume notice, isolation between two accounts, and retry after a disconnect.
+Record the date, results, model usage and open issues here.

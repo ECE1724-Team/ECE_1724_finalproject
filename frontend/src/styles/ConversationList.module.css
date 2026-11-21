@@ -1,0 +1,9 @@
+@reference "./global.css";
+
+.list {
+  @apply flex flex-col gap-2;
+}
+
+.empty {
+  @apply text-sm text-muted-foreground;
+}

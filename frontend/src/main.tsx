@@ -6,6 +6,7 @@ import Dashboard from './routes/Dashboard'
 import Home from './routes/Home'
 import Applications from './routes/Applications'
 import Interview from './routes/Interview';
+import InterviewWorkspace from './routes/InterviewWorkspace';
 import Application from './routes/Application';
 import Login from './routes/Login';
 import Resumes from './routes/Resumes';
@@ -31,6 +32,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/application/:id" element={<Application mock={MOCK}/>} />
             <Route path="/resumes" element={<Resumes mock={MOCK}/>} />
             <Route path="/interview" element={<Interview />} />
+            <Route path="/interview/:workspaceId/:conversationId?" element={<InterviewWorkspace />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
