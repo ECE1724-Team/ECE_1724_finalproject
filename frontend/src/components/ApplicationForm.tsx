@@ -10,12 +10,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import ErrorAlert from "@/components/ErrorAlert";
+import ApplicationStatusDropdown from "@/components/ApplicationStatusDropdown";
 import { Textarea } from "@/components/ui/textarea";
 import ResumeUploadForm from "@/components/ResumeUploadForm";
 import { Link, useNavigate } from "react-router";
 import type {
   Application,
   ApplicationCreate,
+  ApplicationReplace,
   ApplicationStatus,
   Resume,
   ResumeList,
@@ -78,27 +80,32 @@ function getExternalUrl(value: string): string | null {
   return url.href;
 }
 
+function formFromApplication(application: Application): ApplicationFormData {
+  return {
+    companyName: application.companyName,
+    jobTitle: application.jobTitle,
+    status: application.status,
+    jobUrl: application.jobUrl ?? "",
+    jobDescription: application.jobDescription ?? "",
+    appliedDate: application.appliedDate ?? "",
+    resumeId: application.resumeId ?? "",
+    notes: application.notes ?? "",
+    companyWebsiteUrl: application.companyWebsiteUrl ?? "",
+    companyNotes: application.companyNotes ?? "",
+  };
+}
+
 export default function ApplicationForm({
   application,
   mock = false,
 }: ApplicationFormProps) {
   const navigate = useNavigate();
-  const isViewMode = application ? true : false;
+  const [savedApplication, setSavedApplication] = useState(application);
+  const [editing, setEditing] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const isViewMode = !!savedApplication && !editing;
   const [form, setForm] = useState<ApplicationFormData>(
-    application
-      ? {
-        companyName: application.companyName,
-        jobTitle: application.jobTitle,
-        status: application.status,
-        jobUrl: application.jobUrl ?? "",
-        jobDescription: application.jobDescription ?? "",
-        appliedDate: application.appliedDate ?? "",
-        resumeId: application.resumeId ?? "",
-        notes: application.notes ?? "",
-        companyWebsiteUrl: application.companyWebsiteUrl ?? "",
-        companyNotes: application.companyNotes ?? "",
-      }
-      : emptyForm,
+    application ? formFromApplication(application) : emptyForm,
   );
 
   const [submitting, setSubmitting] = useState(false);
@@ -159,7 +166,12 @@ export default function ApplicationForm({
       return;
     }
 
-    const payload: ApplicationCreate = {
+    if (mock && savedApplication) {
+      setSubmissionError("Sample applications cannot be edited.");
+      return;
+    }
+
+    const fields = {
       companyName: form.companyName.trim(),
       jobTitle: form.jobTitle.trim(),
       status: form.status,
@@ -170,16 +182,25 @@ export default function ApplicationForm({
       notes: form.notes.trim() || undefined,
       companyWebsiteUrl: form.companyWebsiteUrl.trim() || undefined,
       companyNotes: form.companyNotes.trim() || null,
-      offerReceived: false,
-      interviews: [],
     };
+    const payload: ApplicationCreate | ApplicationReplace = savedApplication
+      ? {
+        ...fields,
+        status: form.status,
+        offerReceived: savedApplication.offerReceived,
+        interviews: savedApplication.interviews,
+        rowVersion: savedApplication.rowVersion,
+      }
+      : { ...fields, offerReceived: false, interviews: [] };
 
     setSubmissionError(null);
     setSubmitting(true);
 
     try {
-      const response = await fetch("/api/v1/applications", {
-        method: "POST",
+      const response = await fetch(savedApplication
+        ? `/api/v1/applications/${encodeURIComponent(savedApplication.id)}`
+        : "/api/v1/applications", {
+        method: savedApplication ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
         },
@@ -188,16 +209,31 @@ export default function ApplicationForm({
       });
 
       if (!response.ok) {
-        throw await responseError(response, "Failed to create application.");
+        const error = await responseError(response, savedApplication
+          ? "Failed to update application."
+          : "Failed to create application.");
+        if (savedApplication && response.status === 409) {
+          throw new Error(`${error.message} Reload the page before trying again.`);
+        }
+        throw error;
       }
 
-      window.alert("Application created successfully.");
-      navigate("/applications");
+      if (savedApplication) {
+        const updated = await response.json() as Application;
+        setSavedApplication(updated);
+        setForm(formFromApplication(updated));
+        setEditing(false);
+        setShowResumeUpload(false);
+        window.alert("Application updated successfully.");
+      } else {
+        window.alert("Application created successfully.");
+        navigate("/applications");
+      }
     } catch (failure) {
       setSubmissionError(
         failure instanceof Error
           ? failure.message
-          : "Failed to create application",
+          : savedApplication ? "Failed to update application." : "Failed to create application.",
       );
     } finally {
       setSubmitting(false);
@@ -258,34 +294,39 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          {isViewMode ? (
-            <p className={styles.fieldLabel}>Status</p>
+          {isViewMode && savedApplication ? (
+            <ApplicationStatusDropdown
+              application={savedApplication}
+              mock={mock}
+              onSaved={(updated) => {
+                setSavedApplication(updated);
+                updateField("status", updated.status);
+              }}
+              onSavingChange={setStatusSaving}
+            />
           ) : (
-            <Label htmlFor="status" className={styles.fieldLabel}>
-              Status
-            </Label>
-          )}
-          {isViewMode ? (
-            <p className={styles.fieldValue}>{form.status}</p>
-          ) : (
-            <Select
-              value={form.status}
-              disabled={disabled}
-              onValueChange={(value) =>
-                updateField("status", value as ApplicationStatus)
-              }
-            >
-              <SelectTrigger id="status" className={fieldClass}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {statuses.map((status) => (
-                  <SelectItem key={status} value={status}>
-                    {status}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <>
+              <Label htmlFor="status" className={styles.fieldLabel}>Status</Label>
+              <Select
+                value={form.status}
+                disabled={disabled}
+                onValueChange={(value) => {
+                  const status = statuses.find((item) => item === value);
+                  if (status) updateField("status", status);
+                }}
+              >
+                <SelectTrigger id="status" className={fieldClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {statuses.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
           )}
         </div>
 
@@ -372,7 +413,7 @@ export default function ApplicationForm({
           ) : (
             <Select
               value={form.resumeId || NO_RESUME}
-              disabled={disabled || loadingResumes || resumes.length === 0}
+              disabled={disabled || loadingResumes || (resumes.length === 0 && !form.resumeId)}
               onValueChange={(value) =>
                 updateField(
                   "resumeId",
@@ -501,21 +542,52 @@ export default function ApplicationForm({
       </div>
 
       <div className={styles.formActions}>
-        <Button
-          nativeButton={false}
-          render={<Link to="/applications" />}
-          variant={isViewMode ? "default" : "outline"}
-          className={isViewMode ? styles.backButtonView : styles.actionButton}
-        >
-          Back to all applications
-        </Button>
-        {!isViewMode && (
+        {savedApplication && editing ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={submitting}
+            className={styles.actionButton}
+            onClick={() => {
+              setForm(formFromApplication(savedApplication));
+              setEditing(false);
+              setSubmissionError(null);
+              setShowResumeUpload(false);
+            }}
+          >
+            Cancel
+          </Button>
+        ) : (
+          <Button
+            nativeButton={false}
+            render={<Link to="/applications" />}
+            variant="outline"
+            className={styles.actionButton}
+          >
+            Back to all applications
+          </Button>
+        )}
+        {isViewMode ? (
+          <Button
+            type="button"
+            className={styles.actionButton}
+            disabled={statusSaving}
+            onClick={(event) => {
+              event.preventDefault();
+              setEditing(true);
+            }}
+          >
+            Edit application
+          </Button>
+        ) : (
           <Button
             type="submit"
             disabled={disabled}
             className={styles.submitButton}
           >
-            {submitting ? "Creating..." : "Create application"}
+            {submitting
+              ? savedApplication ? "Saving..." : "Creating..."
+              : savedApplication ? "Save changes" : "Create application"}
           </Button>
         )}
       </div>

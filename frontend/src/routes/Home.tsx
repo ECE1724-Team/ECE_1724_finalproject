@@ -61,7 +61,6 @@ export default function Home() {
             </CardContent>
           </Card>
         </div>
-        <p className={styles.sectionDescription}>AI preparation features are in development.</p>
       </section>
     </main>
   );
