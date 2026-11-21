@@ -353,7 +353,8 @@ export type AiGenerationList = {
   data: AiGeneration[];
 };
 
-export type AiMaterialSnapshot = AiMaterialReference & {
+// A snapshot is read by its `id`; unlike a reference it has no `snapshotId`.
+export type AiMaterialSnapshot = AiMaterialVersion & {
   id: string;
   conversationId: string;
   generationId: string;

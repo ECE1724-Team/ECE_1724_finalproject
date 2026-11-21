@@ -1,0 +1,9 @@
+@reference "./global.css";
+
+.panel {
+  @apply flex min-h-96 flex-col rounded-xl border p-4;
+}
+
+.empty {
+  @apply m-auto text-sm text-muted-foreground;
+}
