@@ -64,6 +64,10 @@
   @apply w-full;
 }
 
+.backButtonView {
+  @apply col-span-2 w-full;
+}
+
 .submitButton {
   @apply w-full disabled:cursor-default disabled:opacity-60;
 }

@@ -49,9 +49,8 @@ export default function Dashboard() {
       <header className={styles.header}>
         <div>
           <h1 className={styles.title}>Dashboard</h1>
-          <p className={styles.subtitle}>Your job search at a glance.</p>
         </div>
-        <Button nativeButton={false} render={<Link to="/application" />}>Add application</Button>
+        <Button nativeButton={false} render={<Link to="/application" />}>New Application</Button>
       </header>
 
       {error ? (

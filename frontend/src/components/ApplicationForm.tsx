@@ -110,6 +110,8 @@ export default function ApplicationForm({
 
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [resumesError, setResumesError] = useState<string | null>(null);
   const [resumes, setResumes] = useState<Resume[]>(mock ? fakeResumes : []);
   const [loadingResumes, setLoadingResumes] = useState(true);
@@ -150,6 +152,33 @@ export default function ApplicationForm({
     value: ApplicationFormData[K],
   ) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function deleteApplication() {
+    if (!savedApplication || deleting || statusSaving) return;
+    setDeleteError(null);
+    if (mock) {
+      setDeleteError("Sample applications cannot be deleted.");
+      return;
+    }
+    if (!window.confirm(
+      `Delete ${savedApplication.jobTitle} at ${savedApplication.companyName}? This permanently deletes the application, its interviews, history, and AI conversations. Linked resumes are not deleted.`,
+    )) return;
+
+    setDeleting(true);
+    try {
+      const response = await fetch(`/api/v1/applications/${encodeURIComponent(savedApplication.id)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) throw await responseError(response, "Failed to delete application.");
+      window.alert("Application deleted successfully.");
+      navigate("/applications");
+    } catch (failure) {
+      setDeleteError(failure instanceof Error ? failure.message : "Failed to delete application.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
@@ -257,6 +286,7 @@ export default function ApplicationForm({
       className={styles.form}
     >
       {submissionError && <ErrorAlert message={submissionError} className={styles.errorAlert} />}
+      {deleteError && <ErrorAlert message={deleteError} className={styles.errorAlert} />}
 
       <div className={styles.fieldGrid}>
         <div>
@@ -298,6 +328,7 @@ export default function ApplicationForm({
             <ApplicationStatusDropdown
               application={savedApplication}
               mock={mock}
+              disabled={deleting}
               onSaved={(updated) => {
                 setSavedApplication(updated);
                 updateField("status", updated.status);
@@ -542,7 +573,17 @@ export default function ApplicationForm({
       </div>
 
       <div className={styles.formActions}>
-        {savedApplication && editing ? (
+        {isViewMode ? (
+          <Button
+            type="button"
+            variant="destructive"
+            className={styles.actionButton}
+            disabled={deleting || statusSaving}
+            onClick={() => void deleteApplication()}
+          >
+            {deleting ? "Deleting..." : "Delete application"}
+          </Button>
+        ) : savedApplication && editing ? (
           <Button
             type="button"
             variant="outline"
@@ -571,7 +612,7 @@ export default function ApplicationForm({
           <Button
             type="button"
             className={styles.actionButton}
-            disabled={statusSaving}
+            disabled={statusSaving || deleting}
             onClick={(event) => {
               event.preventDefault();
               setEditing(true);
@@ -588,6 +629,16 @@ export default function ApplicationForm({
             {submitting
               ? savedApplication ? "Saving..." : "Creating..."
               : savedApplication ? "Save changes" : "Create application"}
+          </Button>
+        )}
+        {isViewMode && (
+          <Button
+            nativeButton={false}
+            render={<Link to="/applications" />}
+            variant="outline"
+            className={styles.backButtonView}
+          >
+            Back to all applications
           </Button>
         )}
       </div>

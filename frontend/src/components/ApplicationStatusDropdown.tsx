@@ -17,18 +17,19 @@ import styles from "@/styles/ApplicationStatusDropdown.module.css";
 type ApplicationStatusDropdownProps = {
   application: Application;
   mock?: boolean;
+  disabled?: boolean;
   onSaved: (application: Application) => void;
   onSavingChange: (saving: boolean) => void;
 };
 
-export default function ApplicationStatusDropdown({ application, mock = false, onSaved, onSavingChange }: ApplicationStatusDropdownProps) {
+export default function ApplicationStatusDropdown({ application, mock = false, disabled = false, onSaved, onSavingChange }: ApplicationStatusDropdownProps) {
   const [saved, setSaved] = useState(application);
   const [status, setStatus] = useState<ApplicationStatus>(application.status);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function saveStatus() {
-    if (saving || status === saved.status) return;
+    if (disabled || saving || status === saved.status) return;
     setError(null);
     if (mock) {
       setError("Sample application statuses cannot be saved.");
@@ -86,7 +87,7 @@ export default function ApplicationStatusDropdown({ application, mock = false, o
       <Label htmlFor="application-status">Status</Label>
       <Select
         value={status}
-        disabled={saving}
+        disabled={disabled || saving}
         onValueChange={(value) => {
           const selected = applicationStatuses.find((item) => item.value === value);
           if (selected) {
@@ -105,7 +106,7 @@ export default function ApplicationStatusDropdown({ application, mock = false, o
         </SelectContent>
       </Select>
       {status !== saved.status && (
-        <Button type="button" disabled={saving} onClick={() => void saveStatus()}>
+        <Button type="button" disabled={disabled || saving} onClick={() => void saveStatus()}>
           {saving ? "Saving..." : "Update status"}
         </Button>
       )}
