@@ -1,3 +1,4 @@
+import { DEFAULT_LIMITS } from "../../../integrations/llm/openai.js";
 import { MATERIAL_KINDS, materialKind } from "./materials.js";
 import {
   buildPrompt, describeVersion, escapeText, type HistoryEntry, type MaterialVersion, type PromptMessage, type TurnContext,
@@ -18,7 +19,7 @@ export interface HistoryLimits {
 }
 
 export const DEFAULT_HISTORY_LIMITS: HistoryLimits = {
-  maxInputTokens: 128_000, compressAtTokens: 64_000, windowTokens: 16_000, summaryTokens: 800,
+  maxInputTokens: 128_000, compressAtTokens: 64_000, windowTokens: 16_000, summaryTokens: DEFAULT_LIMITS.summaryOutputTokens,
 };
 
 /** One completed question and answer. */
@@ -85,12 +86,13 @@ export function planContext(base: BaseContext, summary: string | null, turns: Hi
   const fits = estimateTokens(prompt) <= limits.maxInputTokens;
   if (historySize < limits.compressAtTokens && fits) return { action: "send", prompt };
 
-  // Keep the newest complete turns up to the window target, and fewer if the request with a full
-  // size new summary would still exceed the limit.
-  const fixed = estimateTokens(buildTurnPrompt(base, "x", [])) + limits.summaryTokens;
+  // Keep the newest complete turns up to the window target, and fewer if they would not fit next to
+  // a full-size new summary ("x" stands in for its text to count the summary block's framing).
+  const withSummary = estimateTokens(buildTurnPrompt(base, "x", [])) + limits.summaryTokens;
+  const room = Math.min(limits.windowTokens, limits.maxInputTokens - withSummary);
   let start = turns.length;
   let windowSize = 0;
-  while (start > 0 && windowSize + turnSizes[start - 1] <= Math.min(limits.windowTokens, limits.maxInputTokens - fixed)) {
+  while (start > 0 && windowSize + turnSizes[start - 1] <= room) {
     start -= 1;
     windowSize += turnSizes[start];
   }

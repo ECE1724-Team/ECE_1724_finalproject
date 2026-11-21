@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { Pool } from "pg";
+import { DEFAULT_HISTORY_LIMITS } from "../../src/modules/ai/context/history.js";
 import type { PromptMessage } from "../../src/modules/ai/context/prompt.js";
 import { createConversation, getConversation, getSnapshot } from "../../src/modules/ai/conversations/postgres-repository.js";
 import { acceptInput, completeGeneration, endGeneration, type PreparedTurn } from "../../src/modules/ai/generations/postgres-repository.js";
@@ -9,10 +10,13 @@ import { prepareTurn } from "../../src/modules/ai/generations/service.js";
 import { ensureWorkspace } from "../../src/modules/ai/workspaces/postgres-repository.js";
 import { createPostgresApplicationRepository } from "../../src/modules/applications/postgres-repository.js";
 import type { ApplicationUpdate } from "../../src/modules/applications/repository.js";
+import { FakeLlm } from "../fakes/llm.js";
 import { newApplication, resumes, savedApplication } from "../helpers/applications.js";
 import { insertTestOwners, withTestDatabase } from "../helpers/database.js";
 
 const applications = createPostgresApplicationRepository();
+// No turn here reaches the compression threshold, so the model is never called.
+const history = { limits: DEFAULT_HISTORY_LIMITS, model: new FakeLlm().chatModel(), signal: new AbortController().signal };
 
 async function addResume(pool: Pool, userId: string, name: string, text: string | null) {
   const id = randomUUID();
@@ -41,7 +45,7 @@ async function setup(pool: Pool) {
   const start = async (conversationId: string, content: string) => {
     const accepted = await acceptInput(pool, owner.id, conversationId, content);
     assert.equal(accepted.outcome, "ACCEPTED");
-    const ready = await prepareTurn(pool, owner.id, conversationId, accepted.generationId);
+    const ready = await prepareTurn(pool, owner.id, conversationId, accepted.generationId, history);
     assert.ok(ready);
     modelCalls.push(ready.prompt);
     const finish = async () => {
@@ -192,7 +196,7 @@ test("a material read or snapshot write failure rolls back preparation and makes
   const expectRefreshFailure = async (content: string) => {
     const accepted = await acceptInput(pool, owner.id, conversationId, content);
     assert.equal(accepted.outcome, "ACCEPTED");
-    await assert.rejects(prepareTurn(pool, owner.id, conversationId, accepted.generationId));
+    await assert.rejects(prepareTurn(pool, owner.id, conversationId, accepted.generationId, history));
     const { rows: [run] } = await pool.query("SELECT status, error_code, snapshot_at FROM public.generation_runs WHERE id = $1", [accepted.generationId]);
     assert.deepEqual(run, { status: "failed", error_code: "MATERIAL_REFRESH_FAILED", snapshot_at: null });
     const { rows: [input] } = await pool.query("SELECT parts->0->>'text' AS text FROM public.messages WHERE id = $1", [accepted.inputMessage.id]);

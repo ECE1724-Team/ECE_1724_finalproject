@@ -321,7 +321,7 @@ Create/reuse workspace with an ownership-scoped insert and conflict handling on 
 | `input_message_id` | UUID NN | User message that this attempt answers; same-conversation FK to `messages` |
 | `status` | TEXT NN | `preparing`, `streaming`, `completed`, `failed`, `interrupted` |
 | `baseline_generation_id` | UUID nullable | Latest completed generation used as the comparison baseline when preparation committed; NULL before preparation and when the conversation had no completed answer; same-conversation FK |
-| `model_metadata` | JSONB nullable | Actual provider/model/configuration identifiers; no secrets |
+| `model_metadata` | JSONB nullable | Set on completion: provider, model, the reply's input/output tokens and finish reason, and `summary` with the same usage fields when the turn compressed history; no secrets or text |
 | `error_code` | TEXT nullable | Failure metadata |
 | `started_at` | TIMESTAMPTZ NN | Request acceptance and attempt creation |
 | `snapshot_at` | TIMESTAMPTZ nullable until preparation commits | Audit time of the logical material-snapshot boundary; versions remain authoritative |
@@ -838,7 +838,7 @@ Version 1.13 records Jianye's ownership of the resume routes, the repository int
 
 Version 1.13 adds the workspace lock to application deletion (§7.5 step 2): the lock order is application → workspace → conversations.
 
-Version 1.14 records the context-sizing values set on 2026-11-20 (§5.10, §12).
+Version 1.14 records the context-sizing values set on 2026-11-20 (§5.10, §12) and what `generation_runs.model_metadata` stores (§5.7).
 
 Version 1.12 records the agreed database service contract (Appendix C.4): repository interfaces and transaction ownership, startup pool creation, backend-generated resume IDs, an unpaginated resume list with `linkedApplicationCount`, 404 for deleted resumes, and storage-cleanup reasons and ownership (§5.11).
 

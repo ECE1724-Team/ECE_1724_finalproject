@@ -92,6 +92,7 @@ test("AI workspaces: position search, workspace reuse, independent conversations
   assert.deepEqual(await list("?status=offer"), []);
   assert.deepEqual(await list("?q=%25"), [], "% is a literal, not a wildcard");
   assert.deepEqual(await list("?q=nothing&status=applied"), []);
+  assert.equal((await list("?q=%20&status=")).length, 3, "blank values filter nothing, as in the application list");
   await expectError(await call("/ai/applications?status=archived", owner.cookie), 400, "BAD_REQUEST");
   await expectError(await call("/ai/applications?q=a&q=b", owner.cookie), 400, "BAD_REQUEST");
   assert.deepEqual((await json<Options>(await call("/ai/applications", other.cookie), 200)).data.map((a) => a.id), [foreign.id]);

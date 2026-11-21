@@ -3,10 +3,11 @@ import type { Pool } from "pg";
 import { getAuthContext } from "../../http/authorization.js";
 import type { ChatModel } from "../../integrations/llm/openai.js";
 import { isUuid } from "../../lib/uuid.js";
+import { ApplicationError } from "../applications/errors.js";
 import { createPostgresApplicationRepository } from "../applications/postgres-repository.js";
-import type { ApplicationStatus } from "../applications/repository.js";
-import type { HistoryLimits } from "./context/history.js";
+import { parseListQuery } from "../applications/validation.js";
 import { isDbUnavailable } from "../resumes/errors.js";
+import type { HistoryLimits } from "./context/history.js";
 import {
   createConversation, getConversation, getSnapshot, listConversations, listMessages,
 } from "./conversations/postgres-repository.js";
@@ -25,19 +26,14 @@ export interface AiRouterOptions {
   historyLimits?: HistoryLimits;
 }
 
-const STATUSES: readonly ApplicationStatus[] = ["saved", "applied", "oa", "interview", "offer", "rejected"];
-
 export function createAiRouter({ pool, model, historyLimits }: AiRouterOptions): Router {
   const router = Router();
   const applications = createPostgresApplicationRepository();
 
+  // Same query rules as the application list (endpoints.json listAiApplications).
   router.get("/ai/applications", async (req, res) => {
-    const { q, status } = req.query;
-    if ((q !== undefined && typeof q !== "string")
-      || (status !== undefined && !STATUSES.includes(status as ApplicationStatus))) {
-      return sendError(res, 400, "BAD_REQUEST", "q must be a single string and status one of the six application statuses.");
-    }
-    const rows = await applications.list(pool, userIdOf(res), { search: q, status: status as ApplicationStatus | undefined });
+    const { q, status } = parseListQuery(req.query as Record<string, unknown>);
+    const rows = await applications.list(pool, userIdOf(res), { search: q, status });
     res.json({ data: rows.map(({ id, companyName, positionTitle, status }) => ({ id, companyName, jobTitle: positionTitle, status })) });
   });
 
@@ -151,10 +147,11 @@ export function createAiRouter({ pool, model, historyLimits }: AiRouterOptions):
     res.end();
   }
 
-  // Express 5 forwards async handler errors here. Anything that is not a database outage goes on
-  // to createApp's handler (500).
+  // Express 5 forwards async handler errors here. Anything else goes on to createApp's handler (500).
   const handleError: ErrorRequestHandler = (error, _req, res, next) => {
-    if (res.headersSent || !isDbUnavailable(error)) return next(error);
+    if (res.headersSent) return next(error);
+    if (error instanceof ApplicationError) return sendError(res, error.status, error.code, error.message);
+    if (!isDbUnavailable(error)) return next(error);
     console.error("AI request failed: database unavailable");
     sendError(res, 503, "AI_SERVICE_UNAVAILABLE", "The AI service is temporarily unavailable. Please try again.");
   };

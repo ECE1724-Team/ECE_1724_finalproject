@@ -43,8 +43,8 @@ class ContextFailure extends Error {
 export interface HistoryOptions {
   limits: HistoryLimits;
   /** Writes the summary when older history must be compressed. */
-  model?: ChatModel;
-  signal?: AbortSignal;
+  model: ChatModel;
+  signal: AbortSignal;
 }
 
 type Usage = Pick<ReplyResult, "inputTokens" | "outputTokens" | "finishReason">;
@@ -67,7 +67,7 @@ async function recordEnd(pool: Pool, conversationId: string, generationId: strin
  * model call happens. Returns null when the attempt is no longer preparing.
  */
 export async function prepareTurn(pool: Pool, userId: string, conversationId: string, generationId: string,
-  history: HistoryOptions = { limits: DEFAULT_HISTORY_LIMITS })
+  history: HistoryOptions)
   : Promise<{ prepared: PreparedTurn; prompt: PromptMessage[]; summaryUsage: Usage | null } | null> {
   let prepared: PreparedTurn | null;
   try {
@@ -103,12 +103,11 @@ async function assembleContext(pool: Pool, conversationId: string, prepared: Pre
   if (estimateTokens(request) > limits.maxInputTokens) throw new ContextFailure("CONTEXT_CAPACITY_EXCEEDED", HISTORY_TOO_LARGE);
   let next: ReplyResult;
   try {
-    if (!model || !signal) throw new Error("No summary model");
     next = await model.summarize({ messages: request, signal });
     const through = plan.covered.at(-1)!.sequenceNo;
     if (!(await saveSummary(pool, conversationId, summary?.id ?? null, through, next.text))) throw new Error("The summary boundary moved");
   } catch (error) {
-    if (signal?.aborted) throw new ContextFailure("GENERATION_INTERRUPTED");
+    if (signal.aborted) throw new ContextFailure("GENERATION_INTERRUPTED");
     console.error("History summary failed:", describe(error));
     const fallback = buildTurnPrompt(base, summary?.text ?? null, turns);
     if (estimateTokens(fallback) <= limits.maxInputTokens) return { prompt: fallback, summaryUsage: null };
