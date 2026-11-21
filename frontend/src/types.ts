@@ -1,13 +1,19 @@
 export type ApplicationStatus =
   | "saved"
   | "applied"
-  | "interviewing"
-  | "offered"
-  | "rejected"
-  | "withdrawn"
-  | "accepted";
+  | "oa"
+  | "interview"
+  | "offer"
+  | "rejected";
 
 export type Interview = {
+  id: string;
+  type: string;
+  scheduledAt: string;
+};
+
+export type InterviewInput = {
+  id?: string;
   type: string;
   scheduledAt: string;
 };
@@ -16,46 +22,88 @@ export type ApplicationFields = {
   companyName: string;
   jobTitle: string;
   status?: ApplicationStatus;
-  jobUrl?: string;
-  jobDescription?: string;
-  location?: string;
-  appliedAt?: string | null;
+  appliedDate?: string | null;
+  jobDescription?: string | null;
+  jobUrl?: string | null;
   resumeId?: string | null;
-  interviews?: Interview[];
-  notes?: string;
   companyWebsiteUrl?: string | null;
   companyNotes?: string | null;
+  notes?: string | null;
+  offerReceived?: boolean;
+  interviews?: InterviewInput[];
 };
 
-export type ApplicationCreate = ApplicationFields & {
-  companyName: string;
-  jobTitle: string;
-};
+export type ApplicationCreate = ApplicationFields;
 
 export type ApplicationReplace = ApplicationFields & {
-  companyName: string;
-  jobTitle: string;
   status: ApplicationStatus;
+  rowVersion?: string;
 };
 
-export type Application = ApplicationFields & {
+export type ApplicationStatusChange = {
+  fromStatus: ApplicationStatus;
+  toStatus: ApplicationStatus;
+  changedAt: string;
+};
+
+export type Application = {
   id: string;
   companyName: string;
   jobTitle: string;
   status: ApplicationStatus;
+  appliedDate: string | null;
+  jobDescription: string | null;
+  jobUrl: string | null;
+  resumeId: string | null;
+  resumeName: string | null;
+  companyWebsiteUrl: string | null;
+  companyNotes: string | null;
+  notes: string | null;
+  offerReceived: boolean;
+  interviews: Interview[];
+  statusHistory: ApplicationStatusChange[];
+  rowVersion: string;
   createdAt: string;
   updatedAt: string;
 };
 
-export type Pagination = {
-  page: number;
-  limit: number;
-  total: number;
+export type ApplicationSummary = {
+  id: string;
+  companyName: string;
+  jobTitle: string;
+  status: ApplicationStatus;
+  appliedDate: string | null;
+  resumeId: string | null;
+  resumeName: string | null;
+  createdAt: string;
 };
 
 export type ApplicationList = {
-  data: Application[];
-  pagination: Pagination;
+  data: ApplicationSummary[];
+  counts: {
+    total: number;
+    byStatus: Record<ApplicationStatus, number>;
+  };
+};
+
+export type DashboardData = {
+  counts: ApplicationList["counts"];
+  offersEverReceived: number;
+  interviewSessions: number;
+  upcomingInterviews: {
+    timeZone: string;
+    start: string;
+    end: string;
+    items: {
+      id: string;
+      applicationId: string;
+      type: string;
+      scheduledAt: string;
+      companyName: string;
+      jobTitle: string;
+    }[];
+  };
+  recentApplications: ApplicationSummary[];
 };
 
 export type ResumeUpload = {

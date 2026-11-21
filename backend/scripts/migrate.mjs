@@ -4,11 +4,13 @@ import { readDatabaseUrl } from "../src/db/database-url.mts";
 
 try {
   const connectionString = readDatabaseUrl();
-  const { values } = parseArgs({ options: { "dry-run": { type: "boolean" } } });
+  const [, , direction, ...args] = process.argv;
+  if (direction !== "up" && direction !== "down") throw new Error("Specify a migration direction: up or down");
+  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean" } } });
 
   await runner({
     databaseUrl: connectionString,
-    direction: "up",
+    direction,
     dir: "migrations",
     schema: "public",
     migrationsTable: "pgmigrations",

@@ -153,8 +153,8 @@ createdb jobflow_dev
 DATABASE_URL=postgresql://localhost:5432/jobflow_dev npm run migrate
 ```
 
-The script loads `.env` and passes the validated PostgreSQL `DATABASE_URL` directly
-to `node-pg-migrate`. The URL must name the target database. An exported
+Both migration commands load `.env` and pass the validated PostgreSQL `DATABASE_URL`
+directly to `node-pg-migrate`. The URL must name the target database. An exported
 `DATABASE_URL` takes precedence over `.env`. The runner loads the CommonJS and TypeScript
 files from `migrations/` and records them together in `public.pgmigrations`. Running
 `npm run migrate` again applies only pending files. Use `npm run migrate -- --dry-run`
@@ -212,7 +212,9 @@ The caller supplies UUIDs when creating applications and interviews.
   use both the application and interview IDs. List order is `startsAt`, then `id`.
   Use `applications.updateWithInterviews` to update an application and save its
   interviews atomically. It updates the application and its resume link first.
-  Use the supplied transaction client for each interview write and throw if a write fails.
+  Use the supplied transaction client for each interview write and report whether anything
+  changed, or throw if a write fails. A combined save with changes advances the version once,
+  including when only the interviews changed.
 - `applications.delete(pool, userId, id)` returns `DELETED`, `NOT_FOUND`, or
   `GENERATION_ACTIVE`, which can map to HTTP 204, 404, or 409 respectively.
 
@@ -257,6 +259,121 @@ October 29 to November 5, 2026 includes interview IDs
 `b0000000-0000-4000-8000-000000000002` (that morning). The third starts at the end
 boundary. Deleting application `…002` changes the totals to 1 application, 0 interviews
 and 0 offers, with only `…001` in recent applications.
+
+<a id="applications-api"></a>
+
+## Applications API (`/api/v1/applications`)
+
+Owner: Zishi Yang. Code: `src/modules/applications/` (`validation.ts`, `service.ts`, `routes.ts`;
+`postgres-module.ts` wires Rongxin's repositories). Mounted in `server.ts` through `businessRouter`,
+so every route already has a verified Session and the origin check; the user ID always comes from
+`getAuthContext(res)`. Another user's application and a malformed ID both answer 404.
+
+| Route | Result |
+|---|---|
+| `GET /api/v1/applications?q=&status=&sort=` | 200 `{ data: ApplicationSummary[], counts: { total, byStatus } }`. `q`: literal, case-insensitive company/position substring. `status`: one of the six. `sort`: `newest` (default) or `company`. All matches, no pagination. `counts` cover all of the user's applications and ignore `q`/`status` |
+| `POST /api/v1/applications` | 201 + `Location`, body `Application`. Only `companyName` and `jobTitle` are required; `status` defaults to `saved` |
+| `GET /api/v1/applications/{id}` | 200 `Application` |
+| `PUT /api/v1/applications/{id}` | 200 `Application`. Full replacement: `companyName`, `jobTitle`, `status` required; omitted optional fields are cleared (`interviews` → `[]`, `offerReceived` → `false`). Optional `rowVersion` from the last GET; a different stored version → 409 `VERSION_CONFLICT` |
+| `DELETE /api/v1/applications/{id}` | 204. Hard delete with interviews, history, AI workspace and conversations; 409 `GENERATION_ACTIVE` while a generation is preparing/streaming |
+
+**`Application`** (GET/POST/PUT response): `id`, `companyName`, `jobTitle`, `status`,
+`appliedDate` (`"YYYY-MM-DD"` or null), `jobDescription`, `jobUrl`, `resumeId`, `resumeName`,
+`companyWebsiteUrl`, `companyNotes`, `notes`, `offerReceived`, `interviews` (`{ id, type,
+scheduledAt }`, ordered by time), `statusHistory` (`{ fromStatus, toStatus, changedAt }`, oldest
+first; creation is not a change), `rowVersion` (decimal string), `createdAt`, `updatedAt`.
+**`ApplicationSummary`** (list rows): `id`, `companyName`, `jobTitle`, `status`, `appliedDate`,
+`resumeId`, `resumeName`, `createdAt`.
+
+Request rules:
+
+- Statuses are `saved`, `applied`, `oa`, `interview`, `offer`, `rejected`.
+- Entering `offer` sets `offerReceived` to true even if the request says false. Leaving `offer`
+  keeps whatever the request sends.
+- Text fields: `""` or null clears them. `companyName`/`jobTitle` are trimmed, at most 200
+  characters. Caps are 50,000 characters for `jobDescription` and 20,000 for the notes.
+- `jobUrl` and `companyWebsiteUrl` must be absolute http(s) URLs, because the UI renders them as links.
+- Interviews: `type` is trimmed, 1–100 characters. `scheduledAt` is an instant with an offset
+  (`Z` or `±hh:mm`); past values are allowed. At most 50 per application.
+- On PUT, an interview with `id` updates that interview, one without `id` is added, and existing
+  interviews that are not listed are deleted. On POST, `id` is not allowed.
+- `resumeId` must be one of the user's live resumes. Otherwise the answer is 422 and nothing is saved.
+- Unknown fields → 422, with a hint for old names (`appliedAt` → `appliedDate`). Read-only
+  fields copied from a GET (`id`, `resumeName`, `statusHistory`, timestamps) are ignored.
+
+Errors use `{ "error": { "code", "message" } }`:
+
+| HTTP | Code | When |
+|---|---|---|
+| 400 | `BAD_REQUEST` | Body is not a JSON object, or a bad `q`/`status`/`sort` |
+| 404 | `NOT_FOUND` | Missing, someone else's or malformed ID |
+| 409 | `VERSION_CONFLICT` | Stale `rowVersion`, or a concurrent resume relink |
+| 409 | `GENERATION_ACTIVE` | DELETE during an active AI generation |
+| 422 | `VALIDATION_ERROR` | A field is missing or invalid, the resume is unusable, or an interview `id` does not belong to the application |
+
+Plus 401/403/503/500 from `createApp`. A rejected request writes nothing; a PUT that fails in its
+interview part rolls back the application change too.
+
+**Differences from `endpoints.json` 1.11.0.** Following PRD §8.1 and Database Design §9 and
+Appendix B, the confirmed PRD rules win over the older application schema. The API documentation
+owner should update the contract:
+
+| `endpoints.json` 1.11.0 | Implemented |
+|---|---|
+| `ApplicationStatus` with `interviewing`, `offered`, `withdrawn`, `accepted`; no OA | The six PRD statuses, the same values as `AiApplicationStatus` |
+| `appliedAt` (date-time) | `appliedDate` (`YYYY-MM-DD`): PRD asks for a date, stored as `applied_date DATE` |
+| `location` | Removed: not a PRD field and not stored |
+| List `page`/`limit`, `pagination` | `q`/`status`/`sort` and `counts` (PRD FR-23), no pagination (PRD §11 leaves it open) |
+| Interviews without IDs | `interviews[].id` in responses and optional on PUT, so edits keep identity (FR-07) |
+| No offer flag, timeline or version | `offerReceived` (FR-06), `statusHistory` (FR-24), `rowVersion` + 409 `VERSION_CONFLICT` |
+| — | `resumeName` for display; 422 for an unusable resume |
+
+
+## Dashboard API (`/api/v1/dashboard`)
+
+Owner: Zishi Yang. Code: `src/modules/dashboard/` (`time-window.ts`, `routes.ts`) on top of
+Rongxin's `readDashboard()`. Mounted in `server.ts` through `businessRouter`, behind the same
+origin check and `requireVerifiedUser` as the other business routes.
+
+`GET /api/v1/dashboard?timeZone=America/Toronto` → 200:
+
+```json
+{
+  "counts": { "total": 6, "byStatus": { "saved": 1, "applied": 1, "oa": 1, "interview": 1, "offer": 1, "rejected": 1 } },
+  "offersEverReceived": 2,
+  "interviewSessions": 5,
+  "upcomingInterviews": {
+    "timeZone": "America/Toronto", "start": "2026-10-29T04:00:00.000Z", "end": "2026-11-05T05:00:00.000Z",
+    "items": [{ "id": "…", "applicationId": "…", "type": "Onsite", "scheduledAt": "…", "companyName": "Globex", "jobTitle": "Full-stack Developer" }]
+  },
+  "recentApplications": [{ "id": "…", "companyName": "…", "jobTitle": "…", "status": "offer", "appliedDate": null, "resumeId": null, "resumeName": null, "createdAt": "…" }]
+}
+```
+
+- **Totals (FR-03).**
+  - `counts` covers all of the user's applications, saved and rejected ones included. It has the
+    same shape as the application list's `counts`, so `byStatus` can drive the clickable status chart.
+  - `offersEverReceived` counts applications that ever reached Offer.
+  - `interviewSessions` counts every interview round, not only the upcoming ones.
+- **Next 7 days.**
+  - `timeZone` is required. Send the browser's
+    `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+  - The window runs from local midnight today (inclusive) to local midnight seven calendar dates
+    later (exclusive). It is built from calendar dates, so it is 167 or 169 hours long when it
+    crosses a daylight-saving change.
+  - `start` and `end` are returned so the page can label the range. Items are in time order.
+  - The zone is echoed as sent. IANA names in any letter case are accepted, and so are fixed
+    offsets such as `+05:00`.
+- **Recent applications.** The newest 5 (`RECENT_APPLICATIONS`), in the application-list summary
+  shape.
+- **Errors.** A missing, repeated or unknown `timeZone` → 400 `BAD_REQUEST`. Plus 401/403/503/500
+  from `createApp`.
+- **Field names** follow the Applications API (`jobTitle`, `type`, `scheduledAt`), not the column
+  names `readDashboard()` returns.
+
+**Proposals to agree with Justin** (not fixed by the PRD): the `timeZone` query parameter and the
+response shape above, and showing 5 recent applications. `endpoints.json` has no Dashboard entry
+yet.
 
 ## Resume storage and PDF parsing (R2 / PDF)
 

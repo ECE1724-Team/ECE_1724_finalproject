@@ -1,0 +1,17 @@
+@reference "./global.css";
+
+.page {
+  @apply mx-auto grid max-w-md gap-6 px-4 py-12;
+}
+
+.modeSwitch {
+  @apply flex justify-center gap-2;
+}
+
+.form {
+  @apply grid gap-4;
+}
+
+.fieldGroup {
+  @apply grid gap-2;
+}

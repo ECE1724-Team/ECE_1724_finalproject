@@ -1,0 +1,45 @@
+@reference "./global.css";
+
+.page {
+  @apply mx-auto grid max-w-7xl gap-12 px-4 py-8 sm:py-12;
+}
+
+.hero {
+  @apply grid justify-items-start gap-5 rounded-2xl bg-card px-6 py-12 sm:px-12 sm:py-16;
+}
+
+.eyebrow {
+  @apply text-sm font-semibold uppercase tracking-wide text-muted-foreground;
+}
+
+.title {
+  @apply max-w-3xl text-4xl font-semibold tracking-tight sm:text-5xl;
+}
+
+.intro {
+  @apply max-w-2xl text-lg leading-relaxed text-muted-foreground;
+}
+
+.features {
+  @apply grid gap-6;
+}
+
+.sectionTitle {
+  @apply text-2xl font-semibold tracking-tight;
+}
+
+.sectionDescription {
+  @apply mt-2 text-muted-foreground;
+}
+
+.featureGrid {
+  @apply grid gap-4 md:grid-cols-3;
+}
+
+.icon {
+  @apply mb-2 size-6 text-muted-foreground;
+}
+
+.featureDescription {
+  @apply leading-relaxed text-muted-foreground;
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import ErrorAlert from "@/components/ErrorAlert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -8,72 +8,121 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Link } from "react-router";
-import type { Application, ApplicationList } from "../types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Link, useSearchParams } from "react-router";
+import type { ApplicationList, ApplicationSummary } from "../types";
 import { fakeApplications } from "../lib/testpayloads";
+import { responseError } from "@/lib/response-error";
+import { applicationStatuses } from "@/lib/application-status";
+import styles from "@/styles/Applications.module.css";
 
 const PAGE_SIZE = 20;
 
 export default function Applications({ mock = false }) {
-  const [applications, setApplications] = useState<Application[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const status = searchParams.get("status");
+  const [applications, setApplications] = useState<ApplicationSummary[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
 
     async function loadApplications() {
       setLoading(true);
       setError(null);
+      setPage(1);
 
       try {
+        const query = new URLSearchParams({ sort: "newest" });
+        if (status) query.set("status", status);
         const response = await fetch(
-          `/api/v1/applications?page=${page}&limit=${PAGE_SIZE}`,
+          `/api/v1/applications?${query}`,
           {
             credentials: "include",
+            signal: controller.signal,
           },
         );
 
         if (!response.ok) {
-          throw new Error();
+          throw await responseError(response, "Failed to load applications.");
         }
 
         const result = await response.json() as ApplicationList;
-        setApplications(result.data);
-        setTotal(result.pagination.total);
-      } catch {
-          setError("Failed to load applications");
+        if (!controller.signal.aborted) {
+          setApplications(result.data);
+          setTotal(result.data.length);
+        }
+      } catch (failure) {
+        if (!controller.signal.aborted) {
+          setApplications([]);
+          setTotal(0);
+          setError(failure instanceof Error ? failure.message : "Failed to load applications.");
+        }
       } finally {
-          setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
 
-    if(mock) {
-        setApplications(fakeApplications.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE));
-        setTotal(fakeApplications.length);
-        setLoading(false);
-        return;
+    if (mock) {
+      const filtered = status ? fakeApplications.filter((application) => application.status === status) : fakeApplications;
+      setApplications(filtered);
+      setTotal(filtered.length);
+      setPage(1);
+      setLoading(false);
+      return;
     }
 
-    loadApplications();
-  }, [page]);
+    void loadApplications();
+    return () => controller.abort();
+  }, [mock, status]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const firstItem = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastItem = Math.min(page * PAGE_SIZE, total);
+  const visibleApplications = applications.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-8">
-      <header>
-        <h1 className="text-2xl font-semibold">Applications</h1>
+    <main className={styles.page}>
+      <header className={styles.header}>
+        <h1 className={styles.title}>Applications</h1>
+        <Button nativeButton={false} render={<Link to="/application" />}>
+          New Application
+        </Button>
       </header>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      <div className={styles.filter}>
+        <label htmlFor="status-filter">Filter by status</label>
+        <Select
+          value={status || "all"}
+          onValueChange={(value) => {
+            if (value === null) return;
+            const next = new URLSearchParams(searchParams);
+            if (value !== "all") {
+              next.set("status", value);
+            } else {
+              next.delete("status");
+            }
+            setSearchParams(next);
+          }}
+        >
+          <SelectTrigger id="status-filter" className={styles.filterSelect}>
+            <SelectValue>
+              {status ? applicationStatuses.find((item) => item.value === status)?.label ?? status : "All statuses"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            {applicationStatuses.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {error && <ErrorAlert message={error} />}
 
       {loading ? (
         <p role="status">Loading applications...</p>
@@ -82,23 +131,59 @@ export default function Applications({ mock = false }) {
       ) : (
         <section
           aria-label="Applications"
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
+          className={styles.applicationList}
         >
-          {applications.map((application) => (
+          {visibleApplications.map((application) => (
             <Link
               key={application.id}
               to={`/application/${application.id}`}
-              className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className={styles.applicationLink}
             >
-              <Card className="min-h-32 transition-colors hover:bg-muted/50">
+              <Card className={styles.applicationCard}>
                 <CardHeader>
                   <CardTitle>{application.companyName}</CardTitle>
                   <CardDescription>
                     {application.jobTitle}
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <p className="capitalize">{application.status}</p>
+                <CardContent className={styles.cardDetails}>
+                  <dl className={styles.details}>
+                    <div>
+                      <dt>Status</dt>
+                      <dd className={styles.status}>{application.status}</dd>
+                    </div>
+                    <div>
+                      <dt>Applied</dt>
+                      <dd>
+                        {application.appliedDate ? (
+                          <time dateTime={application.appliedDate}>
+                            {new Date(`${application.appliedDate}T00:00:00Z`).toLocaleDateString(undefined, {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                              timeZone: "UTC",
+                            })}
+                          </time>
+                        ) : "Not provided"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Resume</dt>
+                      <dd>{application.resumeName ?? "Not linked"}</dd>
+                    </div>
+                    <div>
+                      <dt>Added</dt>
+                      <dd>
+                        <time dateTime={application.createdAt}>
+                          {new Date(application.createdAt).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </time>
+                      </dd>
+                    </div>
+                  </dl>
                 </CardContent>
               </Card>
             </Link>
@@ -106,11 +191,11 @@ export default function Applications({ mock = false }) {
         </section>
       )}
 
-      <footer className="flex items-center justify-between gap-4">
-        <p className="text-sm text-muted-foreground">
+      <footer className={styles.footer}>
+        <p className={styles.count}>
           Showing {firstItem}-{lastItem} of {total}
         </p>
-        <div className="flex items-center gap-2">
+        <div className={styles.pagination}>
           <Button
             type="button"
             variant="outline"
@@ -119,7 +204,7 @@ export default function Applications({ mock = false }) {
           >
             Previous
           </Button>
-          <span className="text-sm">
+          <span className={styles.pageNumber}>
             Page {page} of {totalPages}
           </span>
           <Button

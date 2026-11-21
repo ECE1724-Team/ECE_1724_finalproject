@@ -1,9 +1,9 @@
-import type { Application, ApplicationStatus, Resume } from "../types";
+import type { Application, Resume } from "../types";
 
 const mockResumeId = "10000000-0000-4000-8000-000000000001";
 
 const applicationTemplates: Array<
-  Pick<Application, "companyName" | "jobTitle" | "status" | "resumeId">
+  Pick<Application, "companyName" | "jobTitle" | "status"> & { resumeId?: string }
 > = [
   {
     companyName: "Acme Software",
@@ -14,7 +14,7 @@ const applicationTemplates: Array<
   {
     companyName: "Northstar Robotics",
     jobTitle: "Frontend Developer",
-    status: "interviewing",
+    status: "interview",
   },
   {
     companyName: "Maple Analytics",
@@ -25,7 +25,7 @@ const applicationTemplates: Array<
   {
     companyName: "Redwood Health",
     jobTitle: "UX Engineer",
-    status: "offered",
+    status: "offer",
   },
   {
     companyName: "Orbit Financial",
@@ -45,6 +45,18 @@ export const fakeApplications: Application[] = Array.from(
       ...template,
       id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
       companyName: `${template.companyName} (Test ${sequence})`,
+      appliedDate: null,
+      jobDescription: null,
+      jobUrl: null,
+      resumeId: template.resumeId ?? null,
+      resumeName: template.resumeId ? "Software Engineer Resume" : null,
+      companyWebsiteUrl: null,
+      companyNotes: null,
+      notes: null,
+      offerReceived: template.status === "offer",
+      interviews: [],
+      statusHistory: [],
+      rowVersion: String(index + 1),
       createdAt: date,
       updatedAt: date,
     };

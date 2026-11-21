@@ -87,6 +87,7 @@ test("a failed interview write rolls back the application update and resume link
     { resumeId: resume.id, status: "interview" }, async (client) => {
       assert.ok(await interviews.insert(client, interview));
       await interviews.insert(client, { ...interview, id: randomUUID(), interviewName: " " });
+      return true;
     }), { code: "23514" });
 
   assert.deepEqual(await applications.get(pool, userId, id), original);

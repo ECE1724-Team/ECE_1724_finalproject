@@ -1,0 +1,5 @@
+@reference "./global.css";
+
+.statusEditor {
+  @apply grid justify-items-start gap-2;
+}

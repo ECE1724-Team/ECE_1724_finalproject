@@ -9,17 +9,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import ErrorAlert from "@/components/ErrorAlert";
+import ApplicationStatusDropdown from "@/components/ApplicationStatusDropdown";
 import { Textarea } from "@/components/ui/textarea";
+import ResumeUploadForm from "@/components/ResumeUploadForm";
+import { Link, useNavigate } from "react-router";
 import type {
   Application,
   ApplicationCreate,
+  ApplicationReplace,
   ApplicationStatus,
-  ApiError,
   Resume,
   ResumeList,
 } from "../types";
 import { fakeResumes } from "../lib/testpayloads";
+import { responseError } from "@/lib/response-error";
+import styles from "@/styles/ApplicationForm.module.css";
 
 type ApplicationFormProps = {
   application?: Application;
@@ -33,8 +38,7 @@ type ApplicationFormData = {
   status: ApplicationStatus;
   jobUrl: string;
   jobDescription: string;
-  location: string;
-  appliedAt: string;
+  appliedDate: string;
   resumeId: string;
   notes: string;
   companyWebsiteUrl: string;
@@ -47,8 +51,7 @@ const emptyForm: ApplicationFormData = {
   status: "saved",
   jobUrl: "",
   jobDescription: "",
-  location: "",
-  appliedAt: "",
+  appliedDate: "",
   resumeId: "",
   notes: "",
   companyWebsiteUrl: "",
@@ -58,42 +61,61 @@ const emptyForm: ApplicationFormData = {
 const statuses: ApplicationStatus[] = [
   "saved",
   "applied",
-  "interviewing",
-  "offered",
+  "oa",
+  "interview",
+  "offer",
   "rejected",
-  "withdrawn",
-  "accepted",
 ];
 
 const NO_RESUME = "No Resumes Found";
+
+function getExternalUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!URL.canParse(trimmed)) return null;
+
+  const url = new URL(trimmed);
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+    return null;
+  }
+  return url.href;
+}
+
+function formFromApplication(application: Application): ApplicationFormData {
+  return {
+    companyName: application.companyName,
+    jobTitle: application.jobTitle,
+    status: application.status,
+    jobUrl: application.jobUrl ?? "",
+    jobDescription: application.jobDescription ?? "",
+    appliedDate: application.appliedDate ?? "",
+    resumeId: application.resumeId ?? "",
+    notes: application.notes ?? "",
+    companyWebsiteUrl: application.companyWebsiteUrl ?? "",
+    companyNotes: application.companyNotes ?? "",
+  };
+}
 
 export default function ApplicationForm({
   application,
   mock = false,
 }: ApplicationFormProps) {
-  const isReadOnly = application ? true : false;
+  const navigate = useNavigate();
+  const [savedApplication, setSavedApplication] = useState(application);
+  const [editing, setEditing] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const isViewMode = !!savedApplication && !editing;
   const [form, setForm] = useState<ApplicationFormData>(
-    application
-      ? {
-        companyName: application.companyName,
-        jobTitle: application.jobTitle,
-        status: application.status,
-        jobUrl: application.jobUrl ?? "",
-        jobDescription: application.jobDescription ?? "",
-        location: application.location ?? "",
-        appliedAt: application.appliedAt ?? "",
-        resumeId: application.resumeId ?? "",
-        notes: application.notes ?? "",
-        companyWebsiteUrl: application.companyWebsiteUrl ?? "",
-        companyNotes: application.companyNotes ?? "",
-      }
-      : emptyForm,
+    application ? formFromApplication(application) : emptyForm,
   );
 
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [resumesError, setResumesError] = useState<string | null>(null);
   const [resumes, setResumes] = useState<Resume[]>(mock ? fakeResumes : []);
   const [loadingResumes, setLoadingResumes] = useState(true);
+  const [showResumeUpload, setShowResumeUpload] = useState(false);
 
   useEffect(() => {
 
@@ -104,13 +126,13 @@ export default function ApplicationForm({
         });
 
         if (!response.ok) {
-          throw new Error();
+          throw await responseError(response, "Failed to load resumes.");
         }
 
         const result = await response.json() as ResumeList;
         setResumes(result.data);
       } catch (loadError) {
-          setError("Failed to load resumes");
+          setResumesError(loadError instanceof Error ? loadError.message : "Failed to load resumes.");
       } finally {
           setLoadingResumes(false);
       }
@@ -132,44 +154,82 @@ export default function ApplicationForm({
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  async function deleteApplication() {
+    if (!savedApplication || deleting || statusSaving) return;
+    setDeleteError(null);
+    if (mock) {
+      setDeleteError("Sample applications cannot be deleted.");
+      return;
+    }
+    if (!window.confirm(
+      `Delete ${savedApplication.jobTitle} at ${savedApplication.companyName}? This permanently deletes the application, its interviews, history, and AI conversations. Linked resumes are not deleted.`,
+    )) return;
+
+    setDeleting(true);
+    try {
+      const response = await fetch(`/api/v1/applications/${encodeURIComponent(savedApplication.id)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) throw await responseError(response, "Failed to delete application.");
+      window.alert("Application deleted successfully.");
+      navigate("/applications");
+    } catch (failure) {
+      setDeleteError(failure instanceof Error ? failure.message : "Failed to delete application.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting || isReadOnly) return;
+    if (submitting || isViewMode) return;
 
     if (!form.companyName.trim()) {
-      setError("Company name is required");
+      setSubmissionError("Company name is required");
       return;
     }
 
     if (!form.jobTitle.trim()) {
-      setError("Job title is required");
+      setSubmissionError("Job title is required");
       return;
     }
 
-    const payload: ApplicationCreate = {
+    if (mock && savedApplication) {
+      setSubmissionError("Sample applications cannot be edited.");
+      return;
+    }
+
+    const fields = {
       companyName: form.companyName.trim(),
       jobTitle: form.jobTitle.trim(),
       status: form.status,
       jobUrl: form.jobUrl.trim() || undefined,
       jobDescription: form.jobDescription.trim() || undefined,
-      location: form.location.trim() || undefined,
-      appliedAt: form.appliedAt
-        ? new Date(form.appliedAt).toISOString()
-        : null,
+      appliedDate: form.appliedDate || null,
       resumeId: form.resumeId.trim() || null,
       notes: form.notes.trim() || undefined,
-      companyWebsiteUrl: form.companyWebsiteUrl.trim() || null,
+      companyWebsiteUrl: form.companyWebsiteUrl.trim() || undefined,
       companyNotes: form.companyNotes.trim() || null,
     };
+    const payload: ApplicationCreate | ApplicationReplace = savedApplication
+      ? {
+        ...fields,
+        status: form.status,
+        offerReceived: savedApplication.offerReceived,
+        interviews: savedApplication.interviews,
+        rowVersion: savedApplication.rowVersion,
+      }
+      : { ...fields, offerReceived: false, interviews: [] };
 
-    setError(null);
+    setSubmissionError(null);
     setSubmitting(true);
 
     try {
-      //await new Promise<void>((resolve) => setTimeout(resolve, 5000));
-
-      const response = await fetch("/api/v1/applications", {
-        method: "POST",
+      const response = await fetch(savedApplication
+        ? `/api/v1/applications/${encodeURIComponent(savedApplication.id)}`
+        : "/api/v1/applications", {
+        method: savedApplication ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
         },
@@ -178,47 +238,59 @@ export default function ApplicationForm({
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => null) as
-          | ApiError
-          | null;
-        throw new Error(body?.error.message ?? "Failed to create application");
+        const error = await responseError(response, savedApplication
+          ? "Failed to update application."
+          : "Failed to create application.");
+        if (savedApplication && response.status === 409) {
+          throw new Error(`${error.message} Reload the page before trying again.`);
+        }
+        throw error;
       }
 
-      setForm(emptyForm);
-    } catch (submissionError) {
-      setError(
-        submissionError instanceof Error
-          ? submissionError.message
-          : "Failed to create application",
+      if (savedApplication) {
+        const updated = await response.json() as Application;
+        setSavedApplication(updated);
+        setForm(formFromApplication(updated));
+        setEditing(false);
+        setShowResumeUpload(false);
+        window.alert("Application updated successfully.");
+      } else {
+        window.alert("Application created successfully.");
+        navigate("/applications");
+      }
+    } catch (failure) {
+      setSubmissionError(
+        failure instanceof Error
+          ? failure.message
+          : savedApplication ? "Failed to update application." : "Failed to create application.",
       );
     } finally {
       setSubmitting(false);
     }
   }
 
-  const disabled = submitting || isReadOnly;
-  const fieldClass = isReadOnly
-    ? "border-transparent bg-transparent px-0 text-foreground shadow-none disabled:pointer-events-none disabled:cursor-default disabled:bg-transparent disabled:opacity-100 focus-visible:ring-0"
-    : "disabled:cursor-default disabled:opacity-60";
-  const textareaClass = isReadOnly
-    ? "min-h-0 resize-none rounded-none border-0 bg-transparent px-0 py-0 text-foreground shadow-none disabled:pointer-events-none disabled:cursor-default disabled:bg-transparent disabled:opacity-100 focus-visible:ring-0"
-    : "disabled:cursor-default disabled:opacity-60";
+  const disabled = submitting || isViewMode;
+  const fieldClass = isViewMode
+    ? styles.fieldView
+    : styles.fieldEdit;
+  const textareaClass = isViewMode
+    ? styles.textareaView
+    : styles.fieldEdit;
+  const jobUrlHref = isViewMode ? getExternalUrl(form.jobUrl) : null;
+  const companyWebsiteHref = isViewMode ? getExternalUrl(form.companyWebsiteUrl) : null;
 
   return (
     <form
       noValidate
       onSubmit={handleSubmit}
-      className="mx-auto grid max-w-2xl gap-5 rounded-lg border border-slate-200 p-6"
+      className={styles.form}
     >
-      {error && (
-        <Alert variant="destructive" className="rounded-md py-2 text-red-700">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {submissionError && <ErrorAlert message={submissionError} className={styles.errorAlert} />}
+      {deleteError && <ErrorAlert message={deleteError} className={styles.errorAlert} />}
 
-      <div className="grid gap-5 sm:grid-cols-2">
+      <div className={styles.fieldGrid}>
         <div>
-          <Label htmlFor="companyName" className="mb-1 block">
+          <Label htmlFor="companyName" className={styles.fieldLabel}>
             Company name
           </Label>
           <Input
@@ -236,7 +308,7 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          <Label htmlFor="jobTitle" className="mb-1 block">
+          <Label htmlFor="jobTitle" className={styles.fieldLabel}>
             Job title
           </Label>
           <Input
@@ -252,86 +324,116 @@ export default function ApplicationForm({
         </div>
 
         <div>
-          <Label htmlFor="status" className="mb-1 block">
-            Status
-          </Label>
-          {isReadOnly ? (
-            <p className="py-1 text-sm">{form.status}</p>
+          {isViewMode && savedApplication ? (
+            <ApplicationStatusDropdown
+              application={savedApplication}
+              mock={mock}
+              disabled={deleting}
+              onSaved={(updated) => {
+                setSavedApplication(updated);
+                updateField("status", updated.status);
+              }}
+              onSavingChange={setStatusSaving}
+            />
           ) : (
-            <Select
-              value={form.status}
-              disabled={disabled}
-              onValueChange={(value) =>
-                updateField("status", value as ApplicationStatus)
-              }
-            >
-              <SelectTrigger id="status" className={fieldClass}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {statuses.map((status) => (
-                  <SelectItem key={status} value={status}>
-                    {status}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <>
+              <Label htmlFor="status" className={styles.fieldLabel}>Status</Label>
+              <Select
+                value={form.status}
+                disabled={disabled}
+                onValueChange={(value) => {
+                  const status = statuses.find((item) => item === value);
+                  if (status) updateField("status", status);
+                }}
+              >
+                <SelectTrigger id="status" className={fieldClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {statuses.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
           )}
         </div>
 
         <div>
-          <Label htmlFor="appliedAt" className="mb-1 block">
-            Applied at
+          <Label htmlFor="appliedDate" className={styles.fieldLabel}>
+            Applied date
           </Label>
           <Input
-            id="appliedAt"
-            name="appliedAt"
-            type="datetime-local"
-            value={form.appliedAt}
+            id="appliedDate"
+            name="appliedDate"
+            type="date"
+            value={form.appliedDate}
             disabled={disabled}
             className={fieldClass}
-            onChange={(event) => updateField("appliedAt", event.target.value)}
+            onChange={(event) => updateField("appliedDate", event.target.value)}
           />
         </div>
       </div>
 
       <div>
-        <Label htmlFor="jobUrl" className="mb-1 block">
-          Job URL
-        </Label>
-        <Input
-          id="jobUrl"
-          name="jobUrl"
-          type="url"
-          value={form.jobUrl}
-          disabled={disabled}
-          className={fieldClass}
-          onChange={(event) => updateField("jobUrl", event.target.value)}
-        />
-      </div>
-
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <Label htmlFor="location" className="mb-1 block">
-            Location
+        {isViewMode ? (
+          <p className={styles.fieldLabel}>Job URL</p>
+        ) : (
+          <Label htmlFor="jobUrl" className={styles.fieldLabel}>
+            Job URL
           </Label>
+        )}
+        {isViewMode ? (
+          jobUrlHref ? (
+            <a
+              href={jobUrlHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.externalLink}
+            >
+              {form.jobUrl}
+            </a>
+          ) : (
+            <p className={styles.fieldValue}>{form.jobUrl || "Not provided"}</p>
+          )
+        ) : (
           <Input
-            id="location"
-            name="location"
-            type="text"
-            value={form.location}
+            id="jobUrl"
+            name="jobUrl"
+            type="url"
+            value={form.jobUrl}
             disabled={disabled}
             className={fieldClass}
-            onChange={(event) => updateField("location", event.target.value)}
+            onChange={(event) => updateField("jobUrl", event.target.value)}
           />
-        </div>
+        )}
+      </div>
 
-        <div>
-          <Label htmlFor="resumeId" className="mb-1 block">
-            Resume
-          </Label>
-          {isReadOnly ? (
-            <p className="py-1 text-sm">
+      <div className={styles.fieldGrid}>
+        <div className={styles.resumeField}>
+          <div className={styles.resumeHeader}>
+            {isViewMode ? (
+              <p className={styles.fieldLabel}>Resume</p>
+            ) : (
+              <Label htmlFor="resumeId">Resume</Label>
+            )}
+            {!isViewMode && !showResumeUpload && !mock && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => setShowResumeUpload(true)}
+              >
+                {"Upload New Resume"}
+              </Button>
+            )}
+          </div>
+          {resumesError && <ErrorAlert message={resumesError} />}
+          {isViewMode ? (
+            <p className={styles.fieldValue}>
               {!form.resumeId
                 ? "No resume selected"
                 : loadingResumes
@@ -342,7 +444,7 @@ export default function ApplicationForm({
           ) : (
             <Select
               value={form.resumeId || NO_RESUME}
-              disabled={disabled || loadingResumes || resumes.length === 0}
+              disabled={disabled || loadingResumes || (resumes.length === 0 && !form.resumeId)}
               onValueChange={(value) =>
                 updateField(
                   "resumeId",
@@ -350,7 +452,7 @@ export default function ApplicationForm({
                 )
               }
             >
-              <SelectTrigger id="resumeId" className={fieldClass}>
+              <SelectTrigger id="resumeId" className={`${fieldClass} ${styles.fullWidth}`}>
                 <SelectValue
                   placeholder={loadingResumes ? "Loading resumes..." : "Select a resume"}
                 >
@@ -362,7 +464,7 @@ export default function ApplicationForm({
                       : "No resume"}
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent className="w-max min-w-(--anchor-width)">
+              <SelectContent className={styles.selectContent}>
                 <SelectItem value={NO_RESUME}>No resume</SelectItem>
                 {resumes.map((resume) => (
                   <SelectItem key={resume.id} value={resume.id}>
@@ -373,10 +475,22 @@ export default function ApplicationForm({
             </Select>
           )}
         </div>
+        {showResumeUpload && !isViewMode && (
+          <div className={styles.uploadCard}>
+            <ResumeUploadForm
+              onCancel={() => setShowResumeUpload(false)}
+              onUploaded={(resume) => {
+                setResumes((current) => [resume, ...current])
+                updateField("resumeId", resume.id)
+                setShowResumeUpload(false)
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div>
-        <Label htmlFor="jobDescription" className="mb-1 block">
+        <Label htmlFor="jobDescription" className={styles.fieldLabel}>
           Job description
         </Label>
         <Textarea
@@ -393,24 +507,43 @@ export default function ApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="companyWebsiteUrl" className="mb-1 block">
-          Company website
-        </Label>
-        <Input
-          id="companyWebsiteUrl"
-          name="companyWebsiteUrl"
-          type="url"
-          value={form.companyWebsiteUrl}
-          disabled={disabled}
-          className={fieldClass}
-          onChange={(event) =>
-            updateField("companyWebsiteUrl", event.target.value)
-          }
-        />
+        {isViewMode ? (
+          <p className={styles.fieldLabel}>Company website</p>
+        ) : (
+          <Label htmlFor="companyWebsiteUrl" className={styles.fieldLabel}>
+            Company website
+          </Label>
+        )}
+        {isViewMode ? (
+          companyWebsiteHref ? (
+            <a
+              href={companyWebsiteHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.externalLink}
+            >
+              {form.companyWebsiteUrl}
+            </a>
+          ) : (
+            <p className={styles.fieldValue}>{form.companyWebsiteUrl || "Not provided"}</p>
+          )
+        ) : (
+          <Input
+            id="companyWebsiteUrl"
+            name="companyWebsiteUrl"
+            type="url"
+            value={form.companyWebsiteUrl}
+            disabled={disabled}
+            className={fieldClass}
+            onChange={(event) =>
+              updateField("companyWebsiteUrl", event.target.value)
+            }
+          />
+        )}
       </div>
 
       <div>
-        <Label htmlFor="companyNotes" className="mb-1 block">
+        <Label htmlFor="companyNotes" className={styles.fieldLabel}>
           Company notes
         </Label>
         <Textarea
@@ -425,7 +558,7 @@ export default function ApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="notes" className="mb-1 block">
+        <Label htmlFor="notes" className={styles.fieldLabel}>
           Personal notes
         </Label>
         <Textarea
@@ -439,15 +572,76 @@ export default function ApplicationForm({
         />
       </div>
 
-      {!isReadOnly && (
-        <Button
-          type="submit"
-          disabled={disabled}
-          className="disabled:cursor-default disabled:opacity-60"
-        >
-          {submitting ? "Creating..." : "Create application"}
-        </Button>
-      )}
+      <div className={styles.formActions}>
+        {isViewMode ? (
+          <Button
+            type="button"
+            variant="destructive"
+            className={styles.actionButton}
+            disabled={deleting || statusSaving}
+            onClick={() => void deleteApplication()}
+          >
+            {deleting ? "Deleting..." : "Delete application"}
+          </Button>
+        ) : savedApplication && editing ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={submitting}
+            className={styles.actionButton}
+            onClick={() => {
+              setForm(formFromApplication(savedApplication));
+              setEditing(false);
+              setSubmissionError(null);
+              setShowResumeUpload(false);
+            }}
+          >
+            Cancel
+          </Button>
+        ) : (
+          <Button
+            nativeButton={false}
+            render={<Link to="/applications" />}
+            variant="outline"
+            className={styles.actionButton}
+          >
+            Back to all applications
+          </Button>
+        )}
+        {isViewMode ? (
+          <Button
+            type="button"
+            className={styles.actionButton}
+            disabled={statusSaving || deleting}
+            onClick={(event) => {
+              event.preventDefault();
+              setEditing(true);
+            }}
+          >
+            Edit application
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            disabled={disabled}
+            className={styles.submitButton}
+          >
+            {submitting
+              ? savedApplication ? "Saving..." : "Creating..."
+              : savedApplication ? "Save changes" : "Create application"}
+          </Button>
+        )}
+        {isViewMode && (
+          <Button
+            nativeButton={false}
+            render={<Link to="/applications" />}
+            variant="outline"
+            className={styles.backButtonView}
+          >
+            Back to all applications
+          </Button>
+        )}
+      </div>
     </form>
   );
 }

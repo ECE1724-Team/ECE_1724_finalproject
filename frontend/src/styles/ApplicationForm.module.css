@@ -1,0 +1,73 @@
+@reference "./global.css";
+
+.form {
+  @apply mx-auto mt-8 grid max-w-2xl gap-5 rounded-lg border border-border bg-card p-6;
+}
+
+.errorAlert {
+  @apply rounded-md py-2 text-red-700;
+}
+
+.fieldGrid {
+  @apply grid gap-5 sm:grid-cols-2;
+}
+
+.fieldLabel {
+  @apply mb-1 block;
+}
+
+.fieldValue {
+  @apply py-1 text-sm;
+}
+
+.fieldEdit {
+  @apply disabled:cursor-default disabled:opacity-60;
+}
+
+.fieldView {
+  @apply border-transparent bg-transparent px-0 text-foreground shadow-none disabled:pointer-events-none disabled:cursor-default disabled:bg-transparent disabled:opacity-100 focus-visible:ring-0;
+}
+
+.textareaView {
+  @apply min-h-0 resize-none rounded-none border-0 bg-transparent px-0 py-0 text-foreground shadow-none disabled:pointer-events-none disabled:cursor-default disabled:bg-transparent disabled:opacity-100 focus-visible:ring-0;
+}
+
+.externalLink {
+  @apply break-all text-primary underline;
+}
+
+.resumeField {
+  @apply grid gap-2 sm:col-span-2;
+}
+
+.resumeHeader {
+  @apply flex items-center justify-between gap-2;
+}
+
+.fullWidth {
+  @apply w-full;
+}
+
+.selectContent {
+  @apply w-max min-w-(--anchor-width);
+}
+
+.uploadCard {
+  @apply sm:col-span-2;
+}
+
+.formActions {
+  @apply grid grid-cols-2 gap-2;
+}
+
+.actionButton {
+  @apply w-full;
+}
+
+.backButtonView {
+  @apply col-span-2 w-full;
+}
+
+.submitButton {
+  @apply w-full disabled:cursor-default disabled:opacity-60;
+}

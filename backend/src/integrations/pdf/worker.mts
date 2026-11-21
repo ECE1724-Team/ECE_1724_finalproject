@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, join, sep } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
+import { pathToFileURL } from "node:url";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { TextItem, TextMarkedContent } from "pdfjs-dist/types/src/display/api.js";
 import { countNonWhitespace, PdfError, type PdfPageText, type PdfWorkerResult } from "./types.js";
@@ -33,15 +34,16 @@ function pageText(items: (TextItem | TextMarkedContent)[]): string {
 async function extract(): Promise<PdfWorkerResult> {
   const require = createRequire(import.meta.url);
   const root = dirname(require.resolve("pdfjs-dist/package.json"));
+  const resourceUrl = (directory: string) => pathToFileURL(join(root, directory) + sep).href;
   const { bytes, maxPages } = workerData as { bytes: Uint8Array; maxPages: number };
   const task = getDocument({
     data: new Uint8Array(bytes),
     stopAtErrors: true,
     verbosity: 0,
     useWorkerFetch: false,
-    cMapUrl: join(root, "cmaps") + sep,
-    standardFontDataUrl: join(root, "standard_fonts") + sep,
-    wasmUrl: join(root, "wasm") + sep,
+    cMapUrl: resourceUrl("cmaps"),
+    standardFontDataUrl: resourceUrl("standard_fonts"),
+    wasmUrl: resourceUrl("wasm"),
   });
   try {
     const document = await task.promise;

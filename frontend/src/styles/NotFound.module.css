@@ -1,0 +1,13 @@
+@reference "./global.css";
+
+.notFoundPage {
+  @apply mx-auto grid min-h-[60vh] max-w-xl place-content-center gap-4 px-4 text-center;
+}
+
+.notFoundHeading {
+  @apply justify-self-center text-center text-3xl font-semibold;
+}
+
+.notFoundMessage {
+  @apply text-center;
+}
