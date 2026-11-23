@@ -88,6 +88,14 @@
   @apply font-normal text-muted-foreground;
 }
 
+.materialList dt.materialMissing {
+  @apply flex items-center gap-1 font-normal text-muted-foreground;
+}
+
+.materialMissing svg {
+  @apply size-3.5;
+}
+
 .materialText {
   @apply mt-1 max-h-48 overflow-y-auto rounded-md bg-muted p-2 break-words whitespace-pre-wrap text-foreground;
 }

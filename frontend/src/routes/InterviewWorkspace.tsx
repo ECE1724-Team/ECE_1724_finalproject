@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowLeft, CircleCheck, CircleMinus, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CircleCheck, CircleX, TriangleAlert } from "lucide-react";
 import ChatPanel from "@/components/ai/ChatPanel";
 import ConversationList from "@/components/ai/ConversationList";
 import ErrorAlert from "@/components/ErrorAlert";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { createConversation, getWorkspace, listConversations, materialLabel, sortByKind, unavailableReason } from "@/lib/ai";
+import {
+  createConversation, getWorkspace, listConversations, materialLabel, renameConversation, sortByKind, unavailableReason,
+} from "@/lib/ai";
 import type { AiConversation, AiWorkspace } from "@/types";
 import styles from "@/styles/InterviewWorkspace.module.css";
 
@@ -27,7 +29,7 @@ export default function InterviewWorkspace() {
   const [conversations, setConversations] = useState<AiConversation[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -61,15 +63,25 @@ export default function InterviewWorkspace() {
 
   async function newConversation() {
     setCreating(true);
-    setCreateError(null);
+    setActionError(null);
     try {
       const conversation = await createConversation(workspaceId);
       setConversations((current) => [conversation, ...(current ?? [])]);
       navigate(`/interview/${workspaceId}/${conversation.id}`);
     } catch (failure) {
-      setCreateError(failure instanceof Error ? failure.message : "Failed to create a conversation.");
+      setActionError(failure instanceof Error ? failure.message : "Failed to create a conversation.");
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function rename(conversationId: string, title: string) {
+    setActionError(null);
+    try {
+      const renamed = await renameConversation(conversationId, title);
+      setConversations((current) => current?.map((conversation) => conversation.id === renamed.id ? renamed : conversation) ?? null);
+    } catch (failure) {
+      setActionError(failure instanceof Error ? failure.message : "Failed to rename the conversation.");
     }
   }
 
@@ -94,37 +106,37 @@ export default function InterviewWorkspace() {
   return (
     <main className={styles.page}>
       <header className={styles.header}>
-        <div className={styles.heading}>
-          <Link to="/interview" className={styles.back}>
-            <ArrowLeft aria-hidden="true" /> All positions
-          </Link>
+        <Link to="/interview" className={styles.back}>
+          <ArrowLeft aria-hidden="true" /> All positions
+        </Link>
+        <div className={styles.row}>
           <h1 className={styles.title}>{workspace.jobTitle}</h1>
-          <p className={styles.company}>{workspace.companyName}</p>
+          <Button variant="outline" nativeButton={false} render={<Link to={`/application/${workspace.applicationId}`} />}>
+            Edit application
+          </Button>
         </div>
-        <Button variant="outline" nativeButton={false} render={<Link to={`/application/${workspace.applicationId}`} />}>
-          Edit application
-        </Button>
+        <div className={styles.row}>
+          <p className={styles.company}>{workspace.companyName}</p>
+          <ul className={styles.chips} aria-label="Materials the AI uses">
+            {chips.map((material) => {
+              const available = material.availability === "available";
+              return (
+                <li
+                  key={material.kind}
+                  className={available ? styles.chip : `${styles.chip} ${styles.chipMissing}`}
+                  title={available ? undefined : unavailableReason(material.reasonCode)}
+                >
+                  {available
+                    ? <CircleCheck aria-hidden="true" className={styles.chipIconOk} />
+                    : <CircleX aria-label="Missing" />}
+                  {materialLabel(material.kind)}
+                  {material.kind === "resume" && workspace.linkedResume && `: ${workspace.linkedResume.name}`}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </header>
-
-      <section aria-label="Materials the AI uses" className={styles.materials}>
-        <ul className={styles.chips}>
-          {chips.map((material) => (
-            <li key={material.kind} className={material.availability === "available" ? styles.chip : `${styles.chip} ${styles.chipMissing}`}>
-              {material.availability === "available"
-                ? <CircleCheck aria-hidden="true" className={styles.chipIconOk} />
-                : <CircleMinus aria-hidden="true" />}
-              <span>
-                {materialLabel(material.kind)}
-                {material.kind === "resume" && workspace.linkedResume && `: ${workspace.linkedResume.name}`}
-                {material.availability !== "available" && ` · ${unavailableReason(material.reasonCode)}`}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className={styles.hint}>
-          Every message uses the materials saved with the application at that moment. Edit the application to change them.
-        </p>
-      </section>
 
       {resume?.reasonCode === "RESUME_TEXT_UNAVAILABLE" && (
         <Alert className={styles.warning}>
@@ -136,7 +148,7 @@ export default function InterviewWorkspace() {
         </Alert>
       )}
 
-      {createError && <ErrorAlert message={createError} />}
+      {actionError && <ErrorAlert message={actionError} />}
 
       <div className={styles.layout}>
         <ConversationList
@@ -145,6 +157,7 @@ export default function InterviewWorkspace() {
           selectedId={conversationId ?? null}
           creating={creating}
           onNew={() => void newConversation()}
+          onRename={(conversationId, title) => void rename(conversationId, title)}
         />
         <ChatPanel
           key={conversationId ?? "none"}

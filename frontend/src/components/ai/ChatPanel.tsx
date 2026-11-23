@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent } from "react";
 import type { Components } from "react-markdown";
-import { History, Loader2, MessageSquarePlus, RefreshCw, RotateCcw, SendHorizontal, Square } from "lucide-react";
+import { CircleX, History, Loader2, MessageSquarePlus, RefreshCw, RotateCcw, SendHorizontal, Square } from "lucide-react";
 import ErrorAlert from "@/components/ErrorAlert";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -475,13 +475,18 @@ function MaterialsUsed({ conversationId, materials, workspace }: {
           const name = item.kind === "resume" ? resumeName(item.sourceResumeId) : null;
           return (
             <div key={item.kind}>
-              <dt>
-                {materialLabel(item.kind)}
-                {name && <span className={styles.materialDetail}> · {name}</span>}
-                {item.availability !== "available" && (
-                  <span className={styles.materialDetail}> · {unavailableReason(item.reasonCode)}</span>
-                )}
-              </dt>
+              {item.availability === "available" ? (
+                <dt>
+                  {materialLabel(item.kind)}
+                  {name && <span className={styles.materialDetail}> · {name}</span>}
+                </dt>
+              ) : (
+                <dt className={styles.materialMissing} title={unavailableReason(item.reasonCode)}>
+                  <CircleX aria-label="Missing" />
+                  {materialLabel(item.kind)}
+                  {name && <span> · {name}</span>}
+                </dt>
+              )}
               {item.availability === "available" && (
                 <dd className={styles.materialText}>{texts ? texts[item.kind] : error ? "" : "Loading..."}</dd>
               )}

@@ -138,8 +138,9 @@ ones in endpoints.json, and `EventSource` cannot POST, so `lib/ai.ts` reads the 
 frontend/src/
   routes/Interview.tsx                Position picker: search (debounced), status filter, empty states;
                                       ?application=<id> opens that workspace directly
-  routes/InterviewWorkspace.tsx       Header, material chips, scanned-resume warning; restores the latest conversation
-  components/ai/ConversationList.tsx  New conversation, list with titles from the first message
+  routes/InterviewWorkspace.tsx       Header (title + edit, company + material chips), scanned-resume warning;
+                                      restores the latest conversation
+  components/ai/ConversationList.tsx  New conversation, list, inline rename (pencil; Enter saves, Escape cancels)
   components/ai/ChatPanel.tsx         Messages (Markdown), shortcuts, streaming, Stop, Retry, materials of each reply
   lib/ai.ts                           API calls, SSE reader, material labels
   components/ApplicationForm.tsx      "AI Interview Assistant" on the detail page (view mode only)
@@ -169,6 +170,12 @@ frontend/src/
 - **Markdown** replies (the prompt asks for headings and lists) use `react-markdown` + `remark-gfm`,
   lazy-loaded so the main bundle stays under Vite's 500 kB warning (489 kB; about 165 kB in separate chunks).
   Links open in a new tab; raw HTML is not rendered.
+- **Header and rename (11-23, after review).** No explanatory hint under the header; a missing
+  material is a grey ✕ chip with the reason only as a tooltip (also in "Materials used"). Title and
+  "Edit application" share a row, company and chips the next, so the warning no longer stacks below
+  them. Conversations can be renamed through the new `PATCH /ai/conversations/{id}` (trimmed, 1–80
+  characters, no change to `updatedAt` or order; DB test in `ai-workspace.db.test.ts`); workspaces
+  keep company and position as their name.
 - **Fixed in passing:** `dark:` utilities do not work inside CSS Modules, which rename `.dark` in
   the variant's selector. `ErrorAlert.module.css` (light red box in dark mode) and the workspace
   warning now use `:global(.dark) .class`.
@@ -197,6 +204,6 @@ attempts record none. About US$0.004 at the rate of the 11-19/20 checks.
 Open issues:
 - Edge, real uploads and email verification are not covered by this check (see the team check above).
 - Leaving a conversation mid-reply interrupts it without a warning; Retry recovers it.
-- Renaming, deleting and paginating conversations remain deferred; the Dashboard has no per-position
+- Deleting and paginating conversations remain deferred; the Dashboard has no per-position
   AI entry (FR-10 is met by the detail page).
 - `npm run test:db` needs `TEST_DATABASE_URL` where creating a local cluster is not allowed.

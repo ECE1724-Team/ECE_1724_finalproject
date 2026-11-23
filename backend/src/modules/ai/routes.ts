@@ -9,7 +9,7 @@ import { parseListQuery } from "../applications/validation.js";
 import { isDbUnavailable } from "../resumes/errors.js";
 import type { HistoryLimits } from "./context/history.js";
 import {
-  createConversation, getConversation, getSnapshot, listConversations, listMessages,
+  createConversation, getConversation, getSnapshot, listConversations, listMessages, renameConversation,
 } from "./conversations/postgres-repository.js";
 import { acceptInput, acceptRetry, listGenerations, type AcceptResult } from "./generations/postgres-repository.js";
 import { runTurn, type StreamEvent } from "./generations/service.js";
@@ -68,6 +68,21 @@ export function createAiRouter({ pool, model, historyLimits }: AiRouterOptions):
   router.get("/ai/conversations/:conversationId", async (req, res) => {
     const id = idParam(req, "conversationId");
     const conversation = id && (await getConversation(pool, userIdOf(res), id));
+    if (!conversation) return sendNotFound(res);
+    res.json(conversation);
+  });
+
+  // Same 80-character limit as the title derived from the first message.
+  router.patch("/ai/conversations/:conversationId", async (req, res) => {
+    const id = idParam(req, "conversationId");
+    if (!id) return sendNotFound(res);
+    const body: unknown = req.body;
+    const title = (body as { title?: unknown } | undefined)?.title;
+    if (typeof body !== "object" || body === null || Object.keys(body).length !== 1
+      || typeof title !== "string" || !title.trim() || [...title.trim()].length > 80) {
+      return sendError(res, 400, "BAD_REQUEST", "Send a JSON body with a non-blank title of at most 80 characters only.");
+    }
+    const conversation = await renameConversation(pool, userIdOf(res), id, title.trim());
     if (!conversation) return sendNotFound(res);
     res.json(conversation);
   });

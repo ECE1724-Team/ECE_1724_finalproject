@@ -134,6 +134,17 @@ export async function getConversation(db: Db, userId: string, conversationId: st
   return conversation;
 }
 
+/** Sets the display title; null when the conversation is not the user's. Not activity, so the list order stays. */
+export async function renameConversation(db: Db, userId: string, conversationId: string, title: string)
+  : Promise<ConversationView | null> {
+  const { rowCount } = await db.query(`
+    UPDATE public.conversations c SET title = $3
+    FROM public.ai_workspaces w JOIN public.applications a ON a.id = w.application_id
+    WHERE c.id = $2 AND w.id = c.workspace_id AND a.user_id = $1
+  `, [userId, conversationId, title]);
+  return rowCount ? getConversation(db, userId, conversationId) : null;
+}
+
 /** Full stored history in numeric sequence order; null when the conversation is not the user's. */
 export async function listMessages(db: Db, userId: string, conversationId: string): Promise<MessageView[] | null> {
   if (!(await findConversation(db, userId, conversationId))) return null;

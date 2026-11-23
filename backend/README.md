@@ -504,6 +504,7 @@ Code: `src/modules/ai/` (`routes.ts`; `context/` builds the prompt and history; 
 | `PUT /applications/{id}/ai-workspace` | Creates or reuses the application's workspace, with its current materials |
 | `GET /ai/workspaces/{id}`; `GET`/`POST /ai/workspaces/{id}/conversations` | Workspace; list conversations, or create an empty one (201) |
 | `GET /ai/conversations/{id}` and `…/messages`, `…/generations[/{gid}]`, `…/material-snapshots/{sid}` | State, full history, attempts, and the material text an answer used |
+| `PATCH /ai/conversations/{id}` with `{ title }` | Rename (trimmed, 1–80 characters); does not change `updatedAt` or the list order |
 | `POST /ai/conversations/{id}/generations` with `{ content }`; `POST …/generations/{gid}/retry` | SSE: `generation.accepted`, `materials.synced`, `text.delta`…, then `generation.completed` or `generation.error` |
 
 Before the stream opens, errors are JSON: 400, 404 (missing, malformed or another user's ID), 409
@@ -519,7 +520,8 @@ latest input's failed or interrupted attempt can be retried.
   history reaches 64,000, keeping up to 16,000 verbatim ([AI Design §4.3](../docs/AI_Design.md)).
   Each model call stops after 30 s without text or 120 s in all. Replies have at most 4,000
   output tokens, summaries 800.
-- A conversation's title is the first sentence of its first message, up to 80 characters.
+- A conversation's title is the first sentence of its first message, up to 80 characters, until
+  the user renames it. Workspaces are not renamed; they show the company and position.
 - On a turn that compresses history, `materials.synced` arrives after the summary call (about 5 s).
 - Single instance: at startup, runs left `preparing` or `streaming` are marked interrupted.
 - Tests use a fake model (`tests/fakes/llm.ts`); none call OpenAI.

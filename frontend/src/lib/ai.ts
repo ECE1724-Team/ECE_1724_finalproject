@@ -42,6 +42,14 @@ export function createConversation(workspaceId: string) {
     "Failed to create a conversation.", { method: "POST" });
 }
 
+export function renameConversation(conversationId: string, title: string) {
+  return request<AiConversation>(conversationPath(conversationId), "Failed to rename the conversation.", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
 export function getConversation(conversationId: string, signal?: AbortSignal) {
   return request<AiConversation>(conversationPath(conversationId), "Failed to load the conversation.", { signal });
 }

@@ -27,10 +27,11 @@ async function startServer(t: { after: (fn: () => Promise<void>) => void }) {
   });
   await once(server, "listening");
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
-  const call = (path: string, cookie: string | null, method = "GET") => {
+  const call = (path: string, cookie: string | null, method = "GET", body?: unknown) => {
     const headers = new Headers({ origin });
     if (cookie) headers.set("cookie", cookie);
-    return fetch(base + path, { method, headers });
+    if (body !== undefined) headers.set("content-type", "application/json");
+    return fetch(base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   };
   return { fixture, call };
 }
@@ -159,6 +160,19 @@ test("AI workspaces: position search, workspace reuse, independent conversations
   assert.deepEqual(history.map((m) => [m.sequenceNo, m.parts[0].text]), [["2", "two"], ["9", "nine"], ["10", "ten"]]);
   const otherHistory = (await json<{ data: Message[] }>(await call(`/ai/conversations/${second.id}/messages`, owner.cookie), 200)).data;
   assert.deepEqual(otherHistory.map((m) => m.parts[0].text), ["other thread"]);
+
+  // Renaming trims the title, keeps the list order, and accepts only a non-blank title of at most 80 characters.
+  const listedIds = async () => (await json<{ data: Conversation[] }>(await call(conversationsPath, owner.cookie), 200)).data.map((c) => c.id);
+  const orderBefore = await listedIds();
+  const renamed = await json<Conversation>(await call(`/ai/conversations/${first.id}`, owner.cookie, "PATCH", { title: "  Mock HR round  " }), 200);
+  assert.deepEqual(renamed, { ...first, title: "Mock HR round" });
+  assert.deepEqual(await listedIds(), orderBefore);
+  assert.equal((await json<Conversation>(await call(`/ai/conversations/${first.id}`, owner.cookie, "PATCH", { title: "题".repeat(80) }), 200)).title, "题".repeat(80));
+  for (const body of [{ title: " " }, { title: "x".repeat(81) }, { title: 1 }, { title: "ok", extra: true }, {}]) {
+    await expectError(await call(`/ai/conversations/${first.id}`, owner.cookie, "PATCH", body), 400, "BAD_REQUEST");
+  }
+  await expectError(await call(`/ai/conversations/${first.id}`, other.cookie, "PATCH", { title: "Stolen" }), 404, "NOT_FOUND");
+  assert.equal((await json<Conversation>(await call(`/ai/conversations/${first.id}`, owner.cookie), 200)).title, "题".repeat(80));
 
   // Another user's resources, and malformed IDs, are not found.
   for (const [path, method] of [
