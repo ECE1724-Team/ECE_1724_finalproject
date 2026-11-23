@@ -14,6 +14,7 @@ import ApplicationStatusDropdown from "@/components/ApplicationStatusDropdown";
 import { Textarea } from "@/components/ui/textarea";
 import ResumeUploadForm from "@/components/ResumeUploadForm";
 import { Link, useNavigate } from "react-router";
+import { Sparkles } from "lucide-react";
 import type {
   Application,
   ApplicationCreate,
@@ -287,6 +288,20 @@ export default function ApplicationForm({
     >
       {submissionError && <ErrorAlert message={submissionError} className={styles.errorAlert} />}
       {deleteError && <ErrorAlert message={deleteError} className={styles.errorAlert} />}
+
+      {/* Only shown while viewing, so there are no unsaved edits; the AI reads the saved application. */}
+      {isViewMode && savedApplication && !mock && (
+        <div className={styles.formHeader}>
+          <Button
+            nativeButton={false}
+            render={<Link to={`/interview?application=${encodeURIComponent(savedApplication.id)}`} />}
+            variant="outline"
+          >
+            <Sparkles aria-hidden="true" />
+            AI Interview Assistant
+          </Button>
+        </div>
+      )}
 
       <div className={styles.fieldGrid}>
         <div>

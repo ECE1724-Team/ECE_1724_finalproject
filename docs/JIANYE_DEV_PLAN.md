@@ -6,13 +6,13 @@ errors, limits, known gaps), [PRD §5.2](PRD.md) (file rules),
 [Database Design §5.11, §7.2–7.3, C.4](Database_Design.md) (cleanup, upload/delete, repository
 contract), [AI Design](AI_Design.md) and [endpoints.json](endpoints.json).
 
-## Status (2026-11-21)
+## Status (2026-11-23)
 
 | Area | State |
 |---|---|
 | Resume backend | Done. Phase 4 Stages 1–2 passed, including live R2. |
 | Browser check | Pending (target Nov 25). The application API is merged and the frontend now calls the resume and application APIs; some pages still import test data. |
-| AI Copilot | Backend Phases 1–4 done ([PR #15](https://github.com/ECE1724-Team/ECE_1724_finalproject/pull/15)); live checks passed (≈ US$0.0012). Phase 5 (frontend) next. |
+| AI Copilot | Backend Phases 1–4 done ([PR #15](https://github.com/ECE1724-Team/ECE_1724_finalproject/pull/15)). Phase 5 (frontend) done and checked end to end in the app's Chromium browser with the live model (≈ US$0.005 spent in all). Edge and the team check remain. |
 
 ## Progress log
 
@@ -55,6 +55,8 @@ application repository also passed.
   text-unavailable warning on upload and on selection.
 - [ ] Link V1 to two applications; an invalid replacement keeps both on V1; switch one to V2
   with the full PUT payload; restore both, see count 2, delete V1: both links removed, both applications kept.
+- [ ] AI Prep in Edge with real uploads and verified accounts: repeat the
+  [Phase 5 checks](#phase-5) (already passed in Chromium on seeded data).
 
 ## Don't undo these
 Worker-thread isolation and the `busy` limit; `If-None-Match` on writes; never accepting a
@@ -77,7 +79,7 @@ Routes, errors and limits: [backend README → AI Copilot](../backend/README.md#
 
 - `gpt-6-luna` for replies and summaries ([model and pricing](https://developers.openai.com/api/docs/models/gpt-6-luna)):
   one call per turn, plus one when history is compressed. Development and CI use a fake model.
-- **Budget for live tests and the demo: US$5, with US$2 kept for the demo.** Spent so far ≈ US$0.0012.
+- **Budget for live tests and the demo: US$5, with US$2 kept for the demo.** Spent so far ≈ US$0.005.
   Before each live session, check project usage and estimate the cost from the input and output
   caps; stop if it exceeds what is left. Use fictional resumes. Keep credentials, resume text and
   chat content out of logs.
@@ -121,41 +123,80 @@ Don't undo these: the SDK's `onError` is silenced because its default logs the p
 replies are never saved; current materials are sent in full every turn and never summarized; a
 summary is saved in its own short transaction only if its predecessor and boundary are unchanged.
 
-### Phase 5 · Build the frontend and verify the demo (in progress)
+<a id="phase-5"></a>
 
-**2026-11-21: skeleton.** The files below exist and `npm run build` and `npm run lint` pass. The
-pages are placeholders with `TODO(Phase 5)` notes; `lib/ai.ts` already has the JSON calls, while
-`streamGeneration` is still a stub. It follows the current frontend's conventions: one CSS module
-per page or component in `styles/`, `fetch` with `credentials: "include"` and `responseError`.
+### 2026-11-21 → 11-23: Phase 5 (frontend, done)
+
+**11-21: skeleton** of the files below, following the frontend's conventions (one CSS module per
+page or component in `styles/`, `fetch` with `credentials: "include"` and `responseError`). No
+`@ai-sdk/react`: its `useChat` expects the AI SDK's own stream protocol, our events are the custom
+ones in endpoints.json, and `EventSource` cannot POST, so `lib/ai.ts` reads the response body itself.
+
+**11-23: implemented.**
 
 ```text
 frontend/src/
-  main.tsx                            /interview and /interview/:workspaceId/:conversationId?
-  routes/Interview.tsx                Position search, status filter, empty states
-  routes/InterviewWorkspace.tsx       Workspace header (company, position, resume and its text status)
-  components/ai/ConversationList.tsx  Create and switch conversations; titles from the first message
-  components/ai/ChatPanel.tsx         Messages, input, shortcuts, sync status, retry, materials of old replies
-  lib/ai.ts                           API calls and the SSE reader for send and retry
-  styles/Interview.module.css, InterviewWorkspace.module.css, ConversationList.module.css, ChatPanel.module.css
-  types.ts                            AiMaterialSnapshot fixed: it has `id`, not `snapshotId`
+  routes/Interview.tsx                Position picker: search (debounced), status filter, empty states;
+                                      ?application=<id> opens that workspace directly
+  routes/InterviewWorkspace.tsx       Header, material chips, scanned-resume warning; restores the latest conversation
+  components/ai/ConversationList.tsx  New conversation, list with titles from the first message
+  components/ai/ChatPanel.tsx         Messages (Markdown), shortcuts, streaming, Stop, Retry, materials of each reply
+  lib/ai.ts                           API calls, SSE reader, material labels
+  components/ApplicationForm.tsx      "AI Interview Assistant" on the detail page (view mode only)
 ```
 
-Changes from the earlier plan: no `@ai-sdk/react`. Its `useChat` expects the AI SDK's own stream
-protocol, our events are the custom ones in endpoints.json, and `EventSource` cannot send a POST, so
-`lib/ai.ts` reads the response body itself. The application form already uses the real API, so no
-mock workaround is needed.
+- **Entry.** The picker and the detail page both call `PUT …/ai-workspace` and open
+  `/interview/:workspaceId`; neither creates a conversation. Without a conversation ID the workspace
+  opens its most recent conversation, or shows "New conversation" when it has none. The detail-page
+  button only appears while viewing, so there are never unsaved edits to save first; the AI reads
+  the saved application.
+- **Turns.** Shortcuts only fill the input (FR-25). Enter sends, Shift+Enter adds a line, and Enter
+  while an input method is composing (Chinese) does not send. Send is disabled while any attempt is
+  active. Status lines follow the events: "Sending…", "Reading your materials…" until
+  `materials.synced` (about 5 s on a compressing turn), then "Writing a reply…".
+- **One reconcile path instead of `getGeneration`.** After every stream end (completed, error, Stop,
+  network loss, 409/503) the panel rereads conversation, messages and attempts and renders from
+  them: the saved reply, Retry for the latest message's failed or interrupted attempt, or "still in
+  progress", which polls every 2 s (the server marks a stopped run interrupted a moment later, and
+  another tab may be answering). Partial text stays visible, marked "not saved", until reload (FR-29).
+  A rejected send keeps the draft. Leaving the conversation aborts its stream, so the run becomes
+  interrupted and can be retried.
+- **Materials.** "Updated before this reply: Resume" comes from the attempt's `changedKinds` when
+  it has a baseline (the first answer has none). "Based on earlier materials: …" compares each
+  reply's fingerprints with the workspace's current ones. "Materials used for this reply" loads the
+  snapshots on first open. The snapshot API deliberately omits `sourceLabel` (a DB test asserts it),
+  so a resume is named only when it is the one linked now, otherwise "an earlier resume".
+- **Markdown** replies (the prompt asks for headings and lists) use `react-markdown` + `remark-gfm`,
+  lazy-loaded so the main bundle stays under Vite's 500 kB warning (489 kB; about 165 kB in separate chunks).
+  Links open in a new tab; raw HTML is not rendered.
+- **Fixed in passing:** `dark:` utilities do not work inside CSS Modules, which rename `.dark` in
+  the variant's selector. `ErrorAlert.module.css` (light red box in dark mode) and the workspace
+  warning now use `:global(.dark) .class`.
 
-**Behavior.** Selecting an application opens (or creates) its workspace. The conversation ID stays
-in the URL, so a reload restores it. Shortcuts prefill editable input. Sending is disabled while a
-generation is active. If the stream ends without a terminal event, read the generation to restore
-the saved reply or offer a retry. Old replies can be expanded to show the materials they used. On a
-compressing turn, `materials.synced` arrives about 5 s late. Renaming, deleting and pagination of
-conversations are deferred. The entry from the application detail page comes last: it saves pending
-edits first and stays on the page if saving fails.
+**Acceptance (11-23).** Backend: typecheck, `npm test` (125), `npm run test:db` (208), build: all
+pass. `test:db` ran with `TEST_DATABASE_URL` on the local PostgreSQL 18 server because the sandbox
+could not start the throwaway cluster. Frontend: `npm run build` passes, `npm run lint` adds no
+warnings. Browser: the desktop app's Chromium pane, a scratch database seeded with fictional
+accounts, applications and resumes (no R2 upload, no email), `gpt-6-luna`.
 
-**Acceptance.** Backend: `npm run typecheck`, `npm test`, `npm run test:db`, `npm run build`.
-Frontend: `npm run build`, `npm run lint`. In Chrome and Edge, with verified accounts and fictional
-materials: pick a position, ask for resume advice, practice one question at a time, switch to V2 and
-continue, reload and inspect an earlier reply's materials, show one compression on seeded turns, and
-check the scanned-resume notice, isolation between two accounts, and retry after a disconnect.
-Record the date, results, model usage and open issues here.
+| Check | Result |
+|---|---|
+| Picker | Only the user's applications; case-insensitive search; no-match and no-applications states, the latter with "New Application" |
+| Scanned resume, no JD | Chips show "Text could not be read" / "Not provided" plus a warning; the Chinese reply said the resume cannot be read and gave limited help |
+| Resume advice | Streamed as Markdown, saved; the conversation took its title from the first message |
+| V1 → V2 | Switched on the detail page, re-entered through "AI Interview Assistant": same workspace, latest conversation restored; the old reply is tagged "Based on earlier materials: Resume" and its materials show V1's text |
+| Mock interview | Edited shortcut sent as typed; "Updated before this reply: Resume"; one question at a time; feedback used V2's metrics |
+| Stop and retry | Stop before text and after text: interruption notice + Retry (partial marked not saved); after reload only the notice; Retry reused the input; DB: interrupted runs have no reply, no duplicate input |
+| Compression | Backend restarted with 600 / 250: "Reading your materials…" during the summary, summary saved through message 8, reply input 1,855 tokens |
+| Isolation | Second account: its own application only; the first account's workspace URL shows 404, and its conversation, messages, workspace PUT and send all answer 404 |
+| Layout | Light and dark; 375 px wide; no console errors except the deliberate 404 probes |
+
+Model usage: completed turns 11,278 in / 2,825 out, plus the summary 2,071 / 793; two interrupted
+attempts record none. About US$0.004 at the rate of the 11-19/20 checks.
+
+Open issues:
+- Edge, real uploads and email verification are not covered by this check (see the team check above).
+- Leaving a conversation mid-reply interrupts it without a warning; Retry recovers it.
+- Renaming, deleting and paginating conversations remain deferred; the Dashboard has no per-position
+  AI entry (FR-10 is met by the detail page).
+- `npm run test:db` needs `TEST_DATABASE_URL` where creating a local cluster is not allowed.
