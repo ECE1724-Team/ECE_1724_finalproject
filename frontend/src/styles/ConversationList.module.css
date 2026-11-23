@@ -1,9 +1,55 @@
 @reference "./global.css";
 
 .list {
-  @apply flex flex-col gap-2;
+  @apply flex flex-col gap-3;
+}
+
+.newButton {
+  @apply w-full bg-card;
 }
 
 .empty {
-  @apply text-sm text-muted-foreground;
+  @apply px-1 text-sm text-muted-foreground;
+}
+
+.items {
+  @apply grid max-h-56 gap-1 overflow-y-auto md:max-h-[calc(70dvh-3rem)];
+}
+
+.row {
+  @apply relative rounded-lg transition-colors hover:bg-card;
+}
+
+.selected {
+  @apply bg-card ring-1 ring-border;
+}
+
+.item {
+  @apply grid gap-0.5 rounded-lg py-2 pr-9 pl-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+}
+
+.itemTitle {
+  @apply line-clamp-2 break-words font-medium;
+}
+
+.selected .itemTitle {
+  @apply text-primary;
+}
+
+.itemTime {
+  @apply text-xs text-muted-foreground;
+}
+
+/* The rename button appears on hover or focus, and always on the selected conversation. */
+.editButton {
+  @apply absolute top-1.5 right-1.5 text-muted-foreground opacity-0 focus-visible:opacity-100;
+}
+
+.row:hover .editButton,
+.selected .editButton {
+  @apply opacity-100;
+}
+
+.titleInput {
+  @apply bg-card;
 }

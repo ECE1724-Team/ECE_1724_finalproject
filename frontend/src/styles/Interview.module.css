@@ -9,5 +9,65 @@
 }
 
 .hint {
-  @apply text-sm text-muted-foreground;
+  @apply mt-1 max-w-3xl text-sm text-muted-foreground;
+}
+
+.filters {
+  @apply flex flex-wrap items-end gap-4;
+}
+
+.search {
+  @apply grid min-w-64 flex-1 gap-2 text-sm font-medium sm:max-w-md;
+}
+
+.searchField {
+  @apply relative;
+}
+
+.searchIcon {
+  @apply pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground;
+}
+
+.searchInput {
+  @apply bg-card pl-8;
+}
+
+.status {
+  @apply grid w-48 gap-2 text-sm font-medium;
+}
+
+.statusSelect {
+  @apply w-full bg-card;
+}
+
+.empty {
+  @apply grid justify-items-start gap-3 text-sm text-muted-foreground;
+}
+
+.grid {
+  @apply grid gap-4 sm:grid-cols-2 lg:grid-cols-3;
+}
+
+.option {
+  @apply grid gap-1 rounded-xl bg-card p-4 text-left text-sm ring-1 ring-border transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60;
+}
+
+.optionTitle {
+  @apply text-base font-medium break-words;
+}
+
+.optionCompany {
+  @apply break-words text-muted-foreground;
+}
+
+.optionFooter {
+  @apply mt-3 flex items-center justify-between gap-3;
+}
+
+.badge {
+  @apply rounded-full bg-muted px-3 py-1 text-xs font-medium;
+}
+
+.openLabel {
+  @apply text-xs font-medium text-primary;
 }

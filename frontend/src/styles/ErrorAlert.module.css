@@ -1,5 +1,10 @@
 @reference "./global.css";
 
 .errorAlert {
-  @apply border-red-500 bg-red-50 dark:bg-red-950;
+  @apply border-red-500 bg-red-50;
+}
+
+/* CSS Modules would rename `.dark` inside a `dark:` utility, so the theme class is matched globally here. */
+:global(.dark) .errorAlert {
+  @apply bg-red-950;
 }
