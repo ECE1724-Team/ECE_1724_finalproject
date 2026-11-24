@@ -50,6 +50,18 @@ test("upload without usable text stores a text_unavailable row with no text", as
   assert.equal(stored.nonWhitespaceChars, 8);
 });
 
+test("a repeated name gets the first free number; other users and deleted resumes don't count", async () => {
+  const { service, upload } = setup();
+  assert.equal((await upload()).name, "Backend resume");
+  assert.equal((await upload()).name, "Backend resume (2)");
+  const third = await upload();
+  assert.equal(third.name, "Backend resume (3)");
+  await service.remove(USER, third.id);
+  assert.equal((await upload()).name, "Backend resume (3)");
+  const other = await service.upload({ userId: OTHER, name: "Backend resume", fileName: "cv.pdf", bytes: pdfBytes() });
+  assert.equal(other.name, "Backend resume");
+});
+
 test("rejected files are never stored", async () => {
   for (const code of ["invalid_pdf", "too_many_pages", "unreadable_encryption", "busy", "timeout"] as const) {
     const { upload, storage, resumes } = setup(new PdfError(code));

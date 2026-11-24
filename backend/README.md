@@ -444,6 +444,8 @@ Startup passes the business router to `createApp` and keeps the handle from `sta
 - **Accepted, `textStatus: "unavailable"`**: e.g. a scanned resume. Stored and linkable,
   but no text is saved; the frontend shows the AI warning from `textStatus`. Stored as
   `parse_status = 'text_unavailable'`.
+- **Names**: if one of the user's live resumes already has the name, the upload is saved as
+  `Name (2)`, then `Name (3)`, and so on. The response carries the saved name.
 
 ### HTTP errors
 

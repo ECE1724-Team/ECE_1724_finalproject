@@ -73,8 +73,9 @@ export function createResumeService(deps: ResumeServiceDeps) {
     /** Throws PdfError for rejected files. Returns the new resume. */
     async upload({ userId, name, fileName, bytes, signal }: UploadInput): Promise<ResumeRow> {
       const result = await validateResumePdf(bytes, pdf, { signal });
+      const taken = new Set((await resumes.listLive(pool, userId)).map((resume) => resume.name));
       const row: NewResumeRow = {
-        id: randomUUID(), userId, name, originalFilename: fileName,
+        id: randomUUID(), userId, name: uniqueName(name, taken), originalFilename: fileName,
         objectKey: createObjectKey(), sizeBytes: bytes.byteLength, ...textFields(result),
       };
       await storage.putNew(row.objectKey, bytes, { signal });
@@ -110,6 +111,18 @@ export function createResumeService(deps: ResumeServiceDeps) {
       return resumes.deleteAndUnlink(pool, userId, id);
     },
   };
+}
+
+/**
+ * A name already used by one of the owner's live resumes gets the first free suffix:
+ * "SWE Resume" → "SWE Resume (2)" → "SWE Resume (3)". Names of deleted resumes can be reused.
+ * Two simultaneous uploads with the same name may still get the same result; names are not unique keys.
+ */
+export function uniqueName(name: string, taken: Set<string>): string {
+  if (!taken.has(name)) return name;
+  let n = 2;
+  while (taken.has(`${name} (${n})`)) n += 1;
+  return `${name} (${n})`;
 }
 
 function textFields(result: ResumePdfResult) {

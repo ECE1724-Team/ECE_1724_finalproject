@@ -2172,7 +2172,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200,
-            "description": "Friendly name for the resume (e.g., Backend Developer Resume)."
+            "description": "Friendly name for the resume (e.g., Backend Developer Resume). If one of the user's live resumes already uses it, the resume is saved as \"Name (2)\", \"Name (3)\" and so on; the response carries the saved name."
           },
           "file": {
             "type": "string",
