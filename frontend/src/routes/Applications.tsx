@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import ErrorAlert from "@/components/ErrorAlert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -21,10 +22,19 @@ export default function Applications() {
   const [searchParams, setSearchParams] = useSearchParams();
   const status = searchParams.get("status");
   const [applications, setApplications] = useState<ApplicationSummary[]>([]);
+  const [counts, setCounts] = useState<ApplicationList["counts"] | null>(null);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [sort, setSort] = useState<"newest" | "company">("newest");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -35,7 +45,8 @@ export default function Applications() {
       setPage(1);
 
       try {
-        const query = new URLSearchParams({ sort: "newest" });
+        const query = new URLSearchParams({ sort });
+        if (debouncedSearch.trim()) query.set("q", debouncedSearch);
         if (status) query.set("status", status);
         const response = await fetch(
           `/api/v1/applications?${query}`,
@@ -53,11 +64,13 @@ export default function Applications() {
         if (!controller.signal.aborted) {
           setApplications(result.data);
           setTotal(result.data.length);
+          setCounts(result.counts);
         }
       } catch (failure) {
         if (!controller.signal.aborted) {
           setApplications([]);
           setTotal(0);
+          setCounts(null);
           setError(failure instanceof Error ? failure.message : "Failed to load applications.");
         }
       } finally {
@@ -67,7 +80,7 @@ export default function Applications() {
 
     void loadApplications();
     return () => controller.abort();
-  }, [status]);
+  }, [status, debouncedSearch, sort]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const firstItem = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -83,33 +96,54 @@ export default function Applications() {
         </Button>
       </header>
 
-      <div className={styles.filter}>
-        <label htmlFor="status-filter">Filter by status</label>
-        <Select
-          value={status || "all"}
-          onValueChange={(value) => {
-            if (value === null) return;
-            const next = new URLSearchParams(searchParams);
-            if (value !== "all") {
-              next.set("status", value);
-            } else {
-              next.delete("status");
-            }
-            setSearchParams(next);
-          }}
-        >
-          <SelectTrigger id="status-filter" className={styles.filterSelect}>
-            <SelectValue>
-              {status ? applicationStatuses.find((item) => item.value === status)?.label ?? status : "All statuses"}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {applicationStatuses.map(({ value, label }) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className={styles.controls}>
+        <div className={styles.filter}>
+          <label htmlFor="application-search">Search company or position</label>
+          <Input
+            id="application-search"
+            type="search"
+            placeholder="Company or position"
+            className={styles.searchInput}
+            value={search}
+            onChange={(event) => setSearch(Array.from(event.target.value).slice(0, 200).join(""))}
+          />
+        </div>
+        <div className={styles.filter}>
+          <label htmlFor="application-sort">Sort by</label>
+          <Select value={sort} onValueChange={(value) => {
+            if (value === "newest" || value === "company") setSort(value);
+          }}>
+            <SelectTrigger id="application-sort" className={styles.filterSelect}>
+              <SelectValue>{sort === "newest" ? "Newest first" : "Company A–Z"}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest first</SelectItem>
+              <SelectItem value="company">Company A–Z</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className={styles.statusFilters} role="group" aria-label="Filter by status">
+        {([{ value: "all", label: "All" }, ...applicationStatuses] as const).map(({ value, label }) => (
+          <Button
+            key={value}
+            type="button"
+            variant={(status || "all") === value ? "default" : "outline"}
+            aria-pressed={(status || "all") === value}
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              if (value !== "all") {
+                next.set("status", value);
+              } else {
+                next.delete("status");
+              }
+              setSearchParams(next);
+            }}
+          >
+            {label} ({counts ? value === "all" ? counts.total : counts.byStatus[value] : "–"})
+          </Button>
+        ))}
       </div>
 
       {error && <ErrorAlert message={error} />}

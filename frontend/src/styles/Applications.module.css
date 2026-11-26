@@ -12,10 +12,6 @@
   @apply flex items-center justify-between gap-4;
 }
 
-.clearFilter {
-  @apply text-sm font-medium underline underline-offset-4;
-}
-
 .applicationList {
   @apply flex flex-col gap-4;
 }
@@ -69,9 +65,21 @@
 }
 
 .filter {
-  @apply grid max-w-xs gap-2 text-sm font-medium;
+  @apply grid gap-2 text-sm font-medium;
+}
+
+.controls {
+  @apply grid gap-4 sm:grid-cols-2 sm:max-w-2xl;
+}
+
+.statusFilters {
+  @apply flex flex-wrap gap-2;
 }
 
 .filterSelect {
   @apply w-full bg-card;
+}
+
+.searchInput {
+  @apply bg-card dark:bg-card;
 }
