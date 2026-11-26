@@ -7,12 +7,11 @@ import type {
 } from "../types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import ErrorAlert from "@/components/ErrorAlert";
-import { fakeApplications } from "@/lib/testpayloads";
 import { responseError } from "@/lib/response-error";
 import styles from "@/styles/Application.module.css";
 
 
-export default function Application({mock = false}) {
+export default function Application() {
     const { id } = useParams();
 
     const [application, setApplication] = useState<Application | null>(null);
@@ -44,17 +43,14 @@ export default function Application({mock = false}) {
             }
         }
 
-        if (mock) {
-            setApplication(fakeApplications.find((app) => app.id === id) || null);
-            setLoading(false);
-        } else if (id) {
+        if (id) {
             loadApplication();
         } else {
             setLoading(false);
         }
 
         return () => { active = false; };
-    }, [id, mock]);
+    }, [id]);
 
     if (loading) return (
         <div className={styles.messageContainer}>
@@ -81,7 +77,7 @@ export default function Application({mock = false}) {
 
     return (<>
         <div>
-            <ApplicationForm application={application ?? undefined} mock={mock} />
+            <ApplicationForm application={application ?? undefined} />
         </div>
     </>
     );

@@ -25,14 +25,12 @@ import type {
   Resume,
   ResumeList,
 } from "../types";
-import { fakeResumes } from "../lib/testpayloads";
 import { responseError } from "@/lib/response-error";
 import styles from "@/styles/ApplicationForm.module.css";
 
 type ApplicationFormProps = {
   application?: Application;
   locked?: boolean;
-  mock?: boolean;
 };
 
 type ApplicationFormData = {
@@ -116,7 +114,6 @@ function formFromApplication(application: Application): ApplicationFormData {
 
 export default function ApplicationForm({
   application,
-  mock = false,
 }: ApplicationFormProps) {
   const navigate = useNavigate();
   const [savedApplication, setSavedApplication] = useState(application);
@@ -135,7 +132,7 @@ export default function ApplicationForm({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [resumesError, setResumesError] = useState<string | null>(null);
-  const [resumes, setResumes] = useState<Resume[]>(mock ? fakeResumes : []);
+  const [resumes, setResumes] = useState<Resume[]>([]);
   const [loadingResumes, setLoadingResumes] = useState(true);
   const [showResumeUpload, setShowResumeUpload] = useState(false);
 
@@ -160,12 +157,6 @@ export default function ApplicationForm({
       }
     }
 
-    if(mock) {
-        setResumes(fakeResumes);
-        setLoadingResumes(false);
-        return;
-    }
-
     loadResumes();
   }, []);
 
@@ -179,10 +170,6 @@ export default function ApplicationForm({
   async function deleteApplication() {
     if (!savedApplication || deleting || statusSaving) return;
     setDeleteError(null);
-    if (mock) {
-      setDeleteError("Sample applications cannot be deleted.");
-      return;
-    }
     if (!window.confirm(
       `Delete ${savedApplication.jobTitle} at ${savedApplication.companyName}? This permanently deletes the application, its interviews, history, and AI conversations. Linked resumes are not deleted.`,
     )) return;
@@ -214,11 +201,6 @@ export default function ApplicationForm({
 
     if (!form.jobTitle.trim()) {
       setSubmissionError("Job title is required");
-      return;
-    }
-
-    if (mock && savedApplication) {
-      setSubmissionError("Sample applications cannot be edited.");
       return;
     }
 
@@ -331,7 +313,7 @@ export default function ApplicationForm({
       {deleteError && <ErrorAlert message={deleteError} className={styles.errorAlert} />}
 
       {/* Only shown while viewing, so there are no unsaved edits; the AI reads the saved application. */}
-      {isViewMode && savedApplication && !mock && (
+      {isViewMode && savedApplication && (
         <div className={styles.formHeader}>
           <Button
             nativeButton={false}
@@ -383,7 +365,6 @@ export default function ApplicationForm({
           {isViewMode && savedApplication ? (
             <ApplicationStatusDropdown
               application={savedApplication}
-              mock={mock}
               disabled={deleting}
               onSaved={(updated) => {
                 setSavedApplication(updated);
@@ -476,7 +457,7 @@ export default function ApplicationForm({
             ) : (
               <Label htmlFor="resumeId">Resume</Label>
             )}
-            {!isViewMode && !showResumeUpload && !mock && (
+            {!isViewMode && !showResumeUpload && (
               <Button
                 type="button"
                 variant="outline"

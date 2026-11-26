@@ -40,6 +40,9 @@ unless you need resume upload; empty values disable the resume routes.
 npm run migrate
 ```
 
+**Optional: demo data.** Put the demo PDFs in `resume/` at the repository root, set `SEED_PASSWORD`
+in `.env`, then run `npm run seed` in `backend/` (details in the backend README).
+
 **5. Start everything**, each in its own terminal:
 
 ```sh

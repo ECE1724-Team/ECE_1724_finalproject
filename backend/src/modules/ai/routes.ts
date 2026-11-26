@@ -13,7 +13,7 @@ import {
 } from "./conversations/postgres-repository.js";
 import { acceptInput, acceptRetry, listGenerations, type AcceptResult } from "./generations/postgres-repository.js";
 import { runTurn, type StreamEvent } from "./generations/service.js";
-import { ensureWorkspace, getWorkspace } from "./workspaces/postgres-repository.js";
+import { ensureWorkspace, getWorkspace, workspaceIdsByApplication } from "./workspaces/postgres-repository.js";
 
 // AI Copilot routes (endpoints.json tag "AI Copilot"). Mounted on createApp's business router, so
 // every handler runs behind the Origin check and requireVerifiedUser. Missing, malformed and other
@@ -30,11 +30,16 @@ export function createAiRouter({ pool, model, historyLimits }: AiRouterOptions):
   const router = Router();
   const applications = createPostgresApplicationRepository();
 
-  // Same query rules as the application list (endpoints.json listAiApplications).
+  // Same query rules as the application list (endpoints.json listAiApplications). `workspaceId` is
+  // null until the application's workspace is created.
   router.get("/ai/applications", async (req, res) => {
     const { q, status } = parseListQuery(req.query as Record<string, unknown>);
-    const rows = await applications.list(pool, userIdOf(res), { search: q, status });
-    res.json({ data: rows.map(({ id, companyName, positionTitle, status }) => ({ id, companyName, jobTitle: positionTitle, status })) });
+    const userId = userIdOf(res);
+    const rows = await applications.list(pool, userId, { search: q, status });
+    const workspaces = await workspaceIdsByApplication(pool, userId);
+    res.json({ data: rows.map(({ id, companyName, positionTitle, status }) => ({
+      id, companyName, jobTitle: positionTitle, status, workspaceId: workspaces.get(id) ?? null,
+    })) });
   });
 
   router.put("/applications/:applicationId/ai-workspace", async (req, res) => {

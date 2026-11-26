@@ -16,13 +16,12 @@ import styles from "@/styles/ApplicationStatusDropdown.module.css";
 
 type ApplicationStatusDropdownProps = {
   application: Application;
-  mock?: boolean;
   disabled?: boolean;
   onSaved: (application: Application) => void;
   onSavingChange: (saving: boolean) => void;
 };
 
-export default function ApplicationStatusDropdown({ application, mock = false, disabled = false, onSaved, onSavingChange }: ApplicationStatusDropdownProps) {
+export default function ApplicationStatusDropdown({ application, disabled = false, onSaved, onSavingChange }: ApplicationStatusDropdownProps) {
   const [saved, setSaved] = useState(application);
   const [status, setStatus] = useState<ApplicationStatus>(application.status);
   const [saving, setSaving] = useState(false);
@@ -31,10 +30,6 @@ export default function ApplicationStatusDropdown({ application, mock = false, d
   async function saveStatus() {
     if (disabled || saving || status === saved.status) return;
     setError(null);
-    if (mock) {
-      setError("Sample application statuses cannot be saved.");
-      return;
-    }
 
     const payload: ApplicationReplace = {
       companyName: saved.companyName,

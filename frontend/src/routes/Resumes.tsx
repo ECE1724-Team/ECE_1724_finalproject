@@ -9,16 +9,11 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import ResumeUploadForm from "@/components/ResumeUploadForm"
-import { fakeResumes } from "@/lib/testpayloads"
 import { responseError } from "@/lib/response-error"
 import type { Resume, ResumeList } from "@/types"
 import styles from "@/styles/Resumes.module.css"
 
-type ResumesProps = {
-  mock?: boolean
-}
-
-export default function Resumes({ mock = false }: ResumesProps) {
+export default function Resumes() {
   const [resumes, setResumes] = useState<Resume[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -33,12 +28,6 @@ export default function Resumes({ mock = false }: ResumesProps) {
     async function loadResumes() {
       setLoading(true)
       setError(null)
-
-      if (mock) {
-        setResumes(fakeResumes)
-        setLoading(false)
-        return
-      }
 
       try {
         const response = await fetch("/api/v1/resumes", {
@@ -69,14 +58,10 @@ export default function Resumes({ mock = false }: ResumesProps) {
     return () => {
       active = false
     }
-  }, [mock])
+  }, [])
 
   async function downloadResume(resume: Resume) {
     setDownloadError(null)
-    if (mock && fakeResumes.some((sample) => sample.id === resume.id)) {
-      setDownloadError("Sample resumes cannot be downloaded.")
-      return
-    }
 
     try {
       const response = await fetch(`/api/v1/resumes/${encodeURIComponent(resume.id)}/file`, {
@@ -107,10 +92,6 @@ export default function Resumes({ mock = false }: ResumesProps) {
   async function deleteResume(resume: Resume) {
     if (deletingId) return
     setDeleteError(null)
-    if (mock && fakeResumes.some((sample) => sample.id === resume.id)) {
-      setDeleteError("Sample resumes cannot be deleted.")
-      return
-    }
 
     const linkedMessage = resume.linkedApplicationCount > 0
       ? ` It will be unlinked from ${resume.linkedApplicationCount} ${resume.linkedApplicationCount === 1 ? "application" : "applications"}.`

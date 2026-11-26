@@ -11,14 +11,13 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Link, useSearchParams } from "react-router";
 import type { ApplicationList, ApplicationSummary } from "../types";
-import { fakeApplications } from "../lib/testpayloads";
 import { responseError } from "@/lib/response-error";
 import { applicationStatuses } from "@/lib/application-status";
 import styles from "@/styles/Applications.module.css";
 
 const PAGE_SIZE = 20;
 
-export default function Applications({ mock = false }) {
+export default function Applications() {
   const [searchParams, setSearchParams] = useSearchParams();
   const status = searchParams.get("status");
   const [applications, setApplications] = useState<ApplicationSummary[]>([]);
@@ -66,18 +65,9 @@ export default function Applications({ mock = false }) {
       }
     }
 
-    if (mock) {
-      const filtered = status ? fakeApplications.filter((application) => application.status === status) : fakeApplications;
-      setApplications(filtered);
-      setTotal(filtered.length);
-      setPage(1);
-      setLoading(false);
-      return;
-    }
-
     void loadApplications();
     return () => controller.abort();
-  }, [mock, status]);
+  }, [status]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const firstItem = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;

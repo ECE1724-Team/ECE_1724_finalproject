@@ -90,7 +90,7 @@ export default function InterviewWorkspace() {
       <main className={styles.page}>
         <ErrorAlert message={loadError} />
         <Button variant="outline" nativeButton={false} render={<Link to="/interview" />} className={styles.backButton}>
-          Back to positions
+          Back to workspaces
         </Button>
       </main>
     );
@@ -107,7 +107,7 @@ export default function InterviewWorkspace() {
     <main className={styles.page}>
       <header className={styles.header}>
         <Link to="/interview" className={styles.back}>
-          <ArrowLeft aria-hidden="true" /> All positions
+          <ArrowLeft aria-hidden="true" /> All workspaces
         </Link>
         <div className={styles.row}>
           <h1 className={styles.title}>{workspace.jobTitle}</h1>

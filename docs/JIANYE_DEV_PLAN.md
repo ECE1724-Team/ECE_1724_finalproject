@@ -176,6 +176,12 @@ frontend/src/
   them. Conversations can be renamed through the new `PATCH /ai/conversations/{id}` (trimmed, 1–80
   characters, no change to `updatedAt` or order; DB test in `ai-workspace.db.test.ts`); workspaces
   keep company and position as their name.
+- **AI Copilot page (11-26, team agreed).** Renamed from "AI Interview Prep" (nav too). It lists
+  only applications that have a workspace; "New workspace" picks one of the others (search and
+  status filter) and creates its workspace. `GET /ai/applications` now returns each application's
+  `workspaceId` (null if none). `npm run seed` (backend README) fills a development database with
+  the demo account, 15 applications (the three AI ones listed first) and the three workspaces:
+  full materials, no resume, and an image-only resume.
 - **Fixed in passing:** `dark:` utilities do not work inside CSS Modules, which rename `.dark` in
   the variant's selector. `ErrorAlert.module.css` (light red box in dark mode) and the workspace
   warning now use `:global(.dark) .class`.

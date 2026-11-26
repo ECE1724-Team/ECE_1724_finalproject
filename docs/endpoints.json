@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Job Application Tracker API",
-    "version": "1.12.0",
+    "version": "1.13.0",
     "description": "Job Application Tracker API with Better Auth email/password authentication. Better Auth is mounted at /api/auth and resource routes at /api/v1. Browser requests authenticate through Better Auth's session cookie; the optional Bearer scheme requires enabling the Better Auth Bearer plugin and represents a Better Auth session token, not necessarily a JWT. Every application/resume operation requires a valid session, a verified email, and resource ownership. Registration sends a verification email without creating a login session; the first successful email verification automatically establishes a session. Unverified users cannot sign in or access business features. Registration, sign-in, email verification and resending, password recovery (including its email-link callback), and the session-check endpoint remain callable without a session. Verification email delivery requires emailVerification.sendVerificationEmail; reset email delivery requires emailAndPassword.sendResetPassword. Verification and password-reset credentials each expire 900 seconds after issuance; this does not define the session lifetime. Issuing a replacement credential invalidates all earlier credentials for the same user and purpose, without invalidating credentials for the other purpose. Latest-credential enforcement requires project-specific backend state and atomic issuance/validation beyond Better Auth's default email-link behavior. A successful password reset consumes its credential and revokes every existing session for the user, without automatically signing them in. Protected operations must check authoritative session validity so revoked sessions are not accepted through stale caches. Use Better Auth's CSRF protections and trusted origins for cookie-authenticated requests. AI Copilot contracts follow PRD 1.4, AI_Design.md, and Database_Design.md 1.4. AI operations require the same authoritative session, verified-email, and ownership checks. These contracts describe planned behavior, not deployed endpoints; explicitly marked retry and failure-policy proposals remain subject to the listed decisions."
   },
   "servers": [
@@ -1315,7 +1315,7 @@
         ],
         "operationId": "listAiApplications",
         "summary": "List applications for AI position selection",
-        "description": "Read the current user's existing active applications without creating workspaces, conversations, material snapshots, or model calls. Apply literal case-insensitive substring search to companyName or jobTitle and combine it with the optional status filter. Omit status for All. Use the same PRD matching rules as Application Management. An empty list supports the no-applications/no-matches UI and its route to Application Management.",
+        "description": "Read the current user's existing active applications, each with its workspace ID if one exists, without creating workspaces, conversations, material snapshots, or model calls. Apply literal case-insensitive substring search to companyName or jobTitle and combine it with the optional status filter. Omit status for All. Use the same PRD matching rules as Application Management. An empty list supports the no-applications/no-matches UI and its route to Application Management.",
         "responses": {
           "200": {
             "description": "List applications for AI position selection.",
@@ -2804,7 +2804,8 @@
           "id",
           "companyName",
           "jobTitle",
-          "status"
+          "status",
+          "workspaceId"
         ],
         "properties": {
           "id": {
@@ -2819,6 +2820,14 @@
           },
           "status": {
             "$ref": "#/components/schemas/AiApplicationStatus"
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The application's AI workspace, or null until one is created (ensureAiWorkspace). The AI Copilot page lists applications that have one and offers the others under New workspace."
           }
         },
         "description": "Projection of an existing owned application. Selection does not create another application or a conversation."

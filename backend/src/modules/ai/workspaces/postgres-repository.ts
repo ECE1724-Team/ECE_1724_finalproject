@@ -30,6 +30,16 @@ export async function ensureWorkspace(db: Db, userId: string, applicationId: str
   return row ? getWorkspace(db, userId, row.id) : null;
 }
 
+/** The user's workspace IDs keyed by application ID; applications without a workspace are absent. */
+export async function workspaceIdsByApplication(db: Db, userId: string): Promise<Map<string, string>> {
+  const { rows } = await db.query<{ applicationId: string; id: string }>(`
+    SELECT w.application_id AS "applicationId", w.id
+    FROM public.ai_workspaces w JOIN public.applications a ON a.id = w.application_id
+    WHERE a.user_id = $1
+  `, [userId]);
+  return new Map(rows.map((row) => [row.applicationId, row.id]));
+}
+
 export async function getWorkspace(db: Db, userId: string, workspaceId: string): Promise<WorkspaceView | null> {
   const { rows: [workspace] } = await db.query<{ id: string; applicationId: string; createdAt: Date }>(`
     SELECT w.id, w.application_id AS "applicationId", w.created_at AS "createdAt"

@@ -15,8 +15,6 @@ import RequireAuth from './components/RequireAuth';
 import { AuthProvider } from './components/AuthProvider';
 import NotFound from './routes/NotFound';
 
-const MOCK = false;
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
@@ -27,10 +25,10 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/login" element={<Login />} />
           <Route element={<RequireAuth />}>
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/applications" element={<Applications mock={MOCK}/>} />
-            <Route path="/application" element={<Application mock={MOCK}/>} />
-            <Route path="/application/:id" element={<Application mock={MOCK}/>} />
-            <Route path="/resumes" element={<Resumes mock={MOCK}/>} />
+            <Route path="/applications" element={<Applications />} />
+            <Route path="/application" element={<Application />} />
+            <Route path="/application/:id" element={<Application />} />
+            <Route path="/resumes" element={<Resumes />} />
             <Route path="/interview" element={<Interview />} />
             <Route path="/interview/:workspaceId/:conversationId?" element={<InterviewWorkspace />} />
           </Route>

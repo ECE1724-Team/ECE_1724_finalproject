@@ -267,6 +267,8 @@ export type AiApplicationOption = {
   companyName: string;
   jobTitle: string;
   status: AiApplicationStatus;
+  /** null until the application's AI workspace is created. */
+  workspaceId: string | null;
 };
 
 export type AiApplicationList = {

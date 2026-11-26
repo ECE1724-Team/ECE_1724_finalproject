@@ -82,12 +82,12 @@ test("AI workspaces: position search, workspace reuse, independent conversations
   await expectError(await call(`/applications/${acme.id}/ai-workspace`, unverified.cookie, "PUT"), 403, "EMAIL_NOT_VERIFIED");
 
   // Search and status filters combine, over the user's own applications only.
-  type Options = { data: { id: string; companyName: string; jobTitle: string; status: string }[] };
+  type Options = { data: { id: string; companyName: string; jobTitle: string; status: string; workspaceId: string | null }[] };
   const list = async (query: string) => (await json<Options>(await call(`/ai/applications${query}`, owner.cookie), 200)).data;
   assert.deepEqual((await list("")).map((a) => a.id), [labs.id, globex.id, acme.id]);
   assert.deepEqual(await list("?q=acme"), [
-    { id: labs.id, companyName: "Initech", jobTitle: "ACME tooling dev", status: "interview" },
-    { id: acme.id, companyName: "Acme", jobTitle: "Backend Engineer", status: "applied" },
+    { id: labs.id, companyName: "Initech", jobTitle: "ACME tooling dev", status: "interview", workspaceId: null },
+    { id: acme.id, companyName: "Acme", jobTitle: "Backend Engineer", status: "applied", workspaceId: null },
   ]);
   assert.deepEqual((await list("?q=aCmE&status=interview")).map((a) => a.id), [labs.id]);
   assert.deepEqual(await list("?status=offer"), []);
@@ -117,6 +117,9 @@ test("AI workspaces: position search, workspace reuse, independent conversations
   const { rows: workspaces } = await pool.query("SELECT id FROM public.ai_workspaces");
   assert.deepEqual(workspaces, [{ id: opened.id }]);
   assert.deepEqual(await json(await call(`/ai/workspaces/${opened.id}`, owner.cookie), 200), opened);
+  // The position list now links that application, and only that one, to its workspace.
+  assert.deepEqual((await list("")).map((a) => [a.id, a.workspaceId]), [[labs.id, null], [globex.id, null], [acme.id, opened.id]]);
+  assert.equal((await json<Options>(await call("/ai/applications", other.cookie), 200)).data[0].workspaceId, null);
 
   // A linked resume shows up as metadata only.
   const resume = await insertResume(pool, owner.id);

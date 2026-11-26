@@ -216,7 +216,7 @@ The checks below define how to verify functionality; they do not indicate that t
 
 | ID | Requirement | Acceptance Method | Source / Open Items |
 |---|---|---|---|
-| FR-35 | Main navigation includes a standalone AI Interview Copilot page. Direct entry presents the user's existing applications, searchable by company/position keyword and filterable by status using Application Management's matching rules. Selecting an application opens its unique workspace, where the user can create a conversation or continue an existing one. | Enter from main navigation, search/filter, and select an application. Verify that only the user's own records appear and new conversations have the correct ownership. With no applications/no matches, show an empty state and a route to add applications in Application Management. Before selection, creation and sending are unavailable. Selecting the same application again reuses its workspace. | User confirmed; no separate project-record system detached from applications |
+| FR-35 | Main navigation includes a standalone AI Copilot page. It lists the user's existing workspaces (one per application). "New workspace" presents the applications that have none, searchable by company/position keyword and filterable by status using Application Management's matching rules; selecting one creates its unique workspace and opens it, where the user can create a conversation or continue an existing one. *Changed 2026-11-26 (team agreed): the page shows workspaces rather than every application.* | Enter from main navigation, search/filter, and select an application. Verify that only the user's own records appear and new conversations have the correct ownership. With no applications/no matches, show an empty state and a route to add applications in Application Management. Before selection, creation and sending are unavailable. Selecting the same application again reuses its workspace. | User confirmed; no separate project-record system detached from applications |
 
 ### 5.2 Resume Library and PDF Acceptance Rules
 
@@ -349,7 +349,7 @@ Existing applications display an activity timeline below the form, including at 
 
 | Entry Point | Position Selection | Workspace Handling | Conversation Handling |
 |---|---|---|---|
-| AI Interview Copilot in main navigation | First search/filter and explicitly select one of the user's existing applications | Create or reuse its workspace after selection | The user clicks "New conversation" or continues an existing conversation in the workspace |
+| AI Copilot in main navigation | Open an existing workspace, or under "New workspace" search/filter and select an application that has none | Create its workspace after selection | The user clicks "New conversation" or continues an existing conversation in the workspace |
 | "AI preparation" for a specific position in the Dashboard | Automatically use that entry's application | Automatically create or reuse its workspace | If no conversation exists, prompt the user to create one; otherwise allow continuation or creation |
 | "AI Interview Assistant" in Application Management details | Automatically use the current application | Automatically create or reuse its workspace | Same operations within the workspace as above |
 

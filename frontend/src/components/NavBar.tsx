@@ -120,7 +120,7 @@ export default function NavBar({ currentLocation }: NavBarProps) {
                 variant="ghost"
                 className={menuItemClass(["/interview"])}
               >
-                AI Prep
+                AI Copilot
               </Button>
               <Button
                 type="button"

@@ -30,6 +30,7 @@ never creates or migrates the schema itself. Step-by-step values: [Local configu
 | `npm run dev` | `build` + `start` (no watch mode: the PDF worker only exists as compiled output) |
 | `npm run migrate` / `npm run migrate:down` | Applies all pending migrations (`npm run migrate -- --dry-run` lists them) / rolls back the latest one. `migrate:down` can destroy data; use it only on a development or test database |
 | `npm run test:r2` | Optional real R2 check, see below |
+| `npm run seed` | Development only: creates the verified demo account `SEED_EMAIL` (password `SEED_PASSWORD`) with 15 fictional applications, uploads the PDFs in `../resume` through the normal upload path (R2 required) and opens 3 AI workspaces. Re-running replaces that account's data. Data: `seeds/demo-data.mjs` |
 
 `dist/` is build output and is not committed. Deploy it together with `node_modules`
 (the PDF parser loads font data from `pdfjs-dist` at runtime).
@@ -502,7 +503,7 @@ Code: `src/modules/ai/` (`routes.ts`; `context/` builds the prompt and history; 
 
 | Route | Result |
 |---|---|
-| `GET /ai/applications?q=&status=` | Applications for the position picker (same query rules as the application list) |
+| `GET /ai/applications?q=&status=` | Applications with their `workspaceId` (null if none yet), for the AI Copilot page and its New workspace picker (same query rules as the application list) |
 | `PUT /applications/{id}/ai-workspace` | Creates or reuses the application's workspace, with its current materials |
 | `GET /ai/workspaces/{id}`; `GET`/`POST /ai/workspaces/{id}/conversations` | Workspace; list conversations, or create an empty one (201) |
 | `GET /ai/conversations/{id}` and `…/messages`, `…/generations[/{gid}]`, `…/material-snapshots/{sid}` | State, full history, attempts, and the material text an answer used |
