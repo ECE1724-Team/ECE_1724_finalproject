@@ -62,14 +62,21 @@ export async function signIn(email: string, password: string): Promise<void> {
   }
 }
 
+// Where the emailed verification link sends the browser. The link is served by the backend, so
+// without an absolute URL on this frontend the user lands on the API's own origin. A successful
+// first verification also signs the user in (PRD FR-01), so the link opens the Dashboard. The
+// backend accepts the URL only on a trusted origin (AUTH_TRUSTED_ORIGINS), which includes this one.
+const VERIFIED_EMAIL_PATH = "/dashboard"
+
 export async function signUp(name: string, email: string, password: string): Promise<void> {
+  const callbackURL = new URL(VERIFIED_EMAIL_PATH, window.location.origin).href
   const response = await fetch("/api/auth/sign-up/email", {
     method: "POST",
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, callbackURL }),
   })
 
   if (!response.ok) {
