@@ -20,6 +20,8 @@ import type {
   ApplicationCreate,
   ApplicationReplace,
   ApplicationStatus,
+  Interview,
+  InterviewInput,
   Resume,
   ResumeList,
 } from "../types";
@@ -45,6 +47,22 @@ type ApplicationFormData = {
   companyWebsiteUrl: string;
   companyNotes: string;
 };
+
+type InterviewDraft = {
+  id?: string;
+  type: string;
+  localTime: string;
+  originalTime?: string;
+};
+
+function interviewDrafts(interviews: Interview[]): InterviewDraft[] {
+  return interviews.map((interview) => {
+    const date = new Date(interview.scheduledAt);
+    const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+    const localTime = `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+    return { id: interview.id, type: interview.type, localTime, originalTime: interview.scheduledAt };
+  });
+}
 
 const emptyForm: ApplicationFormData = {
   companyName: "",
@@ -107,6 +125,9 @@ export default function ApplicationForm({
   const isViewMode = !!savedApplication && !editing;
   const [form, setForm] = useState<ApplicationFormData>(
     application ? formFromApplication(application) : emptyForm,
+  );
+  const [interviews, setInterviews] = useState<InterviewDraft[]>(
+    application ? interviewDrafts(application.interviews) : [],
   );
 
   const [submitting, setSubmitting] = useState(false);
@@ -201,6 +222,25 @@ export default function ApplicationForm({
       return;
     }
 
+    const interviewInputs: InterviewInput[] = [];
+    for (const [index, interview] of interviews.entries()) {
+      const type = interview.type.trim();
+      if (!type || [...type].length > 100) {
+        setSubmissionError(`interviews[${index}].type must be 1 to 100 characters after trimming.`);
+        return;
+      }
+      const date = new Date(interview.localTime);
+      if (!interview.localTime || !Number.isFinite(date.getTime())) {
+        setSubmissionError(`interviews[${index}].scheduledAt must be a valid date and time.`);
+        return;
+      }
+      interviewInputs.push({
+        ...(interview.id ? { id: interview.id } : {}),
+        type,
+        scheduledAt: interview.originalTime ?? date.toISOString(),
+      });
+    }
+
     const fields = {
       companyName: form.companyName.trim(),
       jobTitle: form.jobTitle.trim(),
@@ -218,10 +258,10 @@ export default function ApplicationForm({
         ...fields,
         status: form.status,
         offerReceived: savedApplication.offerReceived,
-        interviews: savedApplication.interviews,
+        interviews: interviewInputs,
         rowVersion: savedApplication.rowVersion,
       }
-      : { ...fields, offerReceived: false, interviews: [] };
+      : { ...fields, offerReceived: false, interviews: interviewInputs };
 
     setSubmissionError(null);
     setSubmitting(true);
@@ -252,6 +292,7 @@ export default function ApplicationForm({
         const updated = await response.json() as Application;
         setSavedApplication(updated);
         setForm(formFromApplication(updated));
+        setInterviews(interviewDrafts(updated.interviews));
         setEditing(false);
         setShowResumeUpload(false);
         window.alert("Application updated successfully.");
@@ -347,6 +388,7 @@ export default function ApplicationForm({
               onSaved={(updated) => {
                 setSavedApplication(updated);
                 updateField("status", updated.status);
+                setInterviews(interviewDrafts(updated.interviews));
               }}
               onSavingChange={setStatusSaving}
             />
@@ -587,6 +629,64 @@ export default function ApplicationForm({
         />
       </div>
 
+      <section aria-labelledby="interviews-heading" className={styles.interviews}>
+        <h2 id="interviews-heading" className={styles.interviewsHeading}>Interviews</h2>
+        {isViewMode ? (
+          savedApplication?.interviews.length ? (
+            <ul className={styles.interviews}>
+              {savedApplication.interviews.map((interview) => (
+                <li key={interview.id}>
+                  {interview.type}{" - "}
+                  <time dateTime={interview.scheduledAt}>{new Date(interview.scheduledAt).toLocaleString()}</time>
+                </li>
+              ))}
+            </ul>
+          ) : <p className={styles.fieldValue}>No interviews scheduled.</p>
+        ) : (
+          <>
+            {interviews.map((interview, index) => (
+              <fieldset key={index} className={styles.interviewRow} disabled={submitting}>
+                <legend>Interview {index + 1}</legend>
+                <div className={styles.fieldGrid}>
+                  <div>
+                    <Label htmlFor={`interview-type-${index}`} className={styles.fieldLabel}>Type</Label>
+                    <Input
+                      id={`interview-type-${index}`}
+                      value={interview.type}
+                      onChange={(event) => setInterviews((current) => current.map((item, i) =>
+                        i === index ? { ...item, type: event.target.value } : item))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor={`interview-time-${index}`} className={styles.fieldLabel}>Date and time</Label>
+                    <Input
+                      id={`interview-time-${index}`}
+                      type="datetime-local"
+                      step="0.001"
+                      value={interview.localTime}
+                      onChange={(event) => setInterviews((current) => current.map((item, i) =>
+                        i === index ? { ...item, localTime: event.target.value, originalTime: undefined } : item))}
+                    />
+                  </div>
+                </div>
+                <Button type="button" variant="outline" onClick={() => setInterviews((current) => current.filter((_, i) => i !== index))}>
+                  Remove interview {index + 1}
+                </Button>
+              </fieldset>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              disabled={submitting || interviews.length >= 50}
+              onClick={() => setInterviews((current) => [...current, { type: "", localTime: "" }])}
+            >
+              Add interview
+            </Button>
+            {interviews.length >= 50 && <p className={styles.fieldValue}>Maximum of 50 interviews.</p>}
+          </>
+        )}
+      </section>
+
       <div className={styles.formActions}>
         {isViewMode ? (
           <Button
@@ -606,6 +706,7 @@ export default function ApplicationForm({
             className={styles.actionButton}
             onClick={() => {
               setForm(formFromApplication(savedApplication));
+              setInterviews(interviewDrafts(savedApplication.interviews));
               setEditing(false);
               setSubmissionError(null);
               setShowResumeUpload(false);

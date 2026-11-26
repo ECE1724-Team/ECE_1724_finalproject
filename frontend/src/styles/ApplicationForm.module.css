@@ -60,6 +60,18 @@
   @apply sm:col-span-2;
 }
 
+.interviews {
+  @apply grid gap-3;
+}
+
+.interviewsHeading {
+  @apply text-lg font-semibold;
+}
+
+.interviewRow {
+  @apply grid gap-3 rounded-md border border-border p-3;
+}
+
 .formActions {
   @apply grid grid-cols-2 gap-2;
 }
