@@ -1,7 +1,8 @@
 @reference "./global.css";
 
+/* Wider than the other pages (max-w-7xl): a chat needs the room. */
 .page {
-  @apply mx-auto grid max-w-7xl gap-6 px-4 py-8;
+  @apply mx-auto grid max-w-[100rem] gap-6 px-4 py-8;
 }
 
 .backButton {
@@ -53,17 +54,23 @@
   @apply text-muted-foreground;
 }
 
-.warning {
-  @apply border-amber-300 bg-amber-50 text-amber-900;
+/* A linked resume the AI cannot read: amber chip whose tooltip shows on hover or keyboard focus. */
+.chipWarning {
+  @apply relative cursor-help text-amber-700 ring-amber-300 focus-visible:outline-none focus-visible:ring-2;
+}
+
+.tooltip {
+  @apply invisible absolute top-full right-0 z-10 mt-2 w-72 rounded-md bg-foreground px-3 py-2 text-sm leading-snug font-normal text-background opacity-0 shadow-md transition-opacity;
+}
+
+.chipWarning:hover .tooltip,
+.chipWarning:focus-visible .tooltip {
+  @apply visible opacity-100;
 }
 
 /* `dark:` does not work in CSS Modules (the `.dark` class gets renamed). */
-:global(.dark) .warning {
-  @apply border-amber-800 bg-amber-950 text-amber-200;
-}
-
-.warningText {
-  @apply text-current;
+:global(.dark) .chipWarning {
+  @apply text-amber-400 ring-amber-800;
 }
 
 .layout {

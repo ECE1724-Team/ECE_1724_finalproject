@@ -4,7 +4,6 @@ import { ArrowLeft, CircleCheck, CircleX, TriangleAlert } from "lucide-react";
 import ChatPanel from "@/components/ai/ChatPanel";
 import ConversationList from "@/components/ai/ConversationList";
 import ErrorAlert from "@/components/ErrorAlert";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   createConversation, getWorkspace, listConversations, materialLabel, renameConversation, sortByKind, unavailableReason,
@@ -100,7 +99,6 @@ export default function InterviewWorkspace() {
     return <main className={styles.page}><p role="status">Loading workspace...</p></main>;
   }
 
-  const resume = workspace.materials.resume;
   const chips = sortByKind(Object.values(workspace.materials)).filter((material) => !TITLE_KINDS.has(material.kind));
 
   return (
@@ -120,6 +118,18 @@ export default function InterviewWorkspace() {
           <ul className={styles.chips} aria-label="Materials the AI uses">
             {chips.map((material) => {
               const available = material.availability === "available";
+              // A linked resume without readable text gets a warning with a hover/focus tooltip instead of ✕.
+              if (material.reasonCode === "RESUME_TEXT_UNAVAILABLE") {
+                return (
+                  <li key={material.kind} className={`${styles.chip} ${styles.chipWarning}`} tabIndex={0} aria-describedby="resume-warning">
+                    <TriangleAlert aria-label="Warning" />
+                    {materialLabel(material.kind)}{workspace.linkedResume && `: ${workspace.linkedResume.name}`}
+                    <span id="resume-warning" role="tooltip" className={styles.tooltip}>
+                      The AI can't read this resume (no text could be extracted, e.g. a scanned PDF). Replies use the other materials only.
+                    </span>
+                  </li>
+                );
+              }
               return (
                 <li
                   key={material.kind}
@@ -137,16 +147,6 @@ export default function InterviewWorkspace() {
           </ul>
         </div>
       </header>
-
-      {resume?.reasonCode === "RESUME_TEXT_UNAVAILABLE" && (
-        <Alert className={styles.warning}>
-          <TriangleAlert aria-hidden="true" />
-          <AlertDescription className={styles.warningText}>
-            The AI cannot read the linked resume{workspace.linkedResume && ` "${workspace.linkedResume.name}"`}: no text
-            could be extracted from the PDF (for example, a scanned image). Replies will use the other materials only.
-          </AlertDescription>
-        </Alert>
-      )}
 
       {actionError && <ErrorAlert message={actionError} />}
 

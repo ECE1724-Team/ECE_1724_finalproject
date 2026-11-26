@@ -13,7 +13,7 @@
 }
 
 .items {
-  @apply grid max-h-56 gap-1 overflow-y-auto md:max-h-[calc(70dvh-3rem)];
+  @apply grid max-h-56 gap-1 overflow-y-auto md:max-h-[calc(100dvh-17.5rem)];
 }
 
 .row {
