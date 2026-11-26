@@ -5,11 +5,11 @@
 }
 
 .row {
-  @apply flex w-full flex-wrap items-center justify-between gap-4;
+  @apply flex w-full flex-wrap items-center justify-between gap-4 py-1.5;
 }
 
 .brand {
-  @apply ml-4 text-lg font-semibold tracking-tight text-foreground transition-colors hover:text-primary;
+  @apply ml-4 text-xl font-semibold tracking-tight text-foreground transition-colors hover:text-primary;
 }
 
 .actions {
@@ -17,11 +17,11 @@
 }
 
 .themeToggle {
-  @apply mr-4 text-muted-foreground;
+  @apply mr-4 size-9 text-muted-foreground [&_svg]:size-5;
 }
 
 .menuItem {
-  @apply rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground;
+  @apply h-9 rounded-md px-3.5 text-base font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground;
 }
 
 .activeMenuItem {
